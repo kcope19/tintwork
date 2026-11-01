@@ -96,3 +96,16 @@ input[type=range] { accent-color: var(--accent); }
 .dialog .field output { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 .dialog-actions { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
 .dialog textarea { width: 100%; min-height: 60px; background: var(--bg0); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 6px; font: inherit; }
+
+/* v0.2: selection modes, layer masks, busy state */
+#optionsbar .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+#optionsbar .seg button { border: none; border-radius: 0; padding: 3px 8px; }
+#optionsbar .seg button + button { border-left: 1px solid var(--line); }
+#optionsbar .seg button.on { background: var(--accent); color: #fff; }
+#optionsbar .mask-badge { background: #2b2d33; border: 1px dashed var(--accent2); color: var(--text); padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+#layerList canvas.target { outline: 2px solid var(--accent2); outline-offset: 1px; }
+#layerList canvas.mask-thumb { background: #000; }
+.panel-actions button.on { color: var(--accent2); }
+body.busy #view { cursor: progress !important; }
+body.busy #status::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--accent2); animation: pulse .8s infinite alternate; }
+@keyframes pulse { from { opacity: .25; } to { opacity: 1; } }

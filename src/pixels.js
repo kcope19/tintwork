@@ -262,3 +262,59 @@ export function histogram(img) {
   }
   return hist;
 }
+
+export function autoLevels(img) {
+  const h = histogram(img); let total = 0; for (const v of h) total += v;
+  const clip = total * 0.005; let lo = 0, hi = 255, acc = 0;
+  for (; lo < 255; lo++) { acc += h[lo]; if (acc > clip) break; }
+  acc = 0; for (; hi > 0; hi--) { acc += h[hi]; if (acc > clip) break; }
+  if (hi <= lo) return img;
+  return adjustments.levels(img, { inBlack: lo, inWhite: hi });
+}
+
+/** Gaussian-blur a single-channel 0..255 mask (used for feathering selections). */
+export function blurMask(mask, W, H, radius) {
+  const img = new ImageData(W, H), d = img.data;
+  for (let i = 0, j = 0; i < mask.length; i++, j += 4) { d[j] = d[j + 1] = d[j + 2] = 255; d[j + 3] = mask[i]; }
+  gaussianBlur(img, radius);
+  const out = new Uint8Array(mask.length);
+  for (let i = 0, j = 3; i < out.length; i++, j += 4) out[i] = d[j];
+  return out;
+}
+
+/** Blend a processed result back over the original using a 0..255 mask (soft selections). */
+export function blendMasked(orig, res, mask) {
+  for (let i = 0, j = 0; i < mask.length; i++, j += 4) {
+    const m = mask[i];
+    if (m === 255) continue;
+    if (m === 0) { res[j] = orig[j]; res[j + 1] = orig[j + 1]; res[j + 2] = orig[j + 2]; res[j + 3] = orig[j + 3]; continue; }
+    const k = m / 255;
+    for (let c = 0; c < 4; c++) res[j + c] = orig[j + c] + (res[j + c] - orig[j + c]) * k;
+  }
+}
+
+/** Single entry point for every pixel operation (used by the worker and the inline fallback). */
+export function runOp(name, img, params = {}, info = {}) {
+  switch (name) {
+    case 'gaussianBlur': return gaussianBlur(img, params.radius);
+    case 'sharpen': return sharpen(img, params);
+    case 'noise': return noise(img, params);
+    case 'vignette': return vignette(img, params, info.docW, info.docH, info.offX, info.offY);
+    case 'autoLevels': return autoLevels(img);
+    default:
+      if (adjustments[name]) return adjustments[name](img, params);
+      throw new Error(`Unknown operation ${name}`);
+  }
+}
+
+/** Non-contiguous version of floodMask: every pixel within tolerance of the seed pixel. */
+export function similarMask(img, sx, sy, tolerance, bounds) {
+  const { width: W, height: H, data: d } = img;
+  const b = bounds || { x: 0, y: 0, w: W, h: H };
+  const mask = new Uint8Array(W * H), si = (sy * W + sx) * 4, t = tolerance * 4;
+  for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) {
+    const i = (y * W + x) * 4;
+    if (Math.abs(d[i] - d[si]) + Math.abs(d[i + 1] - d[si + 1]) + Math.abs(d[i + 2] - d[si + 2]) + Math.abs(d[i + 3] - d[si + 3]) <= t) mask[y * W + x] = 1;
+  }
+  return mask;
+}

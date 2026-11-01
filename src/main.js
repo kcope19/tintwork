@@ -1,5 +1,7 @@
 // Tintwork — an original, browser-based layered image editor (Canvas 2D).
-import { adjustments, gaussianBlur, sharpen, noise, vignette, floodMask, histogram } from './pixels.js';
+import { floodMask, similarMask, histogram } from './pixels.js';
+import { makeSelection, shapeMask, rectMask, combine, invertSelection, selectionCanvas, selectionOutline, maskRegion } from './selection.js';
+import * as ops from './ops.js';
 import { ICONS } from './icons.js';
 
 const APP = 'Tintwork';
@@ -25,7 +27,13 @@ const state = {
     fillTolerance: 32, fillContiguous: true,
     textFont: 'system-ui', textSize: 64, textBold: true, textItalic: false,
     sampleAll: true,
+    selMode: 'new', wandTolerance: 32, wandContiguous: true, wandSampleAll: false, featherRadius: 8,
+    cloneSize: 40, cloneHardness: 60, cloneOpacity: 100, cloneAligned: true,
   },
+  selPreview: null,   // in-progress rectangle / lasso outline
+  poly: null,         // in-progress polygonal lasso { pts, mode }
+  cloneSrc: null, cloneOffset: null,
+  busy: 0,
 };
 let nextLayerId = 1;
 let globalRev = 1;
@@ -54,10 +62,36 @@ function createLayer(name, w, h, opts = {}) {
   const canvas = makeCanvas(w, h);
   return {
     id: nextLayerId++, name, canvas, visible: true, opacity: 1, blend: 'source-over',
-    x: 0, y: 0, rev: ++globalRev, ...opts,
+    x: 0, y: 0, rev: ++globalRev, mask: null, editMask: false, ...opts,
   };
 }
 function touch(layer) { layer.rev = ++globalRev; compDirty = true; }
+function touchMask(layer) { if (layer.mask) layer.mask.rev = ++globalRev; compDirty = true; }
+/** Canvas currently being edited on a layer: its mask (when targeted) or its pixels. */
+const editingMask = (l = activeLayer()) => !!(l && l.mask && l.editMask);
+const targetCanvas = (l = activeLayer()) => (editingMask(l) ? l.mask.canvas : l.canvas);
+function touchTarget(l) { if (editingMask(l)) touchMask(l); else touch(l); }
+/** Mask canvas: white with alpha = how much of the layer shows (255 = fully revealed). */
+function makeMaskCanvas(w, h, reveal = true) {
+  const c = makeCanvas(w, h);
+  if (reveal) { const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); }
+  return c;
+}
+function cloneMask(m) { return m ? { ...m, canvas: cloneCanvas(m.canvas) } : null; }
+const maskScratch = new WeakMap();
+/** Layer pixels with its mask applied (or the raw canvas when there is no enabled mask). */
+function renderSource(l) {
+  if (!l.mask || !l.mask.enabled) return l.canvas;
+  let c = maskScratch.get(l);
+  if (!c || c.width !== l.canvas.width || c.height !== l.canvas.height) { c = makeCanvas(l.canvas.width, l.canvas.height); maskScratch.set(l, c); }
+  const x = c.getContext('2d');
+  x.globalCompositeOperation = 'source-over'; x.clearRect(0, 0, c.width, c.height);
+  x.drawImage(l.canvas, 0, 0);
+  x.globalCompositeOperation = 'destination-in'; x.drawImage(l.mask.canvas, 0, 0);
+  x.globalCompositeOperation = 'source-over';
+  return c;
+}
+const luminance = (hex) => { const [r, g, b] = hexToRgb(hex); return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; };
 const doc = () => state.doc;
 const activeLayer = () => state.doc?.layers.find((l) => l.id === state.doc.activeId);
 const activeIndex = () => state.doc.layers.findIndex((l) => l.id === state.doc.activeId);
@@ -74,12 +108,16 @@ function opRegion(layer) {
   if (!sel) return full;
   return rectIntersect(full, { x: sel.x - layer.x, y: sel.y - layer.y, w: sel.w, h: sel.h });
 }
-function clipToSelection(ctx, layer) {
+/** Restrict a layer-sized canvas to the selection (multiplies alpha by the selection mask). */
+function maskBySelection(ctx, layer) {
   const sel = doc().selection;
   if (!sel) return;
-  ctx.beginPath();
-  ctx.rect(sel.x - layer.x, sel.y - layer.y, sel.w, sel.h);
-  ctx.clip();
+  ctx.save(); ctx.globalCompositeOperation = 'destination-in'; ctx.globalAlpha = 1;
+  ctx.drawImage(selectionCanvas(sel), -layer.x, -layer.y);
+  ctx.restore();
+}
+function setSelection(sel, label) {
+  doc().selection = sel; commit(label); requestRender(); buildOptionsBar();
 }
 /** Grow a layer's canvas so it covers the whole document (used before painting). */
 function ensureCoversDoc(layer) {
@@ -89,7 +127,13 @@ function ensureCoversDoc(layer) {
   if (x0 === layer.x && y0 === layer.y && x1 - x0 === layer.canvas.width && y1 - y0 === layer.canvas.height) return;
   const c = makeCanvas(x1 - x0, y1 - y0);
   c.getContext('2d').drawImage(layer.canvas, layer.x - x0, layer.y - y0);
-  layer.canvas = c; layer.x = x0; layer.y = y0;
+  if (layer.mask) { // newly added area is revealed
+    const m = makeMaskCanvas(x1 - x0, y1 - y0), mx = m.getContext('2d');
+    mx.clearRect(layer.x - x0, layer.y - y0, layer.canvas.width, layer.canvas.height);
+    mx.drawImage(layer.mask.canvas, layer.x - x0, layer.y - y0);
+    layer.mask.canvas = m; touchMask(layer);
+  }
+  layer.canvas = c; layer.x = x0; layer.y = y0; touch(layer);
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +157,7 @@ function documentFromImage(img, name) {
 }
 function afterDocChange(label) {
   history.entries = []; history.index = -1;
-  state.crop = null;
+  state.crop = null; state.poly = null; state.selPreview = null; state.cloneSrc = null; state.cloneOffset = null;
   compDirty = true;
   commit(label);
   fitToScreen();
@@ -129,12 +173,14 @@ function snapshot() {
   const d = doc();
   return {
     width: d.width, height: d.height, activeId: d.activeId,
-    selection: d.selection ? { ...d.selection } : null,
+    selection: d.selection, // selections are immutable, so they can be shared
     layers: d.layers.map((l) => {
       const old = prev?.layers.find((p) => p.id === l.id && p.rev === l.rev);
+      const oldMask = l.mask && prev?.layers.find((p) => p.id === l.id && p.mask && p.mask.rev === l.mask.rev)?.mask;
       return {
         id: l.id, name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend,
-        x: l.x, y: l.y, rev: l.rev, canvas: old ? old.canvas : cloneCanvas(l.canvas),
+        x: l.x, y: l.y, rev: l.rev, canvas: old ? old.canvas : cloneCanvas(l.canvas), editMask: l.editMask,
+        mask: l.mask ? { enabled: l.mask.enabled, rev: l.mask.rev, canvas: oldMask ? oldMask.canvas : cloneCanvas(l.mask.canvas) } : null,
       };
     }),
   };
@@ -156,8 +202,9 @@ function restore(i) {
   const s = e.snap;
   state.doc.width = s.width; state.doc.height = s.height;
   state.doc.activeId = s.activeId;
-  state.doc.selection = s.selection ? { ...s.selection } : null;
-  state.doc.layers = s.layers.map((l) => ({ ...l, canvas: cloneCanvas(l.canvas) }));
+  state.doc.selection = s.selection;
+  state.doc.layers = s.layers.map((l) => ({ ...l, canvas: cloneCanvas(l.canvas), mask: cloneMask(l.mask) }));
+  state.poly = null; state.selPreview = null;
   history.index = i;
   state.crop = null;
   compDirty = true;
@@ -190,7 +237,7 @@ function composite(target = comp, opts = {}) {
     if (!l.visible || l.opacity <= 0) continue;
     c.globalAlpha = l.opacity;
     c.globalCompositeOperation = l.blend;
-    c.drawImage(l.canvas, l.x, l.y);
+    c.drawImage(renderSource(l), l.x, l.y);
   }
   c.restore();
   return target;
@@ -233,14 +280,35 @@ function render() {
     vctx.save(); vctx.strokeStyle = '#7a5cff'; vctx.setLineDash([4, 3]);
     vctx.strokeRect(x + .5, y + .5, al.canvas.width * z, al.canvas.height * z); vctx.restore();
   }
-  if (d.selection) {
-    const s = d.selection; const [x, y] = toS(s.x, s.y);
-    vctx.save(); vctx.lineWidth = 1;
-    vctx.strokeStyle = '#000'; vctx.setLineDash([5, 5]); vctx.lineDashOffset = -antsOffset;
-    vctx.strokeRect(Math.round(x) + .5, Math.round(y) + .5, Math.round(s.w * z), Math.round(s.h * z));
-    vctx.strokeStyle = '#fff'; vctx.lineDashOffset = -antsOffset + 5;
-    vctx.strokeRect(Math.round(x) + .5, Math.round(y) + .5, Math.round(s.w * z), Math.round(s.h * z));
+  const ants = (pathObj, closed = true) => { // marching ants in document space
+    vctx.save(); vctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * px, dpr * py);
+    vctx.lineWidth = 1 / z; vctx.setLineDash([5 / z, 5 / z]);
+    vctx.strokeStyle = '#000'; vctx.lineDashOffset = -antsOffset / z; vctx.stroke(pathObj);
+    vctx.strokeStyle = '#fff'; vctx.lineDashOffset = (-antsOffset + 5) / z; vctx.stroke(pathObj);
     vctx.restore();
+  };
+  if (d.selection) ants(selectionOutline(d.selection));
+  if (state.selPreview) {
+    const sp = state.selPreview, path = new Path2D();
+    if (sp.rect) path.rect(sp.rect.x, sp.rect.y, sp.rect.w, sp.rect.h);
+    else if (sp.pts?.length) { path.moveTo(sp.pts[0].x, sp.pts[0].y); for (const q of sp.pts) path.lineTo(q.x, q.y); path.closePath(); }
+    ants(path);
+  }
+  if (state.poly?.pts.length) {
+    const path = new Path2D(), pts = state.poly.pts;
+    path.moveTo(pts[0].x, pts[0].y); for (const q of pts) path.lineTo(q.x, q.y);
+    if (state.hover) path.lineTo(state.hover.x, state.hover.y);
+    ants(path);
+    const [fx, fy] = toS(pts[0].x, pts[0].y);
+    vctx.save(); vctx.strokeStyle = '#fff'; vctx.fillStyle = '#e8553a'; vctx.beginPath(); vctx.arc(fx, fy, 4, 0, Math.PI * 2); vctx.fill(); vctx.stroke(); vctx.restore();
+  }
+  if (state.tool === 'clone' && state.cloneSrc) {
+    const off = drag?.clone ? { dx: drag.dx, dy: drag.dy } : state.opts.cloneAligned ? state.cloneOffset : null;
+    const src = off && state.hover ? { x: state.hover.x + off.dx, y: state.hover.y + off.dy } : state.cloneSrc;
+    const [cx, cy] = toS(src.x, src.y);
+    vctx.save(); vctx.lineWidth = 3; vctx.strokeStyle = '#000a';
+    const cross = () => { vctx.beginPath(); vctx.moveTo(cx - 9, cy); vctx.lineTo(cx + 9, cy); vctx.moveTo(cx, cy - 9); vctx.lineTo(cx, cy + 9); vctx.stroke(); };
+    cross(); vctx.lineWidth = 1; vctx.strokeStyle = '#fff'; cross(); vctx.restore();
   }
   if (state.crop) {
     const c = state.crop; const [x, y] = toS(c.x, c.y); const cw = c.w * z, ch = c.h * z;
@@ -254,8 +322,8 @@ function render() {
     }
     vctx.restore();
   }
-  if (state.hover && (state.tool === 'brush' || state.tool === 'eraser')) {
-    const size = state.tool === 'brush' ? state.opts.brushSize : state.opts.eraserSize;
+  if (state.hover && (state.tool === 'brush' || state.tool === 'eraser' || state.tool === 'clone')) {
+    const size = state.opts[`${state.tool}Size`];
     const [x, y] = toS(state.hover.x, state.hover.y);
     const r = Math.max(1, (size / 2) * z);
     vctx.save(); vctx.beginPath(); vctx.arc(x, y, r, 0, Math.PI * 2);
@@ -264,7 +332,7 @@ function render() {
   }
 }
 setInterval(() => {
-  if (doc()?.selection) { antsOffset = (antsOffset + 1) % 10; requestRender(); }
+  if (doc()?.selection || state.poly || state.selPreview) { antsOffset = (antsOffset + 1) % 10; requestRender(); }
 }, 90);
 
 function fitToScreen() {
@@ -301,10 +369,14 @@ function screenToDoc(e) {
 const TOOLS = [
   { id: 'move', name: 'Move', key: 'V' },
   { id: 'select', name: 'Rectangle select', key: 'M' },
+  { id: 'lasso', name: 'Lasso', key: 'L' },
+  { id: 'polylasso', name: 'Polygonal lasso', key: 'P' },
+  { id: 'wand', name: 'Magic wand', key: 'W' },
   { id: 'crop', name: 'Crop', key: 'C' },
   { sep: true },
   { id: 'brush', name: 'Brush', key: 'B' },
   { id: 'eraser', name: 'Eraser', key: 'E' },
+  { id: 'clone', name: 'Clone stamp (Alt+click sets source)', key: 'S' },
   { id: 'fill', name: 'Fill', key: 'G' },
   { id: 'text', name: 'Text', key: 'T' },
   { id: 'eyedropper', name: 'Color picker', key: 'I' },
@@ -315,9 +387,10 @@ const TOOLS = [
 
 function setTool(id) {
   if (state.tool === 'crop' && id !== 'crop') state.crop = null;
+  if (state.tool === 'polylasso' && id !== 'polylasso') state.poly = null;
   state.tool = id;
   for (const b of document.querySelectorAll('#toolbar button')) b.classList.toggle('active', b.dataset.tool === id);
-  const cursors = { move: 'move', select: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
+  const cursors = { move: 'move', select: 'crosshair', lasso: 'crosshair', polylasso: 'crosshair', wand: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', clone: 'none', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
   view.style.cursor = cursors[id] || 'default';
   buildOptionsBar();
   requestRender();
@@ -350,6 +423,47 @@ let drag = null;
 let lastPaintPoint = null;
 let spaceDown = false;
 
+// --- selection helpers ------------------------------------------------------
+/** Shift = add, Alt = subtract, Shift+Alt = intersect; otherwise the options-bar mode. */
+function selModeFor(e) {
+  if (e.shiftKey && e.altKey) return 'intersect';
+  if (e.shiftKey) return 'add';
+  if (e.altKey) return 'subtract';
+  return state.opts.selMode;
+}
+const MODE_LABEL = { new: '', add: ' (add)', subtract: ' (subtract)', intersect: ' (intersect)' };
+function applyShape(shape, mode, label) {
+  const d = doc();
+  const sel = combine(d.selection, d.width, d.height, shape, mode);
+  setSelection(sel, sel ? label + MODE_LABEL[mode] : 'Deselect');
+}
+function polygonMask(pts) {
+  const d = doc();
+  return shapeMask(d.width, d.height, (x) => { x.moveTo(pts[0].x, pts[0].y); for (const q of pts) x.lineTo(q.x, q.y); x.closePath(); });
+}
+function finishPolygon() {
+  const poly = state.poly; state.poly = null;
+  if (!poly || poly.pts.length < 3) { requestRender(); return; }
+  applyShape(polygonMask(poly.pts), poly.mode, 'Polygonal lasso');
+}
+function magicWand(p, mode) {
+  const d = doc(), x = Math.floor(p.x), y = Math.floor(p.y);
+  if (x < 0 || y < 0 || x >= d.width || y >= d.height) return;
+  let img;
+  if (state.opts.wandSampleAll) {
+    if (compDirty) { composite(); compDirty = false; }
+    img = compCtx.getImageData(0, 0, d.width, d.height);
+  } else {
+    const l = activeLayer(), c = makeCanvas(d.width, d.height);
+    c.getContext('2d').drawImage(l.canvas, l.x, l.y);
+    img = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, d.width, d.height);
+  }
+  const tol = state.opts.wandTolerance;
+  const m = state.opts.wandContiguous ? floodMask(img, x, y, tol) : similarMask(img, x, y, tol);
+  for (let i = 0; i < m.length; i++) if (m[i]) m[i] = 255;
+  applyShape(m, mode, 'Magic wand');
+}
+
 const toolHandlers = {
   move: {
     down(p) { const l = activeLayer(); if (!l) return; drag = { start: p, ox: l.x, oy: l.y, layer: l, moved: false }; },
@@ -360,24 +474,49 @@ const toolHandlers = {
     up() { if (drag.moved) commit('Move layer'); },
   },
   select: {
-    down(p) { drag = { start: clampPt(p), moved: false }; },
-    move(p, e) {
-      const r = rectFromPoints(drag.start, clampPt(p), e.shiftKey);
-      doc().selection = r.w >= 1 && r.h >= 1 ? r : null; drag.moved = true; requestRender(); buildOptionsBar();
+    down(p, e) { drag = { start: clampPt(p), moved: false, mode: selModeFor(e) }; },
+    move(p) {
+      const r = rectFromPoints(drag.start, clampPt(p), false);
+      state.selPreview = r.w >= 1 && r.h >= 1 ? { rect: r } : null; drag.moved = true; requestRender();
     },
     up() {
-      if (!drag.moved) { if (doc().selection) { doc().selection = null; commit('Deselect'); } }
-      else commit(doc().selection ? 'Rectangle select' : 'Deselect');
-      buildOptionsBar(); requestRender();
+      const r = state.selPreview?.rect; state.selPreview = null;
+      if (!drag.moved || !r) { if (drag.mode === 'new' && doc().selection) setSelection(null, 'Deselect'); requestRender(); return; }
+      const d = doc();
+      applyShape(rectMask(d.width, d.height, r), drag.mode, 'Rectangle select');
     },
   },
+  lasso: {
+    down(p, e) { drag = { mode: selModeFor(e), pts: [p] }; state.selPreview = { pts: drag.pts }; },
+    move(p) {
+      const last = drag.pts[drag.pts.length - 1];
+      if (Math.hypot(p.x - last.x, p.y - last.y) * state.zoom >= 2) { drag.pts.push(p); requestRender(); }
+    },
+    up() {
+      state.selPreview = null;
+      if (drag.pts.length < 3) { if (drag.mode === 'new' && doc().selection) setSelection(null, 'Deselect'); requestRender(); return; }
+      applyShape(polygonMask(drag.pts), drag.mode, 'Lasso');
+    },
+  },
+  polylasso: {
+    down(p, e) {
+      drag = {};
+      if (!state.poly) { state.poly = { pts: [p], mode: selModeFor(e) }; requestRender(); return; }
+      const pts = state.poly.pts, first = pts[0];
+      const nearStart = Math.hypot(p.x - first.x, p.y - first.y) * state.zoom < 8;
+      if (e.detail >= 2 || (nearStart && pts.length >= 3)) { finishPolygon(); return; }
+      pts.push(p); requestRender();
+    },
+  },
+  wand: { down(p, e) { magicWand(p, selModeFor(e)); } },
   crop: {
     down(p) { drag = { start: clampPt(p) }; },
     move(p, e) { state.crop = rectFromPoints(drag.start, clampPt(p), e.shiftKey); buildOptionsBar(); requestRender(); },
     up() { if (state.crop && (state.crop.w < 2 || state.crop.h < 2)) state.crop = null; buildOptionsBar(); requestRender(); },
   },
-  brush: paintTool(false),
-  eraser: paintTool(true),
+  brush: paintTool('brush'),
+  eraser: paintTool('eraser'),
+  clone: paintTool('clone'),
   fill: { down(p) { fillAt(p); } },
   eyedropper: { down(p) { drag = {}; pickColor(p); }, move(p) { pickColor(p); } },
   text: { down(p) { openTextDialog(p); } },
@@ -394,25 +533,40 @@ function rectFromPoints(a, b, square) {
   return { x: Math.round(x), y: Math.round(y), w: Math.round(Math.abs(w)), h: Math.round(Math.abs(h)) };
 }
 
-function paintTool(erase) {
+/** Brush, eraser and clone stamp share the same stroke machinery. */
+function paintTool(kind) {
+  const erase = kind === 'eraser', clone = kind === 'clone';
   return {
     down(p, e) {
       const layer = activeLayer(); if (!layer) return;
       if (!layer.visible) { status('The active layer is hidden. Show it to paint.'); return; }
-      if (e.altKey && !erase) { pickColor(p); return; }
+      if (clone) {
+        if (e.altKey) { state.cloneSrc = { x: p.x, y: p.y }; state.cloneOffset = null; status(`Clone source set at ${Math.round(p.x)}, ${Math.round(p.y)}`); buildOptionsBar(); requestRender(); return; }
+        if (!state.cloneSrc) { status('Alt+click to set a clone source first.'); return; }
+        if (editingMask(layer)) { status('The clone stamp paints layer pixels. Click the layer thumbnail to target pixels.'); return; }
+      } else if (e.altKey && kind === 'brush') { pickColor(p); return; }
       ensureCoversDoc(layer);
       const o = state.opts;
-      const size = erase ? o.eraserSize : o.brushSize;
-      const hardness = (erase ? o.eraserHardness : o.brushHardness) / 100;
+      const size = o[`${kind}Size`];
+      const hardness = o[`${kind}Hardness`] / 100;
+      const onMask = editingMask(layer);
+      const canvas = targetCanvas(layer);
       drag = {
-        layer, erase, size,
-        opacity: (erase ? o.eraserOpacity : o.brushOpacity) / 100,
-        backup: cloneCanvas(layer.canvas),
-        stroke: makeCanvas(layer.canvas.width, layer.canvas.height),
-        stamp: makeStamp(size, hardness, erase ? '#000000' : state.fg),
+        layer, erase, clone, onMask, canvas, size,
+        opacity: o[`${kind}Opacity`] / 100,
+        lum: onMask && !erase ? luminance(state.fg) : 0,
+        backup: cloneCanvas(canvas),
+        stroke: makeCanvas(canvas.width, canvas.height),
+        tmp: doc().selection || clone ? makeCanvas(canvas.width, canvas.height) : null,
+        stamp: makeStamp(size, hardness, erase || clone || onMask ? '#ffffff' : state.fg),
         last: null,
       };
-      if (e.shiftKey && lastPaintPoint) stampLine(lastPaintPoint, p);
+      if (clone) {
+        if (!o.cloneAligned || !state.cloneOffset) state.cloneOffset = { dx: state.cloneSrc.x - p.x, dy: state.cloneSrc.y - p.y };
+        drag.dx = state.cloneOffset.dx; drag.dy = state.cloneOffset.dy;
+        drag.srcTmp = makeCanvas(canvas.width, canvas.height);
+      }
+      if (e.shiftKey && lastPaintPoint && !clone) stampLine(lastPaintPoint, p);
       else stampAt(p);
       drag.last = p;
       applyStroke();
@@ -424,8 +578,9 @@ function paintTool(erase) {
     up() {
       if (!drag?.stroke) return;
       lastPaintPoint = drag.last;
-      touch(drag.layer);
-      commit(erase ? 'Eraser' : 'Brush stroke');
+      if (drag.onMask) touchMask(drag.layer); else touch(drag.layer);
+      commit(clone ? 'Clone stamp' : drag.onMask ? (erase ? 'Erase mask' : 'Paint mask') : erase ? 'Eraser' : 'Brush stroke');
+      updateLayersPanel();
     },
   };
 }
@@ -439,15 +594,37 @@ function stampLine(a, b) {
   const n = Math.max(1, Math.ceil(dist / step));
   for (let i = 1; i <= n; i++) stampAt({ x: a.x + ((b.x - a.x) * i) / n, y: a.y + ((b.y - a.y) * i) / n });
 }
+/** Re-render the whole stroke from the backup (keeps opacity uniform within a stroke). */
 function applyStroke() {
-  const l = drag.layer, c = ctxOf(l.canvas);
+  const l = drag.layer, cv = drag.canvas, c = ctxOf(cv);
+  // coverage = stroke stamps limited by the selection
+  let cover = drag.stroke;
+  if (drag.tmp && doc().selection) {
+    const t = drag.tmp.getContext('2d');
+    t.globalCompositeOperation = 'copy'; t.drawImage(drag.stroke, 0, 0); t.globalCompositeOperation = 'source-over';
+    maskBySelection(t, l);
+    cover = drag.tmp;
+  }
   c.save();
-  c.clearRect(0, 0, l.canvas.width, l.canvas.height);
+  c.globalCompositeOperation = 'copy';
   c.drawImage(drag.backup, 0, 0);
-  clipToSelection(c, l);
-  c.globalAlpha = drag.opacity;
-  c.globalCompositeOperation = drag.erase ? 'destination-out' : 'source-over';
-  c.drawImage(drag.stroke, 0, 0);
+  c.globalCompositeOperation = 'source-over';
+  if (drag.clone) {
+    // source pixels shifted by the clone offset, cut to the brush coverage
+    const t = drag.srcTmp.getContext('2d');
+    t.globalCompositeOperation = 'copy'; t.drawImage(drag.backup, -drag.dx, -drag.dy);
+    t.globalCompositeOperation = 'destination-in'; t.drawImage(cover, 0, 0);
+    t.globalCompositeOperation = 'source-over';
+    c.globalAlpha = drag.opacity; c.drawImage(drag.srcTmp, 0, 0);
+  } else if (drag.onMask) {
+    // mask' = mask * (1 - a) + lum * a   (white reveals, black hides)
+    c.globalAlpha = drag.opacity; c.globalCompositeOperation = 'destination-out'; c.drawImage(cover, 0, 0);
+    if (drag.lum > 0) { c.globalAlpha = drag.opacity * drag.lum; c.globalCompositeOperation = 'lighter'; c.drawImage(cover, 0, 0); }
+  } else {
+    c.globalAlpha = drag.opacity;
+    c.globalCompositeOperation = drag.erase ? 'destination-out' : 'source-over';
+    c.drawImage(cover, 0, 0);
+  }
   c.restore();
   compDirty = true; requestRender();
 }
@@ -455,30 +632,35 @@ function applyStroke() {
 function fillAt(p) {
   const layer = activeLayer(); if (!layer) return;
   const sel = doc().selection;
-  if (sel && !(p.x >= sel.x && p.x < sel.x + sel.w && p.y >= sel.y && p.y < sel.y + sel.h)) return;
+  const px = Math.floor(p.x), py = Math.floor(p.y);
+  if (sel && !(px >= 0 && py >= 0 && px < sel.W && py < sel.H && sel.mask[py * sel.W + px])) return;
   ensureCoversDoc(layer);
-  const c = ctxOf(layer.canvas);
-  const W = layer.canvas.width, H = layer.canvas.height;
+  const onMask = editingMask(layer), cv = targetCanvas(layer);
+  const c = ctxOf(cv);
+  const W = cv.width, H = cv.height;
   const img = c.getImageData(0, 0, W, H);
-  const lx = Math.floor(p.x - layer.x), ly = Math.floor(p.y - layer.y);
+  const lx = px - layer.x, ly = py - layer.y;
   if (lx < 0 || ly < 0 || lx >= W || ly >= H) return;
   const bounds = opRegion(layer);
   const tol = state.opts.fillTolerance;
-  let mask;
-  if (state.opts.fillContiguous) mask = floodMask(img, lx, ly, tol, bounds);
-  else {
-    mask = new Uint8Array(W * H);
-    const d = img.data, si = (ly * W + lx) * 4;
-    for (let y = bounds.y; y < bounds.y + bounds.h; y++) for (let x = bounds.x; x < bounds.x + bounds.w; x++) {
-      const i = (y * W + x) * 4;
-      if (Math.abs(d[i] - d[si]) + Math.abs(d[i + 1] - d[si + 1]) + Math.abs(d[i + 2] - d[si + 2]) + Math.abs(d[i + 3] - d[si + 3]) <= tol * 4) mask[y * W + x] = 1;
-    }
-  }
-  const [r, g, b] = hexToRgb(state.fg);
+  const mask = state.opts.fillContiguous ? floodMask(img, lx, ly, tol, bounds) : similarMask(img, lx, ly, tol, bounds);
+  const fill = onMask ? [255, 255, 255, Math.round(luminance(state.fg) * 255)] : [...hexToRgb(state.fg), 255];
   const d = img.data;
-  for (let i = 0; i < mask.length; i++) if (mask[i]) { d[i * 4] = r; d[i * 4 + 1] = g; d[i * 4 + 2] = b; d[i * 4 + 3] = 255; }
+  for (let i = 0; i < mask.length; i++) {
+    if (!mask[i]) continue;
+    let k = 1;
+    if (sel) {
+      const dx = (i % W) + layer.x, dy = ((i / W) | 0) + layer.y;
+      k = dx >= 0 && dy >= 0 && dx < sel.W && dy < sel.H ? sel.mask[dy * sel.W + dx] / 255 : 0;
+      if (!k) continue;
+    }
+    const j = i * 4;
+    if (onMask) { d[j] = d[j + 1] = d[j + 2] = 255; }
+    for (let ch = onMask ? 3 : 0; ch < 4; ch++) d[j + ch] = d[j + ch] + (fill[ch] - d[j + ch]) * k;
+  }
   c.putImageData(img, 0, 0);
-  touch(layer); requestRender(); commit('Fill');
+  if (onMask) touchMask(layer); else touch(layer);
+  requestRender(); commit(onMask ? 'Fill mask' : 'Fill'); updateLayersPanel();
 }
 
 function pickColor(p) {
@@ -511,6 +693,7 @@ view.addEventListener('pointerdown', (e) => {
     return;
   }
   if (e.button !== 0) return;
+  if (state.busy) { status('Still processing… one moment.'); return; }
   toolHandlers[state.tool]?.down?.(p, e);
 });
 view.addEventListener('pointermove', (e) => {
@@ -522,7 +705,7 @@ view.addEventListener('pointermove', (e) => {
     state.panX = drag.px + e.clientX - drag.sx; state.panY = drag.py + e.clientY - drag.sy; requestRender(); return;
   }
   if (drag && e.buttons & 1) toolHandlers[state.tool]?.move?.(p, e);
-  if (state.tool === 'brush' || state.tool === 'eraser') requestRender();
+  if (['brush', 'eraser', 'clone', 'polylasso'].includes(state.tool)) requestRender();
 });
 view.addEventListener('pointerup', (e) => {
   if (drag?.pan) { drag = null; setTool(state.tool); return; }
@@ -551,6 +734,11 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (isTyping(e)) return;
+  if (state.poly) {
+    if (e.key === 'Enter') { e.preventDefault(); finishPolygon(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); state.poly = null; requestRender(); return; }
+    if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); state.poly.pts.pop(); if (!state.poly.pts.length) state.poly = null; requestRender(); return; }
+  }
   const mod = e.ctrlKey || e.metaKey;
   const key = e.key.toLowerCase();
   const combo = (mod ? 'mod+' : '') + (e.shiftKey ? 'shift+' : '') + (e.altKey ? 'alt+' : '') + key;
@@ -577,7 +765,7 @@ let commitTimer = null;
 function commitDebounced(label) { clearTimeout(commitTimer); commitTimer = setTimeout(() => commit(label), 350); }
 
 function adjustBrushSize(dir) {
-  const k = state.tool === 'eraser' ? 'eraserSize' : 'brushSize';
+  const k = state.tool === 'eraser' ? 'eraserSize' : state.tool === 'clone' ? 'cloneSize' : 'brushSize';
   const v = state.opts[k];
   state.opts[k] = Math.max(1, Math.min(1000, Math.round(v + dir * Math.max(1, v * 0.1))));
   buildOptionsBar(); requestRender();
@@ -595,16 +783,51 @@ const cmds = {
   saveProject: needDoc(() => saveProject()),
   export: needDoc(() => openExportDialog()),
   undo, redo,
-  selectAll: needDoc(() => { doc().selection = { x: 0, y: 0, w: doc().width, h: doc().height }; commit('Select all'); requestRender(); buildOptionsBar(); }),
-  deselect: needDoc(() => { if (doc().selection) { doc().selection = null; commit('Deselect'); requestRender(); buildOptionsBar(); } }),
+  selectAll: needDoc(() => { const d = doc(); setSelection(makeSelection(d.width, d.height, rectMask(d.width, d.height, { x: 0, y: 0, w: d.width, h: d.height })), 'Select all'); }),
+  deselect: needDoc(() => { state.poly = null; if (doc().selection) setSelection(null, 'Deselect'); }),
+  invertSelection: needDoc(() => { const d = doc(); setSelection(invertSelection(d.selection, d.width, d.height), 'Invert selection'); }),
+  feather: needDoc(() => openFeatherDialog()),
+  selectLayerPixels: needDoc(() => {
+    const d = doc(), l = activeLayer(), c = makeCanvas(d.width, d.height);
+    c.getContext('2d').drawImage(renderSource(l), l.x, l.y);
+    const a = ctxOf(c).getImageData(0, 0, d.width, d.height).data, m = new Uint8Array(d.width * d.height);
+    for (let i = 0; i < m.length; i++) m[i] = a[i * 4 + 3];
+    setSelection(makeSelection(d.width, d.height, m), 'Select layer pixels');
+  }),
   clear: needDoc(() => {
     const l = activeLayer(), r = opRegion(l); if (!r) return;
-    ctxOf(l.canvas).clearRect(r.x, r.y, r.w, r.h); touch(l); requestRender(); commit('Clear');
+    const c = ctxOf(targetCanvas(l)), sel = doc().selection;
+    if (sel) { c.save(); c.globalCompositeOperation = 'destination-out'; c.drawImage(selectionCanvas(sel), -l.x, -l.y); c.restore(); }
+    else c.clearRect(r.x, r.y, r.w, r.h);
+    touchTarget(l); requestRender(); commit(editingMask(l) ? 'Clear mask' : 'Clear'); updateLayersPanel();
   }),
   fillSelection: needDoc(() => {
-    const l = activeLayer(); ensureCoversDoc(l); const r = opRegion(l); if (!r) return;
-    const c = ctxOf(l.canvas); c.fillStyle = state.fg; c.fillRect(r.x, r.y, r.w, r.h); touch(l); requestRender(); commit('Fill selection');
+    const l = activeLayer(); ensureCoversDoc(l); if (!opRegion(l)) return;
+    const cv = targetCanvas(l), onMask = editingMask(l);
+    const t = makeCanvas(cv.width, cv.height), tx = t.getContext('2d');
+    tx.fillStyle = onMask ? '#fff' : state.fg; tx.fillRect(0, 0, t.width, t.height); maskBySelection(tx, l);
+    const c = ctxOf(cv); c.save();
+    if (onMask) {
+      c.globalCompositeOperation = 'destination-out'; c.drawImage(t, 0, 0);
+      const L = luminance(state.fg); if (L > 0) { c.globalAlpha = L; c.globalCompositeOperation = 'lighter'; c.drawImage(t, 0, 0); }
+    } else c.drawImage(t, 0, 0);
+    c.restore(); touchTarget(l); requestRender(); commit(onMask ? 'Fill mask' : 'Fill selection'); updateLayersPanel();
   }),
+  addMask: needDoc(() => addMask(false)),
+  addMaskFromSelection: needDoc(() => addMask(true)),
+  toggleMask: needDoc(() => { const l = activeLayer(); if (!l.mask) return status('This layer has no mask.'); l.mask.enabled = !l.mask.enabled; touchMask(l); requestRender(); commit(l.mask.enabled ? 'Enable layer mask' : 'Disable layer mask'); }),
+  editMaskToggle: needDoc(() => { const l = activeLayer(); if (!l.mask) return status('This layer has no mask.'); setMaskTarget(l, !l.editMask); }),
+  invertMask: needDoc(() => {
+    const l = activeLayer(); if (!l.mask) return status('This layer has no mask.');
+    const m = makeMaskCanvas(l.canvas.width, l.canvas.height), x = m.getContext('2d');
+    x.globalCompositeOperation = 'destination-out'; x.drawImage(l.mask.canvas, 0, 0);
+    l.mask.canvas = m; touchMask(l); requestRender(); commit('Invert layer mask');
+  }),
+  applyMask: needDoc(() => {
+    const l = activeLayer(); if (!l.mask) return status('This layer has no mask.');
+    l.canvas = bakeMask(l); l.mask = null; l.editMask = false; touch(l); requestRender(); commit('Apply layer mask');
+  }),
+  deleteMask: needDoc(() => { const l = activeLayer(); if (!l.mask) return status('This layer has no mask.'); l.mask = null; l.editMask = false; touch(l); requestRender(); commit('Delete layer mask'); }),
   copy: needDoc(() => copySelection(false)),
   copyMerged: needDoc(() => copySelection(true)),
   cut: needDoc(() => { copySelection(false); cmds.clear(); }),
@@ -612,7 +835,7 @@ const cmds = {
   layerNew: needDoc(() => addLayer(createLayer(`Layer ${nextLayerId}`, doc().width, doc().height), 'New layer')),
   layerDuplicate: needDoc(() => {
     const l = activeLayer();
-    addLayer({ ...l, id: nextLayerId++, name: `${l.name} copy`, canvas: cloneCanvas(l.canvas), rev: ++globalRev }, 'Duplicate layer');
+    addLayer({ ...l, id: nextLayerId++, name: `${l.name} copy`, canvas: cloneCanvas(l.canvas), mask: cloneMask(l.mask), rev: ++globalRev }, 'Duplicate layer');
   }),
   layerDelete: needDoc(() => {
     const d = doc(); if (d.layers.length <= 1) { status('A document needs at least one layer.'); return; }
@@ -635,7 +858,7 @@ const cmds = {
   flipLayerV: needDoc(() => transformLayer('fv', 'Flip layer vertical')),
   imageSize: needDoc(() => openImageSizeDialog()),
   canvasSize: needDoc(() => openCanvasSizeDialog()),
-  cropToSelection: needDoc(() => { if (!doc().selection) { status('Make a rectangle selection first.'); return; } cropTo(doc().selection); }),
+  cropToSelection: needDoc(() => { const s = doc().selection; if (!s) { status('Make a selection first.'); return; } cropTo({ x: s.x, y: s.y, w: s.w, h: s.h }); }),
   cropApply: needDoc(() => { if (state.crop) cropTo(state.crop); }),
   cropCancel: () => { state.crop = null; buildOptionsBar(); requestRender(); },
   zoomIn: needDoc(() => zoomAt(1.25)), zoomOut: needDoc(() => zoomAt(0.8)),
@@ -647,9 +870,9 @@ const cmds = {
   exposure: needDoc(() => openAdjust(ADJ.exposure)),
   levels: needDoc(() => openAdjust(ADJ.levels)),
   sepia: needDoc(() => openAdjust(ADJ.sepia)),
-  invert: needDoc(() => applyInstant('Invert', (img) => adjustments.invert(img))),
-  grayscale: needDoc(() => applyInstant('Grayscale', (img) => adjustments.grayscale(img))),
-  autoLevels: needDoc(() => applyInstant('Auto levels', autoLevels)),
+  invert: needDoc(() => (editingMask() ? cmds.invertMask() : applyInstant('Invert', 'invert'))),
+  grayscale: needDoc(() => applyInstant('Grayscale', 'grayscale')),
+  autoLevels: needDoc(() => applyInstant('Auto levels', 'autoLevels')),
   gaussianBlur: needDoc(() => openAdjust(ADJ.gaussianBlur)),
   sharpen: needDoc(() => openAdjust(ADJ.sharpen)),
   noise: needDoc(() => openAdjust(ADJ.noise)),
@@ -663,7 +886,7 @@ function run(name) { closeMenus(); cmds[name]?.(); }
 const SHORTCUTS = {
   'mod+n': 'new', 'mod+o': 'open', 'mod+shift+o': 'place', 'mod+s': 'saveProject', 'mod+shift+e': 'export',
   'mod+z': 'undo', 'mod+shift+z': 'redo', 'mod+y': 'redo',
-  'mod+a': 'selectAll', 'mod+d': 'deselect', 'delete': 'clear', 'backspace': 'clear', 'alt+backspace': 'fillSelection',
+  'mod+a': 'selectAll', 'mod+d': 'deselect', 'mod+shift+i': 'invertSelection', 'mod+alt+d': 'feather', 'shift+f6': 'feather', '\\': 'editMaskToggle', 'delete': 'clear', 'backspace': 'clear', 'alt+backspace': 'fillSelection',
   'mod+c': 'copy', 'mod+shift+c': 'copyMerged', 'mod+x': 'cut',
   'mod+shift+n': 'layerNew', 'mod+j': 'layerDuplicate', 'mod+e': 'layerMergeDown', 'mod+]': 'layerUp', 'mod+[': 'layerDown',
   'mod+=': 'zoomIn', 'mod++': 'zoomIn', 'mod+shift+=': 'zoomIn', 'mod+shift++': 'zoomIn', 'mod+-': 'zoomOut', 'mod+0': 'zoomFit', 'mod+1': 'zoom100',
@@ -675,14 +898,18 @@ const MENUS = [
   ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
     ['Save project', 'saveProject', 'Ctrl+S'], ['Export image…', 'export', 'Ctrl+Shift+E']]],
   ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
-    ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-', ['Select all', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'],
+    ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-',
     ['Clear', 'clear', 'Del'], ['Fill with color', 'fillSelection', 'Alt+⌫']]],
   ['Image', [['Image size…', 'imageSize'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], '-',
     ['Rotate 90° clockwise', 'rotateCW'], ['Rotate 90° counter-clockwise', 'rotateCCW'], ['Rotate 180°', 'rotate180'],
     ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Flatten', 'flatten']]],
+  ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
+    ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Delete layer', 'layerDelete'], '-',
     ['Move up', 'layerUp', 'Ctrl+]'], ['Move down', 'layerDown', 'Ctrl+['], ['Merge down', 'layerMergeDown', 'Ctrl+E'], '-',
-    ['Flip layer horizontal', 'flipLayerH'], ['Flip layer vertical', 'flipLayerV']]],
+    ['Flip layer horizontal', 'flipLayerH'], ['Flip layer vertical', 'flipLayerV'], '-',
+    ['Add layer mask (reveal all)', 'addMask'], ['Add mask from selection', 'addMaskFromSelection'], ['Edit mask / pixels', 'editMaskToggle', '\\'],
+    ['Enable / disable mask', 'toggleMask'], ['Invert mask', 'invertMask'], ['Apply mask', 'applyMask'], ['Delete mask', 'deleteMask']]],
   ['Adjust', [['Brightness / contrast…', 'brightnessContrast', 'Ctrl+B'], ['Hue / saturation / lightness…', 'hueSaturation', 'Ctrl+U'],
     ['Exposure…', 'exposure'], ['Levels…', 'levels', 'Ctrl+L'], ['Auto levels', 'autoLevels'], '-',
     ['Invert', 'invert', 'Ctrl+I'], ['Grayscale', 'grayscale', 'Ctrl+Shift+U'], ['Sepia tone…', 'sepia']]],
@@ -694,6 +921,26 @@ const MENUS = [
 // ---------------------------------------------------------------------------
 // Layer & document operations
 // ---------------------------------------------------------------------------
+function bakeMask(l) {
+  const c = cloneCanvas(l.canvas);
+  if (l.mask) { const x = c.getContext('2d'); x.globalCompositeOperation = 'destination-in'; x.drawImage(l.mask.canvas, 0, 0); }
+  return c;
+}
+function setMaskTarget(l, onMask) {
+  l.editMask = !!(onMask && l.mask);
+  status(l.editMask ? 'Editing the layer mask: paint black to hide, white to reveal.' : 'Editing layer pixels.');
+  updateLayersPanel(); buildOptionsBar();
+}
+function addMask(fromSelection) {
+  const l = activeLayer();
+  if (l.mask) { status('This layer already has a mask.'); return; }
+  const sel = doc().selection;
+  if (fromSelection && !sel) { status('Make a selection first.'); return; }
+  const m = makeMaskCanvas(l.canvas.width, l.canvas.height, !fromSelection);
+  if (fromSelection) m.getContext('2d').drawImage(selectionCanvas(sel), -l.x, -l.y);
+  l.mask = { canvas: m, enabled: true, rev: ++globalRev }; l.editMask = true;
+  compDirty = true; requestRender(); commit(fromSelection ? 'Add mask from selection' : 'Add layer mask');
+}
 function addLayer(layer, label) {
   const d = doc(); const i = activeIndex();
   d.layers.splice(i + 1, 0, layer); d.activeId = layer.id;
@@ -711,10 +958,10 @@ function mergeDown() {
   const x1 = Math.max(d.width, lower.x + lower.canvas.width, upper.x + upper.canvas.width);
   const y1 = Math.max(d.height, lower.y + lower.canvas.height, upper.y + upper.canvas.height);
   const c = makeCanvas(x1 - x0, y1 - y0), x = c.getContext('2d');
-  x.drawImage(lower.canvas, lower.x - x0, lower.y - y0);
+  x.drawImage(renderSource(lower), lower.x - x0, lower.y - y0);
   x.globalAlpha = upper.opacity; x.globalCompositeOperation = upper.blend;
-  if (upper.visible) x.drawImage(upper.canvas, upper.x - x0, upper.y - y0);
-  lower.canvas = c; lower.x = x0; lower.y = y0; touch(lower);
+  if (upper.visible) x.drawImage(renderSource(upper), upper.x - x0, upper.y - y0);
+  lower.canvas = c; lower.x = x0; lower.y = y0; lower.mask = null; lower.editMask = false; touch(lower);
   d.layers.splice(i, 1); d.activeId = lower.id;
   compDirty = true; requestRender(); commit('Merge down');
 }
@@ -740,26 +987,33 @@ function transformDoc(kind, label) {
     else if (kind === 'fh') x = W - (l.x + w);
     else if (kind === 'fv') y = H - (l.y + h);
     l.canvas = rotatedCanvas(l.canvas, kind); l.x = x; l.y = y; touch(l);
+    if (l.mask) { l.mask.canvas = rotatedCanvas(l.mask.canvas, kind); touchMask(l); }
   }
   if (kind === 'cw' || kind === 'ccw') { d.width = H; d.height = W; }
   d.selection = null;
   compDirty = true; fitToScreen(); commit(label);
 }
 function transformLayer(kind, label) {
-  const l = activeLayer(); l.canvas = rotatedCanvas(l.canvas, kind); touch(l); requestRender(); commit(label);
+  const l = activeLayer(); l.canvas = rotatedCanvas(l.canvas, kind); touch(l);
+  if (l.mask) { l.mask.canvas = rotatedCanvas(l.mask.canvas, kind); touchMask(l); }
+  requestRender(); commit(label);
 }
 function resizeImage(nw, nh) {
   const d = doc(); const sx = nw / d.width, sy = nh / d.height;
-  for (const l of d.layers) {
-    const c = makeCanvas(l.canvas.width * sx, l.canvas.height * sy), x = c.getContext('2d');
+  const scale = (srcC) => {
+    const c = makeCanvas(srcC.width * sx, srcC.height * sy), x = c.getContext('2d');
     x.imageSmoothingQuality = 'high';
-    let src = l.canvas; // step down in halves for better quality on big reductions
+    let src = srcC; // step down in halves for better quality on big reductions
     while (src.width * 0.5 > c.width && src.height * 0.5 > c.height) {
       const half = makeCanvas(src.width / 2, src.height / 2), hx = half.getContext('2d');
       hx.imageSmoothingQuality = 'high'; hx.drawImage(src, 0, 0, half.width, half.height); src = half;
     }
     x.drawImage(src, 0, 0, c.width, c.height);
-    l.canvas = c; l.x = Math.round(l.x * sx); l.y = Math.round(l.y * sy); touch(l);
+    return c;
+  };
+  for (const l of d.layers) {
+    l.canvas = scale(l.canvas); l.x = Math.round(l.x * sx); l.y = Math.round(l.y * sy); touch(l);
+    if (l.mask) { l.mask.canvas = scale(l.mask.canvas); touchMask(l); }
   }
   d.width = nw; d.height = nh; d.selection = null;
   compDirty = true; fitToScreen(); commit(`Image size ${nw}×${nh}`);
@@ -775,6 +1029,7 @@ function cropTo(r) {
   r = rectIntersect(r, { x: 0, y: 0, w: d.width, h: d.height }); if (!r) return;
   for (const l of d.layers) {
     const c = makeCanvas(r.w, r.h); c.getContext('2d').drawImage(l.canvas, l.x - r.x, l.y - r.y);
+    if (l.mask) { const m = makeCanvas(r.w, r.h); m.getContext('2d').drawImage(l.mask.canvas, l.x - r.x, l.y - r.y); l.mask.canvas = m; touchMask(l); }
     l.canvas = c; l.x = 0; l.y = 0; touch(l);
   }
   d.width = r.w; d.height = r.h; d.selection = null; state.crop = null;
@@ -785,7 +1040,8 @@ function copySelection(merged) {
   const d = doc(); const sel = d.selection || { x: 0, y: 0, w: d.width, h: d.height };
   const c = makeCanvas(sel.w, sel.h), x = c.getContext('2d');
   if (merged) { if (compDirty) { composite(); compDirty = false; } x.drawImage(comp, -sel.x, -sel.y); }
-  else { const l = activeLayer(); x.drawImage(l.canvas, l.x - sel.x, l.y - sel.y); }
+  else { const l = activeLayer(); x.drawImage(renderSource(l), l.x - sel.x, l.y - sel.y); }
+  if (d.selection) { x.globalCompositeOperation = 'destination-in'; x.drawImage(selectionCanvas(d.selection), -sel.x, -sel.y); }
   clipboard = { canvas: c, x: sel.x, y: sel.y };
   status(`Copied ${sel.w}×${sel.h}`);
 }
@@ -811,73 +1067,98 @@ document.addEventListener('paste', async (e) => {
 const ADJ = {
   brightnessContrast: { title: 'Brightness / contrast', params: [
     { key: 'brightness', label: 'Brightness', min: -100, max: 100, value: 0 },
-    { key: 'contrast', label: 'Contrast', min: -100, max: 100, value: 0 }], fn: (img, v) => adjustments.brightnessContrast(img, v) },
+    { key: 'contrast', label: 'Contrast', min: -100, max: 100, value: 0 }], op: 'brightnessContrast' },
   hueSaturation: { title: 'Hue / saturation / lightness', params: [
     { key: 'hue', label: 'Hue', min: -180, max: 180, value: 0, unit: '°' },
     { key: 'saturation', label: 'Saturation', min: -100, max: 100, value: 0 },
-    { key: 'lightness', label: 'Lightness', min: -100, max: 100, value: 0 }], fn: (img, v) => adjustments.hueSaturation(img, v) },
+    { key: 'lightness', label: 'Lightness', min: -100, max: 100, value: 0 }], op: 'hueSaturation' },
   exposure: { title: 'Exposure', params: [
     { key: 'exposure', label: 'Exposure (EV)', min: -3, max: 3, step: 0.05, value: 0 },
     { key: 'offset', label: 'Offset', min: -0.5, max: 0.5, step: 0.01, value: 0 },
-    { key: 'gamma', label: 'Gamma', min: 0.1, max: 3, step: 0.01, value: 1 }], fn: (img, v) => adjustments.exposure(img, v) },
+    { key: 'gamma', label: 'Gamma', min: 0.1, max: 3, step: 0.01, value: 1 }], op: 'exposure' },
   levels: { title: 'Levels', histogram: true, params: [
     { key: 'inBlack', label: 'Input black', min: 0, max: 254, value: 0 },
     { key: 'gamma', label: 'Midtones (γ)', min: 0.1, max: 4, step: 0.01, value: 1 },
     { key: 'inWhite', label: 'Input white', min: 1, max: 255, value: 255 },
     { key: 'outBlack', label: 'Output black', min: 0, max: 255, value: 0 },
-    { key: 'outWhite', label: 'Output white', min: 0, max: 255, value: 255 }], fn: (img, v) => adjustments.levels(img, v) },
-  sepia: { title: 'Sepia tone', params: [{ key: 'amount', label: 'Amount', min: 0, max: 100, value: 80, unit: '%' }], fn: (img, v) => adjustments.sepia(img, v) },
-  gaussianBlur: { title: 'Gaussian blur', params: [{ key: 'radius', label: 'Radius', min: 0, max: 100, step: 0.5, value: 4, unit: 'px' }], fn: (img, v) => gaussianBlur(img, v.radius) },
+    { key: 'outWhite', label: 'Output white', min: 0, max: 255, value: 255 }], op: 'levels' },
+  sepia: { title: 'Sepia tone', params: [{ key: 'amount', label: 'Amount', min: 0, max: 100, value: 80, unit: '%' }], op: 'sepia' },
+  gaussianBlur: { title: 'Gaussian blur', params: [{ key: 'radius', label: 'Radius', min: 0, max: 100, step: 0.5, value: 4, unit: 'px' }], op: 'gaussianBlur', maskOk: true },
   sharpen: { title: 'Sharpen (unsharp mask)', params: [
     { key: 'amount', label: 'Amount', min: 0, max: 300, value: 80, unit: '%' },
     { key: 'radius', label: 'Radius', min: 0.5, max: 20, step: 0.1, value: 1.5, unit: 'px' },
-    { key: 'threshold', label: 'Threshold', min: 0, max: 64, value: 2 }], fn: (img, v) => sharpen(img, v) },
+    { key: 'threshold', label: 'Threshold', min: 0, max: 64, value: 2 }], op: 'sharpen' },
   noise: { title: 'Add noise', params: [
     { key: 'amount', label: 'Amount', min: 0, max: 100, value: 12, unit: '%' },
-    { key: 'monochrome', label: 'Monochrome', type: 'checkbox', value: true }], fn: (img, v) => noise(img, { ...v, seed: 1234 }) },
+    { key: 'monochrome', label: 'Monochrome', type: 'checkbox', value: true }], op: 'noise', extra: { seed: 1234 } },
   vignette: { title: 'Vignette', params: [
     { key: 'amount', label: 'Amount', min: -100, max: 100, value: 50 },
     { key: 'size', label: 'Clear centre', min: 0, max: 100, value: 45, unit: '%' },
     { key: 'feather', label: 'Feather', min: 1, max: 100, value: 60, unit: '%' }],
-    fn: (img, v, info) => vignette(img, v, info.docW, info.docH, info.offX, info.offY) },
+    op: 'vignette' },
 };
 
 function regionInfo(layer, r) {
   return { docW: doc().width, docH: doc().height, offX: layer.x + r.x, offY: layer.y + r.y };
 }
-function applyInstant(label, fn) {
-  const l = activeLayer(), r = opRegion(l); if (!r) return;
-  const c = ctxOf(l.canvas); const img = c.getImageData(r.x, r.y, r.w, r.h);
-  fn(img, {}, regionInfo(l, r)); c.putImageData(img, r.x, r.y);
-  touch(l); requestRender(); commit(label);
+function setBusy(delta) {
+  state.busy = Math.max(0, state.busy + delta);
+  document.body.classList.toggle('busy', state.busy > 0);
+  if (state.busy > 0) status('Processing…');
 }
-function autoLevels(img) {
-  const h = histogram(img); let total = 0; for (const v of h) total += v;
-  const clip = total * 0.005; let lo = 0, hi = 255, acc = 0;
-  for (; lo < 255; lo++) { acc += h[lo]; if (acc > clip) break; }
-  acc = 0; for (; hi > 0; hi--) { acc += h[hi]; if (acc > clip) break; }
-  if (hi <= lo) return img;
-  return adjustments.levels(img, { inBlack: lo, inWhite: hi });
+/** Selection mask for a layer-space region, or null when nothing is selected. */
+function regionMask(l, r) {
+  const sel = doc().selection;
+  return sel ? maskRegion(sel, l.x + r.x, l.y + r.y, r.w, r.h) : null;
+}
+function canAdjust(l, def) {
+  if (editingMask(l) && !(def && def.maskOk)) {
+    status('This command works on layer pixels. Click the layer thumbnail to target pixels (masks support blur and invert).');
+    return false;
+  }
+  return true;
+}
+/** One-shot operation (runs in the pixel worker). */
+async function applyInstant(label, op) {
+  const l = activeLayer(); if (!canAdjust(l)) return;
+  const r = opRegion(l); if (!r) return;
+  const c = ctxOf(l.canvas); const img = c.getImageData(r.x, r.y, r.w, r.h);
+  setBusy(1);
+  try {
+    const out = await ops.process(op, img, {}, regionInfo(l, r), regionMask(l, r));
+    c.putImageData(out, r.x, r.y); touch(l); requestRender(); commit(label); status(label);
+  } catch (err) { status(`${label} failed: ${err.message}`); } finally { setBusy(-1); }
 }
 
 function openAdjust(def, presetValues = {}) {
-  const l = activeLayer(); const r = opRegion(l);
+  const l = activeLayer(); if (!canAdjust(l, def)) return;
+  const r = opRegion(l);
   if (!r) { status('The selection does not overlap the active layer.'); return; }
-  const c = ctxOf(l.canvas);
+  const onMask = editingMask(l), cv = targetCanvas(l);
+  const c = ctxOf(cv);
   const original = c.getImageData(r.x, r.y, r.w, r.h);
   const values = Object.fromEntries(def.params.map((p) => [p.key, presetValues[p.key] ?? p.value]));
-  const info = regionInfo(l, r);
-  let queued = false;
-  const preview = () => {
-    if (queued) return; queued = true;
-    requestAnimationFrame(() => {
-      queued = false;
-      if (!modalHandlers) return;
-      const img = new ImageData(new Uint8ClampedArray(original.data), original.width, original.height);
-      if ($('#modalPreview').checked) def.fn(img, values, info);
-      c.putImageData(img, r.x, r.y); compDirty = true; requestRender();
-    });
+  const info = regionInfo(l, r), selMask = regionMask(l, r);
+  const params = () => ({ ...values, ...(def.extra || {}) });
+  const touchIt = () => (onMask ? touchMask(l) : touch(l));
+  // Previews run in the worker; while one is running only the latest request is kept.
+  let closed = false, running = false, dirty = false;
+  const pump = async () => {
+    running = true;
+    while (dirty && !closed) {
+      dirty = false;
+      if (!$('#modalPreview').checked) { c.putImageData(original, r.x, r.y); compDirty = true; requestRender(); continue; }
+      setBusy(1);
+      let out = null;
+      try { out = await ops.process(def.op, original, params(), info, selMask); } catch (err) { status(err.message); }
+      setBusy(-1);
+      if (closed || !out) continue;
+      c.putImageData(out, r.x, r.y); compDirty = true; requestRender();
+      if (!state.busy) status(`${def.title}: preview`);
+    }
+    running = false;
   };
+  const preview = () => { dirty = true; if (!running) pump(); };
   const body = document.createElement('div');
   if (def.histogram) {
     const hc = document.createElement('canvas'); hc.width = 300; hc.height = 70; hc.style.cssText = 'width:100%;height:70px;background:#16171b;border-radius:4px';
@@ -887,13 +1168,35 @@ function openAdjust(def, presetValues = {}) {
   showModal({
     title: def.title, body, preview: true, passive: true,
     onPreviewToggle: preview,
-    ok: () => {
-      const img = new ImageData(new Uint8ClampedArray(original.data), original.width, original.height);
-      def.fn(img, values, info); c.putImageData(img, r.x, r.y); touch(l); requestRender(); commit(def.title);
+    ok: async () => {
+      closed = true; setBusy(1);
+      try {
+        const out = await ops.process(def.op, original, params(), info, selMask);
+        c.putImageData(out, r.x, r.y); touchIt(); requestRender(); commit(def.title); status(def.title); updateLayersPanel();
+      } catch (err) { c.putImageData(original, r.x, r.y); compDirty = true; requestRender(); status(`${def.title} failed: ${err.message}`); }
+      finally { setBusy(-1); }
     },
-    cancel: () => { c.putImageData(original, r.x, r.y); compDirty = true; requestRender(); },
+    cancel: () => { closed = true; c.putImageData(original, r.x, r.y); compDirty = true; requestRender(); },
   });
   preview();
+}
+function openFeatherDialog() {
+  const d = doc();
+  if (!d.selection) { status('Make a selection first.'); return; }
+  const body = document.createElement('div');
+  body.innerHTML = formHTML([{ label: 'Feather radius', html: `<input id="fRadius" type="number" min="0.5" max="250" step="0.5" value="${state.opts.featherRadius}" /> px` }]);
+  showModal({
+    title: 'Feather selection', body,
+    ok: async () => {
+      const radius = Math.max(0.5, Math.min(250, +$('#fRadius').value || 1));
+      state.opts.featherRadius = radius;
+      const sel = d.selection; setBusy(1);
+      try {
+        const m = await ops.featherMask(sel.mask, sel.W, sel.H, radius);
+        if (doc() === d && d.selection === sel) setSelection(makeSelection(sel.W, sel.H, m), `Feather ${radius}px`);
+      } finally { setBusy(-1); status(`Feathered selection by ${radius}px`); }
+    },
+  });
 }
 function paramField(p, values, onChange, defaultValue) {
   const row = document.createElement('label'); row.className = 'field';
@@ -1053,7 +1356,9 @@ function download(blob, filename) {
 
 function openShortcutsDialog() {
   const rows = [
-    ['V / M / C', 'Move / Rectangle select / Crop'], ['B / E / G', 'Brush / Eraser / Fill'], ['T / I', 'Text / Color picker'],
+    ['V / M / C', 'Move / Rectangle select / Crop'], ['L / P / W', 'Lasso / Polygonal lasso / Magic wand'], ['B / E / S / G', 'Brush / Eraser / Clone stamp / Fill'], ['T / I', 'Text / Color picker'],
+    ['Shift / Alt / Shift+Alt (selecting)', 'Add / subtract / intersect'], ['Ctrl+Shift+I, Shift+F6', 'Invert selection / feather'], ['Enter, double-click / Esc', 'Close / cancel polygon'],
+    ['Alt+click (clone stamp)', 'Set clone source'], ['\\', 'Toggle editing mask / pixels'],
     ['H, hold Space', 'Pan'], ['Z, mouse wheel', 'Zoom (Shift+wheel pans)'], ['[ and ]', 'Brush size'], ['Shift+click', 'Straight brush line'], ['Alt+click (brush)', 'Pick color'],
     ['X / D', 'Swap / default colors'], ['Ctrl+Z, Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+A / Ctrl+D', 'Select all / deselect'],
     ['Del, Alt+Backspace', 'Clear / fill selection'], ['Ctrl+C / X / V', 'Copy / cut / paste as layer'], ['Ctrl+J / Ctrl+E', 'Duplicate layer / merge down'],
@@ -1096,9 +1401,12 @@ $('#fileInput').addEventListener('change', (e) => { const f = e.target.files[0];
 function serializeProject() {
   const d = doc();
   return {
-    format: PROJECT_FORMAT, version: 1, app: APP, width: d.width, height: d.height, name: d.name,
+    format: PROJECT_FORMAT, version: 2, app: APP, width: d.width, height: d.height, name: d.name,
     activeIndex: activeIndex(),
-    layers: d.layers.map((l) => ({ name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, data: l.canvas.toDataURL('image/png') })),
+    layers: d.layers.map((l) => ({
+      name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, data: l.canvas.toDataURL('image/png'),
+      mask: l.mask ? { enabled: l.mask.enabled, data: l.mask.canvas.toDataURL('image/png') } : null,
+    })),
   };
 }
 function saveProject() {
@@ -1113,6 +1421,11 @@ async function loadProject(data, filename) {
     const img = await loadImage(L.data);
     const l = createLayer(L.name, img.width, img.height, { visible: L.visible, opacity: L.opacity, blend: L.blend, x: L.x, y: L.y });
     l.canvas.getContext('2d').drawImage(img, 0, 0);
+    if (L.mask?.data) {
+      const mi = await loadImage(L.mask.data);
+      const m = makeCanvas(img.width, img.height); m.getContext('2d').drawImage(mi, 0, 0);
+      l.mask = { canvas: m, enabled: L.mask.enabled !== false, rev: ++globalRev };
+    }
     layers.push(l);
   }
   if (!layers.length) throw new Error('Project has no layers');
@@ -1190,13 +1503,19 @@ function buildOptionsBar() {
   switch (state.tool) {
     case 'brush': parts.push(range('brushSize', 'Size', 1, 500, 'px'), range('brushHardness', 'Hardness', 0, 100, '%'), range('brushOpacity', 'Opacity', 1, 100, '%'), `<span class="muted">Shift+click: straight line · Alt+click: pick color</span>`); break;
     case 'eraser': parts.push(range('eraserSize', 'Size', 1, 500, 'px'), range('eraserHardness', 'Hardness', 0, 100, '%'), range('eraserOpacity', 'Opacity', 1, 100, '%')); break;
-    case 'fill': parts.push(range('fillTolerance', 'Tolerance', 0, 255), `<label><input type="checkbox" data-opt="fillContiguous" ${o.fillContiguous ? 'checked' : ''}/> Contiguous</label>`, `<button data-cmd="fillSelection">Fill selection</button>`); break;
-    case 'eyedropper': parts.push(`<label><input type="checkbox" data-opt="sampleAll" ${o.sampleAll ? 'checked' : ''}/> Sample all layers</label>`); break;
-    case 'select': {
+    case 'clone': parts.push(range('cloneSize', 'Size', 1, 500, 'px'), range('cloneHardness', 'Hardness', 0, 100, '%'), range('cloneOpacity', 'Opacity', 1, 100, '%'),
+      `<label><input type="checkbox" data-opt="cloneAligned" ${o.cloneAligned ? 'checked' : ''}/> Aligned</label>`,
+      `<span class="muted">${state.cloneSrc ? `Source ${Math.round(state.cloneSrc.x)}, ${Math.round(state.cloneSrc.y)}` : 'Alt+click to set the source'}</span>`); break;
+    case 'lasso': case 'polylasso': case 'wand': case 'select': {
       const s = d?.selection;
-      parts.push(`<span class="muted">${s ? `${s.w} × ${s.h} px at ${s.x}, ${s.y}` : 'Drag to select · Shift = square'}</span>`, `<button data-cmd="selectAll">Select all</button>`, `<button data-cmd="deselect">Deselect</button>`, `<button data-cmd="cropToSelection">Crop to selection</button>`);
+      parts.push(`<span class="seg">${['new', 'add', 'subtract', 'intersect'].map((m) => `<button data-selmode="${m}" class="${o.selMode === m ? 'on' : ''}" title="${m === 'new' ? 'New selection' : m === 'add' ? 'Add (Shift)' : m === 'subtract' ? 'Subtract (Alt)' : 'Intersect (Shift+Alt)'}">${m[0].toUpperCase() + m.slice(1)}</button>`).join('')}</span>`);
+      if (state.tool === 'wand') parts.push(range('wandTolerance', 'Tolerance', 0, 255), `<label><input type="checkbox" data-opt="wandContiguous" ${o.wandContiguous ? 'checked' : ''}/> Contiguous</label>`, `<label><input type="checkbox" data-opt="wandSampleAll" ${o.wandSampleAll ? 'checked' : ''}/> Sample all layers</label>`);
+      const hint = { select: 'Drag a rectangle', lasso: 'Drag a freehand outline', polylasso: 'Click points · double-click, Enter or click the start to close · Esc cancels', wand: 'Click a color' }[state.tool];
+      parts.push(`<span class="muted">${s ? `${s.w} × ${s.h} px at ${s.x}, ${s.y}` : hint}</span>`, `<button data-cmd="feather">Feather…</button>`, `<button data-cmd="invertSelection">Invert</button>`, `<button data-cmd="deselect">Deselect</button>`);
       break;
     }
+    case 'fill': parts.push(range('fillTolerance', 'Tolerance', 0, 255), `<label><input type="checkbox" data-opt="fillContiguous" ${o.fillContiguous ? 'checked' : ''}/> Contiguous</label>`, `<button data-cmd="fillSelection">Fill selection</button>`); break;
+    case 'eyedropper': parts.push(`<label><input type="checkbox" data-opt="sampleAll" ${o.sampleAll ? 'checked' : ''}/> Sample all layers</label>`); break;
     case 'crop': {
       const c = state.crop;
       parts.push(`<span class="muted">${c ? `${c.w} × ${c.h} px` : 'Drag a crop rectangle · Shift = square'}</span>`);
@@ -1208,7 +1527,10 @@ function buildOptionsBar() {
     case 'hand': case 'zoom': parts.push(`<button data-cmd="zoomFit">Fit</button>`, `<button data-cmd="zoom100">100%</button>`, `<button data-cmd="zoomIn">＋</button>`, `<button data-cmd="zoomOut">－</button>`); break;
     default: break;
   }
+  const al = activeLayer();
+  if (al && editingMask(al) && ['brush', 'eraser', 'fill'].includes(state.tool)) parts.push(`<span class="mask-badge">Editing mask</span>`);
   bar.innerHTML = parts.join('');
+  bar.querySelectorAll('[data-selmode]').forEach((b) => b.addEventListener('click', () => { o.selMode = b.dataset.selmode; buildOptionsBar(); }));
   bar.querySelectorAll('[data-opt]').forEach((inp) => {
     inp.addEventListener('input', () => {
       const k = inp.dataset.opt;
@@ -1243,10 +1565,28 @@ function updateLayersPanel() {
     const s = Math.min(40 / d.width, 30 / d.height);
     tx.save(); tx.translate((40 - d.width * s) / 2, (30 - d.height * s) / 2); tx.scale(s, s);
     tx.beginPath(); tx.rect(0, 0, d.width, d.height); tx.clip(); tx.drawImage(l.canvas, l.x, l.y); tx.restore();
+    th.className = 'thumb' + (l.id === d.activeId && l.mask && !l.editMask ? ' target' : '');
+    th.title = 'Layer pixels';
+    th.addEventListener('click', (e) => { e.stopPropagation(); d.activeId = l.id; setMaskTarget(l, false); requestRender(); });
+    let mth = null;
+    if (l.mask) {
+      mth = makeCanvas(40, 30); const mx = mth.getContext('2d');
+      mx.fillStyle = '#000'; mx.fillRect(0, 0, 40, 30);
+      mx.save(); mx.translate((40 - d.width * s) / 2, (30 - d.height * s) / 2); mx.scale(s, s);
+      mx.beginPath(); mx.rect(0, 0, d.width, d.height); mx.clip(); mx.drawImage(l.mask.canvas, l.x, l.y); mx.restore();
+      if (!l.mask.enabled) { mx.strokeStyle = '#e8453a'; mx.lineWidth = 2.5; mx.beginPath(); mx.moveTo(3, 3); mx.lineTo(37, 27); mx.moveTo(37, 3); mx.lineTo(3, 27); mx.stroke(); }
+      mth.className = 'thumb mask-thumb' + (l.id === d.activeId && l.editMask ? ' target' : '');
+      mth.title = `Layer mask${l.mask.enabled ? '' : ' (disabled)'} — click to edit · Shift+click to enable/disable`;
+      mth.addEventListener('click', (e) => {
+        e.stopPropagation(); d.activeId = l.id;
+        if (e.shiftKey) { l.mask.enabled = !l.mask.enabled; touchMask(l); requestRender(); commit(l.mask.enabled ? 'Enable layer mask' : 'Disable layer mask'); return; }
+        setMaskTarget(l, true); requestRender();
+      });
+    }
     const name = document.createElement('span'); name.className = 'name'; name.textContent = l.name; name.title = 'Double-click to rename';
     const meta = document.createElement('span'); meta.className = 'meta';
     meta.textContent = `${Math.round(l.opacity * 100)}%${l.blend !== 'source-over' ? ' · ' + BLEND_MODES.find((b) => b[0] === l.blend)?.[1] : ''}`;
-    li.append(eye, th, name, meta);
+    li.append(eye, th); if (mth) li.append(mth); li.append(name, meta);
     li.addEventListener('click', () => { d.activeId = l.id; updateLayersPanel(); buildOptionsBar(); requestRender(); });
     li.addEventListener('dblclick', () => {
       const input = document.createElement('input'); input.type = 'text'; input.value = l.name; input.style.flex = '1'; input.style.minWidth = '0';
@@ -1267,6 +1607,7 @@ function updateLayersPanel() {
     ul.append(li);
   }
   const al = activeLayer();
+  document.querySelector('#layersPanel [data-cmd="addMask"]')?.classList.toggle('on', !!al.mask);
   $('#blendMode').value = al.blend;
   $('#layerOpacity').value = Math.round(al.opacity * 100);
   $('#layerOpacityVal').textContent = `${Math.round(al.opacity * 100)}%`;
@@ -1320,5 +1661,10 @@ status(`${APP} ready — open an image (Ctrl+O), drop one in, or create a new ca
 // Small automation/testing hook (also handy from the devtools console).
 window.tintwork = {
   state, cmds, run, setTool, openFile, newDocument, history, commit, composite, activeLayer, setFg, serializeProject, openAdjust, ADJ,
+  ops, setSelection, makeSelection, rectMask, renderSource, updateLayersPanel, touch, fitToScreen,
+  compositePixel(x, y) { if (compDirty) { composite(); compDirty = false; } return [...compCtx.getImageData(x, y, 1, 1).data]; },
   get doc() { return state.doc; },
+  get workerAvailable() { return ops.workerStatus().available; },
+  /** Resolves once queued worker jobs have finished. */
+  idle: () => new Promise((res) => { const t = () => (state.busy ? setTimeout(t, 10) : res()); t(); }),
 };

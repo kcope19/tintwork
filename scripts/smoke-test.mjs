@@ -62,6 +62,7 @@ check(await page.evaluate(() => window.tintwork.doc.width === 1600 && window.tin
 await page.waitForTimeout(300);
 await page.screenshot({ path: path.join(shots, '02-opened.png') });
 
+const idle = () => page.evaluate(() => window.tintwork.idle());
 const viewBox = await page.locator('#view').boundingBox();
 const docToScreen = async (x, y) => page.evaluate(([x, y]) => {
   const s = window.tintwork.state; const r = document.querySelector('#view').getBoundingClientRect();
@@ -80,15 +81,15 @@ await page.keyboard.press('Control+u');
 await page.waitForSelector('#modal:not(.hidden)');
 const setSlider = (key, v) => page.evaluate(([key, v]) => { const i = document.querySelector(`#modalBody input[data-key="${key}"]`); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); }, [key, v]);
 await setSlider('saturation', 35); await setSlider('hue', -12);
-await page.waitForTimeout(300);
+await page.waitForTimeout(300); await idle();
 await page.screenshot({ path: path.join(shots, '03-hue-saturation-preview.png') });
-await page.click('#modalOk');
+await page.click('#modalOk'); await idle();
 check(await page.evaluate(() => window.tintwork.history.entries.at(-1).label === 'Hue / saturation / lightness'), 'hue/saturation applied to history');
 
 // --- brightness/contrast via menu ----------------------------------------------
 await menuCmd('brightnessContrast');
 await setSlider('contrast', 18); await setSlider('brightness', 6);
-await page.click('#modalOk');
+await page.click('#modalOk'); await idle();
 
 // --- new layer in Screen blend + brush strokes -------------------------------------
 await page.click('#layersPanel [data-cmd="layerNew"]');
@@ -117,14 +118,14 @@ await page.waitForSelector('#modal:not(.hidden)');
 await page.fill('#tText', 'Golden hour');
 await page.fill('#tSize', '110');
 await page.locator('#tText').dispatchEvent('input');
-await page.click('#modalOk');
+await page.click('#modalOk'); await idle();
 check(await page.evaluate(() => window.tintwork.activeLayer().name.startsWith('Text: Golden')), 'text layer created');
 
 // --- selection + vignette on the background ---------------------------------
 await page.evaluate(() => { const d = window.tintwork.doc; d.activeId = d.layers[0].id; window.tintwork.commit('Select background layer'); });
 const cornerBefore = await page.evaluate(() => [...window.tintwork.doc.layers[0].canvas.getContext('2d').getImageData(5, 1060, 1, 1).data]);
 await menuCmd('vignette');
-await page.click('#modalOk');
+await page.click('#modalOk'); await idle();
 const cornerAfter = await page.evaluate(() => [...window.tintwork.doc.layers[0].canvas.getContext('2d').getImageData(5, 1060, 1, 1).data]);
 check(cornerAfter[0] + cornerAfter[1] + cornerAfter[2] < cornerBefore[0] + cornerBefore[1] + cornerBefore[2], 'vignette darkened the corner');
 // rectangle selection, then grayscale only inside it, then deselect
@@ -132,7 +133,7 @@ await page.keyboard.press('m');
 const a = await docToScreen(1180, 640), b = await docToScreen(1560, 1020);
 await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 6 }); await page.mouse.up();
 check(await page.evaluate(() => !!window.tintwork.doc.selection), 'rectangle selection made');
-await page.keyboard.press('Control+Shift+U');
+await page.keyboard.press('Control+Shift+U'); await idle();
 const grayInside = await page.evaluate(() => { const l = window.tintwork.doc.layers[0]; const p = l.canvas.getContext('2d').getImageData(1300, 900, 1, 1).data; return p[0] === p[1] && p[1] === p[2]; });
 const colorOutside = await page.evaluate(() => { const l = window.tintwork.doc.layers[0]; const p = l.canvas.getContext('2d').getImageData(300, 100, 1, 1).data; return !(p[0] === p[1] && p[1] === p[2]); });
 check(grayInside && colorOutside, 'grayscale limited to the selection');
@@ -141,8 +142,8 @@ await page.screenshot({ path: path.join(shots, '05-selection-grayscale.png') });
 await page.keyboard.press('Control+d');
 
 // --- filters & levels via the API, undo/redo -------------------------------
-await menuCmd('levels'); await setSlider('inBlack', 12); await setSlider('inWhite', 240); await page.click('#modalOk');
-await menuCmd('sharpen'); await page.click('#modalOk');
+await menuCmd('levels'); await setSlider('inBlack', 12); await setSlider('inWhite', 240); await page.click('#modalOk'); await idle();
+await menuCmd('sharpen'); await page.click('#modalOk'); await idle();
 const n = await page.evaluate(() => window.tintwork.history.index);
 await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
 check(await page.evaluate(() => window.tintwork.history.index) === n - 2, 'undo x2');
@@ -199,9 +200,180 @@ await page.waitForTimeout(250);
 await page.screenshot({ path: path.join(shots, '08-after-crop.png') });
 
 // menu screenshot
-await page.click('#menus .menu:nth-child(6) > button');
+await page.click('#menus .menu:nth-child(7) > button');
 await page.waitForTimeout(100);
 await page.screenshot({ path: path.join(shots, '09-filter-menu.png') });
+
+// ============================================================================
+// v0.2: selections, layer masks, worker, clone stamp
+// ============================================================================
+await page.keyboard.press('Escape');
+const selAt = (x, y) => page.evaluate(([x, y]) => { const s = window.tintwork.doc.selection; return s ? s.mask[y * s.W + x] : 0; }, [x, y]);
+const layerPx = (i, x, y) => page.evaluate(([i, x, y]) => { const l = window.tintwork.doc.layers[i]; return [...l.canvas.getContext('2d').getImageData(x - l.x, y - l.y, 1, 1).data]; }, [i, x, y]);
+const compPx = (x, y) => page.evaluate(([x, y]) => window.tintwork.compositePixel(x, y), [x, y]);
+const near = (a, b, tol = 3) => a.every((v, i) => Math.abs(v - b[i]) <= tol);
+const dragDoc = async (pts, steps = 4) => {
+  let s = await docToScreen(pts[0][0], pts[0][1]);
+  await page.mouse.move(s.x, s.y); await page.mouse.down();
+  for (const [x, y] of pts.slice(1)) { s = await docToScreen(x, y); await page.mouse.move(s.x, s.y, { steps }); }
+  await page.mouse.up();
+};
+const clickDoc = async (x, y) => { const s = await docToScreen(x, y); await page.mouse.click(s.x, s.y); };
+// fresh 800x600 document: left half red, right half blue
+const freshDoc = () => page.evaluate(() => {
+  const t = window.tintwork; t.newDocument(800, 600, 'white', 'v02-test');
+  const l = t.doc.layers[0], x = l.canvas.getContext('2d');
+  x.fillStyle = '#ff0000'; x.fillRect(0, 0, 400, 600); x.fillStyle = '#0000ff'; x.fillRect(400, 0, 400, 600);
+  t.touch(l); t.commit('Test pattern'); t.fitToScreen();
+});
+await freshDoc();
+
+// lasso (freehand) ------------------------------------------------------------
+await page.keyboard.press('l');
+await dragDoc([[100, 100], [300, 100], [300, 300], [100, 300], [100, 102]], 8);
+check(await selAt(200, 200) === 255 && await selAt(50, 50) === 0 && await selAt(350, 350) === 0, 'lasso selects inside the outline only');
+// Shift = add (rectangle)
+await page.keyboard.press('m');
+await page.keyboard.down('Shift'); await dragDoc([[500, 100], [700, 200]]); await page.keyboard.up('Shift');
+check(await selAt(600, 150) === 255 && await selAt(200, 200) === 255, 'Shift adds to the selection');
+// Alt = subtract
+await page.keyboard.down('Alt'); await dragDoc([[150, 150], [250, 250]]); await page.keyboard.up('Alt');
+check(await selAt(200, 200) === 0 && await selAt(120, 120) === 255, 'Alt subtracts a hole from the selection');
+await page.waitForTimeout(200);
+await page.screenshot({ path: path.join(shots, '10-lasso-selection.png') });
+// intersect from the options bar
+await page.click('#optionsbar [data-selmode="intersect"]');
+await dragDoc([[0, 0], [200, 600]]);
+check(await selAt(120, 120) === 255 && await selAt(280, 120) === 0 && await selAt(600, 150) === 0, 'intersect keeps only the overlap');
+await page.click('#optionsbar [data-selmode="new"]');
+// polygonal lasso: click points, click the start to close
+await page.keyboard.press('p');
+for (const [x, y] of [[450, 300], [750, 300], [750, 550], [450, 550]]) await clickDoc(x, y);
+check(await page.evaluate(() => window.tintwork.state.poly?.pts.length === 4), 'polygonal lasso collects points');
+await clickDoc(451, 301);
+check(await selAt(600, 420) === 255 && await selAt(400, 420) === 0 && await selAt(120, 120) === 0, 'polygonal lasso closes into a selection');
+// magic wand (reuses the fill code)
+await page.keyboard.press('w');
+await clickDoc(100, 500);
+check(await selAt(10, 10) === 255 && await selAt(399, 599) === 255 && await selAt(401, 10) === 0, 'magic wand selects the red half only');
+await page.waitForTimeout(200);
+await page.screenshot({ path: path.join(shots, '11-magic-wand.png') });
+await page.keyboard.press('Control+Shift+I');
+check(await selAt(10, 10) === 0 && await selAt(600, 10) === 255, 'invert selection');
+await page.keyboard.press('Control+a');
+check(await selAt(0, 0) === 255 && await selAt(799, 599) === 255, 'select all');
+await page.keyboard.press('Control+d');
+check(await page.evaluate(() => window.tintwork.doc.selection === null), 'deselect');
+// feather + adjustment through the soft selection
+await page.keyboard.press('m');
+await dragDoc([[200, 200], [600, 400]]);
+await page.keyboard.press('Shift+F6');
+await page.fill('#fRadius', '20');
+await page.click('#modalOk'); await idle();
+const edge = await selAt(200, 300), inner = await selAt(300, 300), outer = await selAt(170, 300);
+check(edge > 40 && edge < 220 && inner === 255 && outer > 0 && outer < 128, `feather softens the edge (outer ${outer}, edge ${edge}, inner ${inner})`);
+await page.keyboard.press('Control+i'); await idle();
+const inv = await layerPx(0, 300, 300), out0 = await layerPx(0, 100, 300), soft = await layerPx(0, 200, 300);
+check(near(inv, [0, 255, 255, 255]) && near(out0, [255, 0, 0, 255]) && soft[1] > 30 && soft[1] < 225, `invert through a feathered selection blends at the edge (edge px ${soft.slice(0, 3)})`);
+await page.waitForTimeout(200);
+await page.screenshot({ path: path.join(shots, '12-feather-adjust.png') });
+await page.keyboard.press('Control+d');
+// selection history: undo restores the previous selection object
+await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+check(await selAt(300, 300) === 255, 'undo restores the feathered selection');
+await page.keyboard.press('Control+Shift+Z'); await page.keyboard.press('Control+Shift+Z');
+
+// layer masks ---------------------------------------------------------------
+await page.click('#layersPanel [data-cmd="layerNew"]');
+await page.evaluate(() => window.tintwork.setFg('#00ff00'));
+await page.keyboard.press('Alt+Backspace');
+check(near(await compPx(300, 300), [0, 255, 0, 255]), 'green fill layer covers the image');
+await page.click('#layersPanel [data-cmd="addMask"]');
+check(await page.evaluate(() => { const l = window.tintwork.activeLayer(); return !!l.mask && l.editMask; }) && await page.locator('#layerList .mask-thumb').count() === 1, 'layer mask added with thumbnail and targeted');
+await page.evaluate(() => { const t = window.tintwork; t.setFg('#000000'); Object.assign(t.state.opts, { brushSize: 80, brushHardness: 100, brushOpacity: 100 }); });
+await page.keyboard.press('b');
+await dragDoc([[280, 300], [320, 300]]);
+const below = await layerPx(0, 300, 300);
+check(near(await compPx(300, 300), below) && near(await layerPx(1, 300, 300), [0, 255, 0, 255]), 'painting black on the mask hides the layer (pixels untouched)');
+await page.keyboard.press('e');
+await page.evaluate(() => Object.assign(window.tintwork.state.opts, { eraserSize: 60, eraserHardness: 100, eraserOpacity: 100 }));
+await clickDoc(600, 300);
+check(near(await compPx(600, 300), await layerPx(0, 600, 300)), 'eraser on the mask hides');
+await page.evaluate(() => window.tintwork.setFg('#ffffff'));
+await page.keyboard.press('b');
+await page.evaluate(() => Object.assign(window.tintwork.state.opts, { brushSize: 20 }));
+await clickDoc(300, 300);
+check(near(await compPx(300, 300), [0, 255, 0, 255]), 'painting white on the mask reveals again');
+await page.mouse.move(viewBox.x + 5, viewBox.y + 5);
+await page.waitForTimeout(200);
+await page.screenshot({ path: path.join(shots, '13-layer-mask.png') });
+await page.click('#layerList .mask-thumb', { modifiers: ['Shift'] });
+check(near(await compPx(600, 300), [0, 255, 0, 255]) && await page.evaluate(() => !window.tintwork.activeLayer().mask.enabled), 'Shift+click disables the mask');
+await page.click('#layerList .mask-thumb', { modifiers: ['Shift'] });
+check(!near(await compPx(600, 300), [0, 255, 0, 255]), 're-enabling the mask hides again');
+// save + reload keeps the mask
+const [mdl] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Control+s')]);
+const maskProj = path.join(root, 'test-assets', 'project.tintwork.json'); await mdl.saveAs(maskProj);
+const savedBelow = await compPx(600, 300);
+await page.evaluate(() => window.tintwork.newDocument(100, 100));
+await page.setInputFiles('#fileInput', maskProj);
+await page.waitForFunction(() => window.tintwork.doc?.layers.length === 2 && !!window.tintwork.doc.layers[1].mask);
+check(near(await compPx(600, 300), savedBelow) && near(await compPx(300, 300), [0, 255, 0, 255]), 'project round-trip keeps the layer mask');
+await page.evaluate(() => { const d = window.tintwork.doc; d.activeId = d.layers[1].id; window.tintwork.updateLayersPanel(); });
+await menuCmd('applyMask');
+check(await page.evaluate(() => !window.tintwork.doc.layers[1].mask) && (await layerPx(1, 600, 300))[3] === 0 && (await layerPx(1, 300, 300))[3] === 255, 'apply mask bakes it into the layer alpha');
+await page.keyboard.press('Control+z');
+await menuCmd('deleteMask');
+check(await page.evaluate(() => !window.tintwork.doc.layers[1].mask) && near(await compPx(600, 300), [0, 255, 0, 255]), 'delete mask discards it');
+// mask from selection
+await page.keyboard.press('m'); await dragDoc([[0, 0], [400, 600]]);
+await menuCmd('addMaskFromSelection');
+check(near(await compPx(100, 300), [0, 255, 0, 255]) && !near(await compPx(600, 300), [0, 255, 0, 255]), 'mask from selection reveals only the selection');
+await page.keyboard.press('Control+d');
+
+// web worker: large image stays responsive -------------------------------------
+check(await page.evaluate(() => window.tintwork.workerAvailable), 'pixel worker available');
+await page.evaluate(() => {
+  const t = window.tintwork; t.newDocument(4000, 3000, 'white', 'large');
+  const l = t.doc.layers[0], x = l.canvas.getContext('2d');
+  const g = x.createLinearGradient(0, 0, 4000, 3000); g.addColorStop(0, '#203060'); g.addColorStop(1, '#f0c080');
+  x.fillStyle = g; x.fillRect(0, 0, 4000, 3000);
+  for (let i = 0; i < 400; i++) { x.fillStyle = `hsl(${i * 37 % 360},70%,55%)`; x.fillRect((i * 997) % 3900, (i * 613) % 2900, 100, 100); }
+  t.touch(l); t.commit('Large test'); t.fitToScreen();
+});
+const inlineMs = await page.evaluate(async () => {
+  const { gaussianBlur } = await import('/src/pixels.js');
+  const img = new ImageData(4000, 3000); const t0 = performance.now(); gaussianBlur(img, 25); return performance.now() - t0;
+});
+await page.evaluate(() => {
+  window.__gap = 0; let last = performance.now();
+  window.__gapTimer = setInterval(() => { const n = performance.now(); window.__gap = Math.max(window.__gap, n - last); last = n; }, 10);
+});
+const t0 = Date.now();
+await menuCmd('gaussianBlur'); await setSlider('radius', 25);
+await page.waitForTimeout(150);
+await page.screenshot({ path: path.join(shots, '14-worker-large.png') });
+await page.click('#modalOk'); await idle();
+const workerMs = Date.now() - t0;
+const maxGap = await page.evaluate(() => { clearInterval(window.__gapTimer); return window.__gap; });
+check(maxGap < inlineMs * 0.6, `large blur stays responsive (max UI stall ${Math.round(maxGap)} ms vs ${Math.round(inlineMs)} ms blocking inline; total ${workerMs} ms)`);
+check(await page.evaluate(() => window.tintwork.history.entries.at(-1).label === 'Gaussian blur'), 'worker blur committed');
+
+// clone stamp -------------------------------------------------------------------
+await page.evaluate(() => {
+  const t = window.tintwork; t.newDocument(800, 600, 'white', 'clone');
+  const l = t.doc.layers[0], x = l.canvas.getContext('2d'); x.fillStyle = '#d02090'; x.fillRect(100, 100, 120, 120);
+  t.touch(l); t.commit('Clone source'); t.fitToScreen();
+  Object.assign(t.state.opts, { cloneSize: 60, cloneHardness: 100, cloneOpacity: 100, cloneAligned: true });
+});
+await page.keyboard.press('s');
+await page.keyboard.down('Alt'); await clickDoc(160, 160); await page.keyboard.up('Alt');
+await dragDoc([[500, 400], [540, 400]]);
+check(near(await layerPx(0, 520, 400), [208, 32, 144, 255]) && near(await layerPx(0, 650, 300), [255, 255, 255, 255]), 'clone stamp copies source pixels');
+check(await page.evaluate(() => window.tintwork.history.entries.at(-1).label === 'Clone stamp'), 'clone stamp recorded in history');
+const sMove = await docToScreen(560, 400); await page.mouse.move(sMove.x, sMove.y);
+await page.waitForTimeout(200);
+await page.screenshot({ path: path.join(shots, '15-clone-stamp.png') });
 
 await browser.close();
 server.close();
