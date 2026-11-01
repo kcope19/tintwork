@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tintwork — browser image editor</title>
+  <link rel="icon" href="src/logo.svg" />
+  <link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+  <header id="menubar">
+    <div class="brand"><img src="src/logo.svg" alt="" width="18" height="18" /> Tintwork</div>
+    <nav id="menus"></nav>
+    <div class="spacer"></div>
+    <div id="docinfo" class="muted"></div>
+  </header>
+  <div id="optionsbar"></div>
+  <main id="workspace">
+    <aside id="toolbar" aria-label="Tools"></aside>
+    <section id="viewport" tabindex="0">
+      <canvas id="view"></canvas>
+      <div id="dropzone" class="hidden">Drop an image or project file to open</div>
+      <div id="welcome" class="hidden">
+        <h1>Tintwork</h1>
+        <p>Open an image, drop one here, or start from a blank canvas.</p>
+        <div class="row">
+          <button data-cmd="open" class="primary">Open image…</button>
+          <button data-cmd="new">New canvas…</button>
+        </div>
+      </div>
+    </section>
+    <aside id="panels">
+      <section class="panel" id="colorPanel">
+        <h2>Color</h2>
+        <div class="colors">
+          <div class="swatches">
+            <input type="color" id="fgColor" value="#e8553a" title="Foreground color" />
+            <input type="color" id="bgColor" value="#ffffff" title="Background color" />
+          </div>
+          <button id="swapColors" title="Swap colors (X)">⇄</button>
+          <button id="resetColors" title="Default colors (D)">◐</button>
+          <span id="colorHex" class="muted"></span>
+        </div>
+      </section>
+      <section class="panel" id="histPanel">
+        <h2>Histogram</h2>
+        <canvas id="histogram" width="240" height="64"></canvas>
+      </section>
+      <section class="panel grow" id="layersPanel">
+        <h2>Layers</h2>
+        <div class="layer-props">
+          <select id="blendMode" title="Blend mode"></select>
+          <label class="opacity">Opacity <input type="range" id="layerOpacity" min="0" max="100" value="100" /> <span id="layerOpacityVal">100%</span></label>
+        </div>
+        <ul id="layerList"></ul>
+        <div class="panel-actions">
+          <button data-cmd="layerNew" title="New layer (Ctrl+Shift+N)">＋</button>
+          <button data-cmd="layerDuplicate" title="Duplicate layer (Ctrl+J)">⧉</button>
+          <button data-cmd="layerUp" title="Move layer up (Ctrl+])">▲</button>
+          <button data-cmd="layerDown" title="Move layer down (Ctrl+[)">▼</button>
+          <button data-cmd="layerMergeDown" title="Merge down (Ctrl+E)">⤓</button>
+          <button data-cmd="layerDelete" title="Delete layer">🗑</button>
+        </div>
+      </section>
+      <section class="panel" id="historyPanel">
+        <h2>History</h2>
+        <ol id="historyList"></ol>
+      </section>
+    </aside>
+  </main>
+  <footer id="statusbar">
+    <span id="status">Ready</span>
+    <span class="spacer"></span>
+    <span id="cursorPos" class="muted"></span>
+    <span id="zoomLabel"></span>
+  </footer>
+
+  <div id="modal" class="hidden" role="dialog" aria-modal="true">
+    <div class="dialog">
+      <h3 id="modalTitle"></h3>
+      <div id="modalBody"></div>
+      <div class="dialog-actions">
+        <label id="previewWrap" class="hidden"><input type="checkbox" id="modalPreview" checked /> Preview</label>
+        <span class="spacer"></span>
+        <button id="modalCancel">Cancel</button>
+        <button id="modalOk" class="primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="fileInput" accept="image/*,.json,.tintwork" hidden />
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

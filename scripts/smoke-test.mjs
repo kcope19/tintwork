@@ -1,0 +1,209 @@
+// End-to-end smoke test: serves the app, drives it in headless Chromium,
+// exercises the main features and writes screenshots to ./screenshots.
+import { chromium } from 'playwright';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const shots = path.join(root, 'screenshots');
+const assets = path.join(root, 'test-assets');
+fs.mkdirSync(shots, { recursive: true });
+fs.mkdirSync(assets, { recursive: true });
+
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
+const server = http.createServer((req, res) => {
+  const p = path.join(root, decodeURIComponent(new URL(req.url, 'http://x').pathname));
+  const file = fs.existsSync(p) && fs.statSync(p).isDirectory() ? path.join(p, 'index.html') : p;
+  if (!file.startsWith(root) || !fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
+  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+  fs.createReadStream(file).pipe(res);
+});
+await new Promise((r) => server.listen(0, r));
+const url = `http://localhost:${server.address().port}/`;
+
+const errors = [];
+const check = (cond, msg) => { if (!cond) { errors.push(msg); console.error('FAIL', msg); } else console.log('ok  ', msg); };
+
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+await page.goto(url);
+await page.screenshot({ path: path.join(shots, '01-welcome.png') });
+
+// --- generate a synthetic "landscape photo" test image --------------------
+const testImg = path.join(assets, 'landscape.png');
+if (!fs.existsSync(testImg)) {
+  const dataUrl = await page.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = 1600; c.height = 1067; const x = c.getContext('2d');
+    const sky = x.createLinearGradient(0, 0, 0, 700); sky.addColorStop(0, '#2b5f9e'); sky.addColorStop(0.6, '#f0a35e'); sky.addColorStop(1, '#f7d39a');
+    x.fillStyle = sky; x.fillRect(0, 0, 1600, 1067);
+    const sun = x.createRadialGradient(1100, 520, 10, 1100, 520, 260); sun.addColorStop(0, '#fff6d8'); sun.addColorStop(0.25, '#ffd27a'); sun.addColorStop(1, '#ffd27a00');
+    x.fillStyle = sun; x.fillRect(0, 0, 1600, 1067);
+    const ridge = (y0, amp, col, seed) => { x.fillStyle = col; x.beginPath(); x.moveTo(0, 1067);
+      for (let i = 0; i <= 1600; i += 8) x.lineTo(i, y0 - amp * (Math.sin(i / 170 + seed) * 0.6 + Math.sin(i / 61 + seed * 2) * 0.25 + Math.sin(i / 23 + seed) * 0.08));
+      x.lineTo(1600, 1067); x.fill(); };
+    ridge(640, 120, '#6b5a7e', 1); ridge(720, 90, '#4a3f5e', 3); ridge(820, 70, '#2f2a3d', 5);
+    const lake = x.createLinearGradient(0, 860, 0, 1067); lake.addColorStop(0, '#d98b5a'); lake.addColorStop(1, '#1d2433');
+    x.fillStyle = lake; x.fillRect(0, 870, 1600, 197);
+    x.fillStyle = '#ffffff22'; for (let i = 0; i < 40; i++) x.fillRect(900 + Math.sin(i) * 120, 880 + i * 4.5, 320 - i * 6, 2);
+    for (let i = 0; i < 60; i++) { const tx = (i * 97) % 1600, th = 40 + (i * 37) % 60; x.fillStyle = '#141820'; x.beginPath(); x.moveTo(tx, 880); x.lineTo(tx + 12, 880 - th); x.lineTo(tx + 24, 880); x.fill(); }
+    return c.toDataURL('image/png');
+  });
+  fs.writeFileSync(testImg, Buffer.from(dataUrl.split(',')[1], 'base64'));
+}
+
+// --- open via the real file picker ------------------------------------------
+await page.setInputFiles('#fileInput', testImg);
+await page.waitForFunction(() => window.tintwork.doc?.layers.length === 1);
+check(await page.evaluate(() => window.tintwork.doc.width === 1600 && window.tintwork.doc.height === 1067), 'image opened at 1600x1067');
+await page.waitForTimeout(300);
+await page.screenshot({ path: path.join(shots, '02-opened.png') });
+
+const viewBox = await page.locator('#view').boundingBox();
+const docToScreen = async (x, y) => page.evaluate(([x, y]) => {
+  const s = window.tintwork.state; const r = document.querySelector('#view').getBoundingClientRect();
+  return { x: r.left + s.panX + x * s.zoom, y: r.top + s.panY + y * s.zoom };
+}, [x, y]);
+
+const menuCmd = async (cmd) => {
+  const menu = page.locator('.menu', { has: page.locator(`.menu-items [data-cmd="${cmd}"]`) });
+  await menu.locator('> button').click();
+  await menu.locator(`.menu-items [data-cmd="${cmd}"]`).click();
+};
+
+// --- adjustment: hue/saturation via keyboard shortcut + sliders ------------------
+await page.locator('#viewport').focus();
+await page.keyboard.press('Control+u');
+await page.waitForSelector('#modal:not(.hidden)');
+const setSlider = (key, v) => page.evaluate(([key, v]) => { const i = document.querySelector(`#modalBody input[data-key="${key}"]`); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); }, [key, v]);
+await setSlider('saturation', 35); await setSlider('hue', -12);
+await page.waitForTimeout(300);
+await page.screenshot({ path: path.join(shots, '03-hue-saturation-preview.png') });
+await page.click('#modalOk');
+check(await page.evaluate(() => window.tintwork.history.entries.at(-1).label === 'Hue / saturation / lightness'), 'hue/saturation applied to history');
+
+// --- brightness/contrast via menu ----------------------------------------------
+await menuCmd('brightnessContrast');
+await setSlider('contrast', 18); await setSlider('brightness', 6);
+await page.click('#modalOk');
+
+// --- new layer in Screen blend + brush strokes -------------------------------------
+await page.click('#layersPanel [data-cmd="layerNew"]');
+await page.selectOption('#blendMode', 'screen');
+await page.evaluate(() => { window.tintwork.setFg('#ff7a3d'); window.tintwork.state.opts.brushSize = 60; window.tintwork.state.opts.brushHardness = 20; });
+await page.keyboard.press('b');
+const path1 = [[250, 300], [400, 220], [560, 300], [700, 240], [850, 330]];
+let p0 = await docToScreen(...path1[0]);
+await page.mouse.move(p0.x, p0.y); await page.mouse.down();
+for (const [x, y] of path1.slice(1)) { const p = await docToScreen(x, y); await page.mouse.move(p.x, p.y, { steps: 12 }); }
+await page.mouse.up();
+await page.evaluate(() => { window.tintwork.setFg('#7a5cff'); window.tintwork.state.opts.brushHardness = 90; window.tintwork.state.opts.brushSize = 22; });
+p0 = await docToScreen(260, 420); await page.mouse.move(p0.x, p0.y); await page.mouse.down();
+for (const [x, y] of [[420, 470], [600, 400], [760, 470]]) { const p = await docToScreen(x, y); await page.mouse.move(p.x, p.y, { steps: 12 }); }
+await page.mouse.up();
+check(await page.evaluate(() => window.tintwork.history.entries.filter((e) => e.label === 'Brush stroke').length === 2), 'two brush strokes recorded');
+const painted = await page.evaluate(() => { const l = window.tintwork.activeLayer(); return l.canvas.getContext('2d').getImageData(400 - l.x, 220 - l.y, 1, 1).data[3]; });
+check(painted > 200, `brush painted pixels on the new layer (alpha ${painted})`);
+await page.locator('#layerOpacity').fill('85'); await page.locator('#layerOpacity').dispatchEvent('change');
+await page.screenshot({ path: path.join(shots, '04-layer-blend-brush.png') });
+
+// --- text layer --------------------------------------------------------------
+await page.keyboard.press('t');
+const tp = await docToScreen(110, 90); await page.mouse.click(tp.x, tp.y);
+await page.waitForSelector('#modal:not(.hidden)');
+await page.fill('#tText', 'Golden hour');
+await page.fill('#tSize', '110');
+await page.locator('#tText').dispatchEvent('input');
+await page.click('#modalOk');
+check(await page.evaluate(() => window.tintwork.activeLayer().name.startsWith('Text: Golden')), 'text layer created');
+
+// --- selection + vignette on the background ---------------------------------
+await page.evaluate(() => { const d = window.tintwork.doc; d.activeId = d.layers[0].id; window.tintwork.commit('Select background layer'); });
+const cornerBefore = await page.evaluate(() => [...window.tintwork.doc.layers[0].canvas.getContext('2d').getImageData(5, 1060, 1, 1).data]);
+await menuCmd('vignette');
+await page.click('#modalOk');
+const cornerAfter = await page.evaluate(() => [...window.tintwork.doc.layers[0].canvas.getContext('2d').getImageData(5, 1060, 1, 1).data]);
+check(cornerAfter[0] + cornerAfter[1] + cornerAfter[2] < cornerBefore[0] + cornerBefore[1] + cornerBefore[2], 'vignette darkened the corner');
+// rectangle selection, then grayscale only inside it, then deselect
+await page.keyboard.press('m');
+const a = await docToScreen(1180, 640), b = await docToScreen(1560, 1020);
+await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 6 }); await page.mouse.up();
+check(await page.evaluate(() => !!window.tintwork.doc.selection), 'rectangle selection made');
+await page.keyboard.press('Control+Shift+U');
+const grayInside = await page.evaluate(() => { const l = window.tintwork.doc.layers[0]; const p = l.canvas.getContext('2d').getImageData(1300, 900, 1, 1).data; return p[0] === p[1] && p[1] === p[2]; });
+const colorOutside = await page.evaluate(() => { const l = window.tintwork.doc.layers[0]; const p = l.canvas.getContext('2d').getImageData(300, 100, 1, 1).data; return !(p[0] === p[1] && p[1] === p[2]); });
+check(grayInside && colorOutside, 'grayscale limited to the selection');
+await page.waitForTimeout(250);
+await page.screenshot({ path: path.join(shots, '05-selection-grayscale.png') });
+await page.keyboard.press('Control+d');
+
+// --- filters & levels via the API, undo/redo -------------------------------
+await menuCmd('levels'); await setSlider('inBlack', 12); await setSlider('inWhite', 240); await page.click('#modalOk');
+await menuCmd('sharpen'); await page.click('#modalOk');
+const n = await page.evaluate(() => window.tintwork.history.index);
+await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+check(await page.evaluate(() => window.tintwork.history.index) === n - 2, 'undo x2');
+await page.keyboard.press('Control+Shift+Z'); await page.keyboard.press('Control+Shift+Z');
+check(await page.evaluate(() => window.tintwork.history.index) === n, 'redo x2');
+await page.waitForTimeout(250);
+await page.screenshot({ path: path.join(shots, '06-history-levels-sharpen.png') });
+
+// --- transforms --------------------------------------------------------------
+await menuCmd('rotateCW');
+check(await page.evaluate(() => window.tintwork.doc.width === 1067 && window.tintwork.doc.height === 1600), 'rotate 90° swaps dimensions');
+await page.keyboard.press('Control+z');
+await menuCmd('flipH'); await page.keyboard.press('Control+z');
+
+// --- export (PNG / JPEG / WebP) -----------------------------------------------
+for (const [fmt, ext] of [['image/png', 'png'], ['image/jpeg', 'jpg'], ['image/webp', 'webp']]) {
+  await page.keyboard.press('Control+Shift+E');
+  await page.selectOption('#eFmt', fmt);
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#modalOk')]);
+  const out = path.join(root, 'test-assets', `export.${ext}`); await dl.saveAs(out);
+  check(fs.statSync(out).size > 10000 && dl.suggestedFilename().endsWith(ext), `export ${ext} (${fs.statSync(out).size} bytes)`);
+}
+
+// --- save project and reload it ----------------------------------------------
+const layerCount = await page.evaluate(() => window.tintwork.doc.layers.length);
+const [pdl] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Control+s')]);
+const projPath = path.join(root, 'test-assets', 'project.tintwork.json'); await pdl.saveAs(projPath);
+await page.evaluate(() => window.tintwork.newDocument(200, 200));
+await page.setInputFiles('#fileInput', projPath);
+await page.waitForFunction((n) => window.tintwork.doc?.layers.length === n, layerCount);
+check(await page.evaluate(() => window.tintwork.doc.layers[1].blend === 'screen' && Math.abs(window.tintwork.doc.layers[1].opacity - 0.85) < 0.01), 'project round-trip keeps blend + opacity');
+
+// --- drag & drop (places as layer when a doc is open) -------------------------
+const b64 = fs.readFileSync(testImg).toString('base64');
+await page.evaluate(async (b64) => {
+  const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const dt = new DataTransfer(); dt.items.add(new File([bin], 'dropped.png', { type: 'image/png' }));
+  window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+}, b64);
+await page.waitForFunction((n) => window.tintwork.doc.layers.length === n + 1, layerCount);
+check(true, 'drag & drop placed image as a new layer');
+await page.keyboard.press('Control+z');
+
+// --- crop tool ------------------------------------------------------------------
+await page.keyboard.press('c');
+const c1 = await docToScreen(100, 60), c2 = await docToScreen(1500, 1000);
+await page.mouse.move(c1.x, c1.y); await page.mouse.down(); await page.mouse.move(c2.x, c2.y, { steps: 5 }); await page.mouse.up();
+await page.screenshot({ path: path.join(shots, '07-crop-preview.png') });
+await page.keyboard.press('Enter');
+check(await page.evaluate(() => window.tintwork.doc.width === 1400 && window.tintwork.doc.height === 940), 'crop applied (1400x940)');
+await page.keyboard.press('b');
+await page.mouse.move(viewBox.x + 400, viewBox.y + 300);
+await page.waitForTimeout(250);
+await page.screenshot({ path: path.join(shots, '08-after-crop.png') });
+
+// menu screenshot
+await page.click('#menus .menu:nth-child(6) > button');
+await page.waitForTimeout(100);
+await page.screenshot({ path: path.join(shots, '09-filter-menu.png') });
+
+await browser.close();
+server.close();
+if (errors.length) { console.error(`\n${errors.length} problem(s):\n` + errors.join('\n')); process.exit(1); }
+console.log('\nAll smoke checks passed. Screenshots in', shots);
