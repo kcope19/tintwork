@@ -399,10 +399,10 @@ function renderTextLayer(l) {
   const pad = Math.ceil(t.size * 0.35);
   const c = makeCanvas(Math.ceil(w) + pad * 2, lh * lines.length + pad * 2), x = ctxOf(c);
   x.font = textFont(t); x.fillStyle = t.color; x.textBaseline = 'top'; x.textAlign = t.align;
-  const ax = t.align === 'center' ? pad + w / 2 : t.align === 'right' ? pad + w : pad;
+  const ax = Math.round(t.align === 'center' ? pad + w / 2 : t.align === 'right' ? pad + w : pad); // whole pixels: no drift on re-edit
   lines.forEach((ln, i) => x.fillText(ln, ax, pad + i * lh + t.size * 0.1));
   // anchor (doc coords) = l.x + t.ox ; keep it where it was
-  const anchorX = l.x + (t.ox ?? 0), anchorY = l.y + (t.oy ?? 0);
+  const anchorX = Math.round(l.x + (t.ox ?? 0)), anchorY = Math.round(l.y + (t.oy ?? 0));
   l.text = { ...t, ox: ax, oy: pad };
   l.canvas = c; l.x = Math.round(anchorX - ax); l.y = Math.round(anchorY - pad);
   l.name = `Text: ${lines[0].slice(0, 24) || '(empty)'}`;
@@ -698,7 +698,7 @@ const toolHandlers = {
   spot: paintTool('spot'),
   fill: { down(p) { fillAt(p); } },
   eyedropper: { down(p) { drag = {}; pickColor(p); }, move(p) { pickColor(p); } },
-  text: { down(p) { drag = {}; const hit = textLayerAt(p); if (hit) { doc().activeId = hit.id; openTextDialog(null, hit); } else openTextDialog(p); } },
+  text: { down(p) { const hit = textLayerAt(p); if (hit) { doc().activeId = hit.id; openTextDialog(null, hit); } else openTextDialog(p); } },
   zoom: { down(p, e) { const r = view.getBoundingClientRect(); zoomAt(e.altKey ? 1 / 1.5 : 1.5, e.clientX - r.left, e.clientY - r.top); } },
 };
 

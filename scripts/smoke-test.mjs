@@ -513,6 +513,85 @@ check(near(await compPx(100, 100), [155, 155, 155, 255]), `large-document adjust
 await page.waitForTimeout(150);
 await page.screenshot({ path: path.join(shots, '2x-adjust-layers-panel.png') });
 
+// ============================================================================
+// v0.3: editable text layers
+// ============================================================================
+await page.evaluate(() => { const t = window.tintwork; t.newDocument(600, 400, 'white', 'text-test'); t.fitToScreen(); });
+await page.keyboard.press('t');
+await clickDoc(100, 100);
+await page.waitForSelector('#modal:not(.hidden) #tText');
+await page.locator('#tText').fill('Hi');
+await page.locator('#tSize').fill('80'); await page.locator('#tSize').dispatchEvent('input');
+await page.locator('#tColor').evaluate((el) => { el.value = '#ff0000'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+await page.locator('#modalOk').click();
+const tl = () => page.evaluate(() => { const l = window.tintwork.activeLayer(); return { kind: l.kind, text: l.text, x: l.x, y: l.y, w: l.canvas.width, h: l.canvas.height, name: l.name, n: window.tintwork.doc.layers.length }; });
+let T = await tl();
+check(T.kind === 'text' && T.text.text === 'Hi' && T.text.size === 80 && T.text.color === '#ff0000' && T.name === 'Text: Hi', 'text tool creates an editable text layer');
+check(T.x + T.text.ox === 100 && T.y + T.text.oy === 100, 'text anchored at the clicked point');
+const redCount = () => page.evaluate(() => { const t = window.tintwork; t.composite(); const d = document.createElement('canvas'); d.width = 600; d.height = 400; t.composite(d, { sync: true });
+  const px = d.getContext('2d').getImageData(0, 0, 600, 400).data; let n = 0, minX = 1e9, maxX = -1;
+  for (let i = 0; i < px.length; i += 4) if (px[i] > 200 && px[i + 1] < 80) { n++; const x = (i / 4) % 600; minX = Math.min(minX, x); maxX = Math.max(maxX, x); } return { n, minX, maxX }; });
+const red1 = await redCount();
+check(red1.n > 500, `text rendered in the chosen color (${red1.n} red px)`);
+// re-open by clicking it with the text tool and change text, font size, alignment
+await clickDoc(110, 130);
+await page.waitForSelector('#modal:not(.hidden) #tText');
+check(await page.locator('#tText').inputValue() === 'Hi' && await page.locator('#modalTitle').textContent() === 'Edit text', 'clicking existing text with the text tool re-opens it for editing');
+await page.locator('#tText').fill('Hello\nworld!'); await page.locator('#tText').dispatchEvent('input');
+await page.locator('#tSize').fill('48'); await page.locator('#tSize').dispatchEvent('input');
+const leftEdge = async () => page.evaluate(() => { const l = window.tintwork.activeLayer(); return l.x + l.text.oy; });
+const edge0 = await leftEdge();
+await page.locator('#tAlign [data-align="center"]').click();
+check(Math.abs(await leftEdge() - edge0) <= 1, 'changing alignment keeps the text block in place (±1px)');
+await page.waitForTimeout(100);
+await page.screenshot({ path: path.join(shots, '2x-text-edit.png') });
+await page.locator('#modalOk').click();
+T = await tl();
+check(T.text.text === 'Hello\nworld!' && T.text.size === 48 && T.text.align === 'center' && T.n === 2, 'edited text, size and alignment saved on the same layer');
+check(T.h > 48 * 2, 'multi-line text grows the layer');
+// alignment actually changes where the short line sits
+const lineSpan = (y0, y1) => page.evaluate(([y0, y1]) => { const l = window.tintwork.activeLayer(), c = l.canvas.getContext('2d'), w = l.canvas.width;
+  const px = c.getImageData(0, y0, w, y1 - y0).data; let a = 1e9, b = -1; for (let i = 3; i < px.length; i += 4) if (px[i] > 128) { const x = ((i - 3) / 4) % w; a = Math.min(a, x); b = Math.max(b, x); } return [a, b]; }, [y0, y1]);
+const lh = Math.round(48 * 1.2), pad = Math.ceil(48 * 0.35);
+const [l1a, l1b] = await lineSpan(pad, pad + lh - 4), [l2a, l2b] = await lineSpan(pad + lh, pad + 2 * lh - 4);
+check(Math.abs((l1a + l1b) / 2 - (l2a + l2b) / 2) < 6, `center alignment centers both lines (${(l1a + l1b) / 2} vs ${(l2a + l2b) / 2})`);
+// font + style
+await page.evaluate(() => window.tintwork.editLayer());
+await page.locator('#tFont').selectOption('serif'); await page.locator('#tItalic').check();
+await page.locator('#modalOk').click();
+T = await tl();
+check(T.text.font === 'serif' && T.text.italic === true, 'font family and italic editable');
+// move with the move tool, then re-edit keeps the position
+await page.keyboard.press('v');
+const before = await tl();
+await dragDoc([[before.x + before.text.ox, before.y + 30], [before.x + before.text.ox + 40, before.y + 50]]);
+const moved = await tl();
+check(moved.x === before.x + 40 && moved.y === before.y + 20 && moved.kind === 'text', 'move tool moves a text layer and it stays editable');
+await page.locator('#layerList li.active .thumb:not(.mask-thumb)').dblclick();
+await page.locator('#tText').fill('Moved'); await page.locator('#tText').dispatchEvent('input');
+await page.locator('#modalOk').click();
+T = await tl();
+check(T.x + T.text.ox === moved.x + moved.text.ox && T.y + T.text.oy === moved.y + moved.text.oy, `re-editing a moved text layer keeps its anchor (${JSON.stringify([T.x, T.text.ox, T.y, T.text.oy, moved.x, moved.text.ox, moved.y, moved.text.oy])})`);
+// cancel restores, undo restores
+await page.evaluate(() => window.tintwork.editLayer());
+await page.locator('#tText').fill('Nope'); await page.locator('#tText').dispatchEvent('input');
+await page.locator('#modalCancel').click();
+check((await tl()).text.text === 'Moved', 'cancelling a text edit restores it');
+await page.evaluate(() => window.tintwork.undo());
+check((await tl()).text.text === 'Hello\nworld!', 'undo restores the previous text');
+await page.evaluate(() => window.tintwork.redo());
+await page.waitForTimeout(100);
+await page.screenshot({ path: path.join(shots, '2x-text-layers.png') });
+// project round-trip keeps text editable
+const tproj = await page.evaluate(() => JSON.stringify(window.tintwork.serializeProject()));
+check(tproj.includes('"kind":"text"') && tproj.includes('Moved'), 'project file stores text layers');
+// painting converts the text to pixels
+await page.keyboard.press('b');
+await dragDoc([[T.x + 5, T.y + 5], [T.x + 30, T.y + 10]]);
+check(await page.evaluate(() => window.tintwork.activeLayer().kind === undefined && /\(pixels\)$/.test(window.tintwork.activeLayer().name)), 'painting on a text layer converts it to pixels');
+await page.evaluate(() => window.tintwork.undo());
+check(await page.evaluate(() => window.tintwork.activeLayer().kind === 'text'), 'undo brings the editable text back');
+
 await browser.close();
 server.close();
 if (errors.length) { console.error(`\n${errors.length} problem(s):\n` + errors.join('\n')); process.exit(1); }
