@@ -592,6 +592,48 @@ check(await page.evaluate(() => window.tintwork.activeLayer().kind === undefined
 await page.evaluate(() => window.tintwork.undo());
 check(await page.evaluate(() => window.tintwork.activeLayer().kind === 'text'), 'undo brings the editable text back');
 
+// ============================================================================
+// v0.3: ellipse selection + moving selected pixels
+// ============================================================================
+await page.evaluate(() => {
+  const t = window.tintwork; t.newDocument(500, 300, 'white', 'move-test');
+  const l = t.doc.layers[0], x = l.canvas.getContext('2d'); x.fillStyle = 'rgb(0,0,255)'; x.fillRect(50, 50, 100, 100);
+  t.touch(l); t.commit('Blue square'); t.fitToScreen();
+});
+await page.keyboard.press('o');
+check(await page.evaluate(() => window.tintwork.state.tool === 'ellipse'), 'O selects the ellipse select tool');
+await dragDoc([[200, 100], [300, 200]]);
+check(await selAt(250, 150) === 255 && await selAt(205, 105) === 0 && await selAt(250, 103) > 0 && await selAt(296, 150) > 0, 'ellipse selection fills the inscribed ellipse only');
+check(await page.evaluate(() => window.tintwork.history.entries.at(-1).label === 'Ellipse select'), 'ellipse selection recorded in history');
+const aaEdge = await page.evaluate(() => { const s = window.tintwork.doc.selection; let partial = 0; for (const v of s.mask) if (v > 0 && v < 255) partial++; return partial; });
+check(aaEdge > 50, `ellipse selection edge is anti-aliased (${aaEdge} partial px)`);
+await page.keyboard.down('Alt'); await dragDoc([[230, 130], [270, 170]]); await page.keyboard.up('Alt');
+check(await selAt(250, 150) === 0 && await selAt(215, 150) === 255, 'Alt + ellipse subtracts a hole');
+await page.waitForTimeout(120);
+await page.screenshot({ path: path.join(shots, '2x-ellipse-select.png') });
+// move selected pixels
+await page.keyboard.press('m');
+await dragDoc([[50, 50], [150, 150]]);
+await page.keyboard.press('v');
+await dragDoc([[100, 100], [160, 130], [200, 150]]);
+check(near(await layerPx(0, 175, 125), [0, 0, 255, 255], 0) && near(await layerPx(0, 245, 195), [0, 0, 255, 255], 0), 'move tool moves the selected pixels (+100, +50)');
+check((await layerPx(0, 75, 75))[3] === 0, 'moved pixels leave a transparent hole');
+check(near(await layerPx(0, 30, 30), [255, 255, 255, 255], 0), 'pixels outside the selection stay put');
+check(await selAt(175, 125) === 255 && await selAt(75, 75) === 0, 'selection travels with the moved pixels');
+check(await page.evaluate(() => window.tintwork.history.entries.at(-1).label === 'Move selection'), 'move recorded as "Move selection"');
+await page.waitForTimeout(120);
+await page.screenshot({ path: path.join(shots, '2x-move-selection.png') });
+await page.evaluate(() => window.tintwork.undo());
+check(near(await layerPx(0, 75, 75), [0, 0, 255, 255], 0) && near(await layerPx(0, 175, 125), [255, 255, 255, 255], 0), 'undo puts the moved pixels back');
+// Alt-drag moves a copy
+await page.keyboard.down('Alt'); await dragDoc([[100, 100], [300, 150]]); await page.keyboard.up('Alt');
+check(near(await layerPx(0, 75, 75), [0, 0, 255, 255], 0) && near(await layerPx(0, 275, 125), [0, 0, 255, 255], 0), 'Alt + move duplicates the selected pixels');
+check(await page.evaluate(() => window.tintwork.history.entries.at(-1).label === 'Duplicate selection'), 'Alt-move recorded as "Duplicate selection"');
+// without a selection the move tool still moves the whole layer
+await page.evaluate(() => window.tintwork.run('deselect'));
+await dragDoc([[100, 100], [110, 105]]);
+check(await page.evaluate(() => { const l = window.tintwork.doc.layers[0]; return l.x === 10 && l.y === 5; }), 'without a selection the move tool moves the whole layer');
+
 await browser.close();
 server.close();
 if (errors.length) { console.error(`\n${errors.length} problem(s):\n` + errors.join('\n')); process.exit(1); }

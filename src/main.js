@@ -1,7 +1,7 @@
 // Tintwork — an original, browser-based layered image editor (Canvas 2D).
 import { floodMask, similarMask, histogram, runOp, channelHistograms } from './pixels.js';
 import { createCurvesEditor, identityCurves } from './curves-editor.js';
-import { makeSelection, shapeMask, rectMask, combine, invertSelection, selectionCanvas, selectionOutline, maskRegion } from './selection.js';
+import { makeSelection, shapeMask, rectMask, combine, invertSelection, selectionCanvas, selectionOutline, maskRegion, translateSelection } from './selection.js';
 import * as ops from './ops.js';
 import { ICONS } from './icons.js';
 
@@ -461,10 +461,12 @@ function render() {
     vctx.strokeStyle = '#fff'; vctx.lineDashOffset = (-antsOffset + 5) / z; vctx.stroke(pathObj);
     vctx.restore();
   };
-  if (d.selection) ants(selectionOutline(d.selection));
+  if (drag?.float) { const f = drag.float, p = new Path2D(); p.addPath(selectionOutline(f.sel), new DOMMatrix().translate(f.dx, f.dy)); ants(p); }
+  else if (d.selection) ants(selectionOutline(d.selection));
   if (state.selPreview) {
     const sp = state.selPreview, path = new Path2D();
-    if (sp.rect) path.rect(sp.rect.x, sp.rect.y, sp.rect.w, sp.rect.h);
+    if (sp.ellipse) { const e = sp.ellipse; path.ellipse(e.x + e.w / 2, e.y + e.h / 2, e.w / 2, e.h / 2, 0, 0, Math.PI * 2); }
+    else if (sp.rect) path.rect(sp.rect.x, sp.rect.y, sp.rect.w, sp.rect.h);
     else if (sp.pts?.length) { path.moveTo(sp.pts[0].x, sp.pts[0].y); for (const q of sp.pts) path.lineTo(q.x, q.y); path.closePath(); }
     ants(path);
   }
@@ -544,6 +546,7 @@ const PAINT_TOOLS = ['brush', 'eraser', 'clone', 'heal', 'spot'];
 const TOOLS = [
   { id: 'move', name: 'Move', key: 'V' },
   { id: 'select', name: 'Rectangle select', key: 'M' },
+  { id: 'ellipse', name: 'Ellipse select', key: 'O' },
   { id: 'lasso', name: 'Lasso', key: 'L' },
   { id: 'polylasso', name: 'Polygonal lasso', key: 'P' },
   { id: 'wand', name: 'Magic wand', key: 'W' },
@@ -643,12 +646,23 @@ function magicWand(p, mode) {
 
 const toolHandlers = {
   move: {
-    down(p) { const l = activeLayer(); if (!l) return; drag = { start: p, ox: l.x, oy: l.y, layer: l, moved: false }; },
+    down(p, e) {
+      const l = activeLayer(); if (!l) return;
+      const now = performance.now(), last = moveLastDown; moveLastDown = { t: now, p };
+      const dbl = e.detail >= 2 || (last && now - last.t < 400 && Math.hypot(p.x - last.p.x, p.y - last.p.y) * state.zoom < 6);
+      if (dbl && l.kind) { drag = null; moveLastDown = null; editLayer(l); return; } // double-click edits text / adjustment layers
+      if (doc().selection && !(l.kind === 'adjust' && !l.mask)) { startFloat(l, p, e.altKey); return; }
+      drag = { start: p, ox: l.x, oy: l.y, layer: l, moved: false };
+    },
     move(p) {
+      if (drag.float) { moveFloat(p); return; }
       const l = drag.layer; l.x = Math.round(drag.ox + p.x - drag.start.x); l.y = Math.round(drag.oy + p.y - drag.start.y);
       drag.moved = true; compDirty = true; requestRender(); buildOptionsBar();
     },
-    up() { if (drag.moved) commit('Move layer'); },
+    up() {
+      if (drag.float) { endFloat(); return; }
+      if (drag.moved) commit('Move layer');
+    },
   },
   select: {
     down(p, e) { drag = { start: clampPt(p), moved: false, mode: selModeFor(e) }; },
@@ -661,6 +675,20 @@ const toolHandlers = {
       if (!drag.moved || !r) { if (drag.mode === 'new' && doc().selection) setSelection(null, 'Deselect'); requestRender(); return; }
       const d = doc();
       applyShape(rectMask(d.width, d.height, r), drag.mode, 'Rectangle select');
+    },
+  },
+  ellipse: {
+    down(p, e) { drag = { start: clampPt(p), moved: false, mode: selModeFor(e) }; },
+    move(p, e) {
+      // Ctrl/Cmd = draw from the center
+      let r = e.ctrlKey || e.metaKey ? rectFromPoints({ x: 2 * drag.start.x - p.x, y: 2 * drag.start.y - p.y }, p, false) : rectFromPoints(drag.start, clampPt(p), false);
+      state.selPreview = r.w >= 1 && r.h >= 1 ? { ellipse: r } : null; drag.moved = true; requestRender();
+    },
+    up() {
+      const r = state.selPreview?.ellipse; state.selPreview = null;
+      if (!drag.moved || !r) { if (drag.mode === 'new' && doc().selection) setSelection(null, 'Deselect'); requestRender(); return; }
+      const d = doc();
+      applyShape(shapeMask(d.width, d.height, (x) => x.ellipse(r.x + r.w / 2, r.y + r.h / 2, r.w / 2, r.h / 2, 0, 0, Math.PI * 2)), drag.mode, 'Ellipse select');
     },
   },
   lasso: {
@@ -704,6 +732,38 @@ const toolHandlers = {
 
 function clampPt(p) {
   return { x: Math.max(0, Math.min(doc().width, Math.round(p.x))), y: Math.max(0, Math.min(doc().height, Math.round(p.y))) };
+}
+let moveLastDown = null;
+// --- moving selected pixels (Move tool with an active selection; Alt = move a copy) ---
+function startFloat(l, p, copy) {
+  if (!editingMask(l)) rasterize(l, 'moving pixels');
+  ensureCoversDoc(l);
+  const sel = doc().selection, cv = targetCanvas(l), c = ctxOf(cv);
+  const piece = makeCanvas(sel.w, sel.h), px = piece.getContext('2d');
+  px.drawImage(cv, l.x - sel.x, l.y - sel.y);
+  px.globalCompositeOperation = 'destination-in'; px.drawImage(selectionCanvas(sel), -sel.x, -sel.y);
+  const original = cloneCanvas(cv);
+  if (!copy) { c.save(); c.globalCompositeOperation = 'destination-out'; c.drawImage(selectionCanvas(sel), -l.x, -l.y); c.restore(); }
+  const base = copy ? original : cloneCanvas(cv);
+  drag = { float: { layer: l, piece, base, original, sel, copy, start: p, dx: 0, dy: 0, onMask: editingMask(l) }, moved: false };
+  touchTarget(l); requestRender();
+}
+function moveFloat(p) {
+  const f = drag.float, l = f.layer;
+  f.dx = Math.round(p.x - f.start.x); f.dy = Math.round(p.y - f.start.y); drag.moved = true;
+  const c = ctxOf(targetCanvas(l));
+  c.save(); c.globalCompositeOperation = 'copy'; c.drawImage(f.base, 0, 0); c.restore();
+  c.drawImage(f.piece, f.sel.x + f.dx - l.x, f.sel.y + f.dy - l.y);
+  touchTarget(l); requestRender(); status(`Moving selection: ${f.dx >= 0 ? '+' : ''}${f.dx}, ${f.dy >= 0 ? '+' : ''}${f.dy} px`);
+}
+function endFloat() {
+  const f = drag.float, l = f.layer; drag = null;
+  if (!f.dx && !f.dy) { // no movement: put everything back
+    const c = ctxOf(targetCanvas(l)); c.save(); c.globalCompositeOperation = 'copy'; c.drawImage(f.original, 0, 0); c.restore();
+    touchTarget(l); requestRender(); return;
+  }
+  doc().selection = translateSelection(f.sel, f.dx, f.dy);
+  commit(f.copy ? 'Duplicate selection' : 'Move selection'); updateLayersPanel(); buildOptionsBar();
 }
 function rectFromPoints(a, b, square) {
   let w = b.x - a.x, h = b.y - a.y;
@@ -921,6 +981,7 @@ function setMod(name, on) {
 function cancelDrag() {
   if (pendingTouch) { clearTimeout(pendingTouch.timer); pendingTouch = null; }
   if (!drag) return;
+  if (drag.float) { const f = drag.float, c = ctxOf(targetCanvas(f.layer)); c.save(); c.globalCompositeOperation = 'copy'; c.drawImage(f.original, 0, 0); c.restore(); touchTarget(f.layer); }
   if (drag.backup && drag.canvas) {
     const c = drag.canvas.getContext('2d'); c.save(); c.globalCompositeOperation = 'copy'; c.globalAlpha = 1; c.drawImage(drag.backup, 0, 0); c.restore();
     if (drag.layer) touchTarget(drag.layer);
@@ -1957,7 +2018,7 @@ function buildOptionsBar() {
       `<span class="muted">${state.cloneSrc ? `Source ${Math.round(state.cloneSrc.x)}, ${Math.round(state.cloneSrc.y)} · texture is color-matched when you release` : 'Alt+click to set the source'}</span>`); break;
     case 'spot': parts.push(range('spotSize', 'Size', 1, 300, 'px'), range('spotHardness', 'Hardness', 0, 100, '%'),
       `<span class="muted">Paint over a blemish; a matching patch nearby is picked automatically</span>`); break;
-    case 'lasso': case 'polylasso': case 'wand': case 'select': {
+    case 'lasso': case 'polylasso': case 'wand': case 'select': case 'ellipse': {
       const s = d?.selection;
       parts.push(`<span class="seg">${['new', 'add', 'subtract', 'intersect'].map((m) => `<button data-selmode="${m}" class="${o.selMode === m ? 'on' : ''}" title="${m === 'new' ? 'New selection' : m === 'add' ? 'Add (Shift)' : m === 'subtract' ? 'Subtract (Alt)' : 'Intersect (Shift+Alt)'}">${m[0].toUpperCase() + m.slice(1)}</button>`).join('')}</span>`);
       if (state.tool === 'wand') parts.push(range('wandTolerance', 'Tolerance', 0, 255), `<label><input type="checkbox" data-opt="wandContiguous" ${o.wandContiguous ? 'checked' : ''}/> Contiguous</label>`, `<label><input type="checkbox" data-opt="wandSampleAll" ${o.wandSampleAll ? 'checked' : ''}/> Sample all layers</label>`);

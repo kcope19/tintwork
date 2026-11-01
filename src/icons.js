@@ -3,6 +3,7 @@ const svg = (body) => `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>
 export const ICONS = {
   move: svg('<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>'),
   select: svg('<rect x="4" y="5" width="16" height="14" rx="1" stroke-dasharray="3 2.4"/>'),
+  ellipse: svg('<ellipse cx="12" cy="12" rx="8.5" ry="6.8" stroke-dasharray="3 2.4"/>'),
   crop: svg('<path d="M7 2v15h15M2 7h15v15"/>'),
   brush: svg('<path d="M20 4l-9.5 9.5"/><path d="M10.5 13.5c-2-.4-4 .9-4.4 3.2-.3 1.6-1.3 2.6-3.1 3 3.4 1.2 7.7.6 8.8-2.2.6-1.6.3-3.1-1.3-4z"/>'),
   eraser: svg('<path d="M8.5 20H20M4.6 15.4l9.9-9.9a2 2 0 012.8 0l2.2 2.2a2 2 0 010 2.8L10 20H8.5l-3.9-3.9a.5.5 0 010-.7z"/><path d="M9 11l5 5"/>'),
