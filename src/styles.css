@@ -221,3 +221,19 @@ input[type=text], input[type=number], textarea { -webkit-user-select: text; user
   body:not(.tools-collapsed) #modkeys { left: 62px; }
   #modal.passive .dialog { max-height: 60vh; left: auto; width: min(460px, 100%); border-radius: 16px 0 0 0; }
 }
+
+/* ---- v0.3: curves editor, choice lists, text alignment ---- */
+.curves { display: flex; flex-direction: column; gap: 8px; }
+.curves-top { display: flex; align-items: center; gap: 6px; }
+.curves-top .spacer, .curves-readout .spacer { flex: 1; }
+.curves-graph { width: min(300px, 100%); aspect-ratio: 1; align-self: center; border: 1px solid var(--line, #333); border-radius: 6px; touch-action: none; cursor: crosshair; outline: none; }
+.curves-graph:focus-visible { box-shadow: 0 0 0 2px var(--accent, #e8553a); }
+.curves-readout { display: flex; gap: 12px; font-size: 12px; }
+.curves-readout b { font-variant-numeric: tabular-nums; display: inline-block; min-width: 3ch; }
+.seg { display: inline-flex; border: 1px solid var(--line, #3a3d45); border-radius: 6px; overflow: hidden; }
+.seg > button { border: 0; border-radius: 0; padding: 4px 9px; background: transparent; color: inherit; }
+.seg > button + button { border-left: 1px solid var(--line, #3a3d45); }
+.seg > button.on { background: var(--accent, #e8553a); color: #fff; }
+.choice-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+.choice-list > button { padding: 10px; text-align: left; }
+#tText { width: 100%; min-height: 64px; resize: vertical; box-sizing: border-box; }

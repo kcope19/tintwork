@@ -2,3 +2,4 @@ node_modules/
 test-assets/export.*
 test-assets/project.tintwork.json
 .DS_Store
+scripts/.dbg.mjs

@@ -407,6 +407,112 @@ await page.mouse.move(viewBox.x + 5, viewBox.y + 5);
 await page.waitForTimeout(150);
 await page.screenshot({ path: path.join(shots, '21-heal-after.png') });
 
+// ============================================================================
+// v0.3: adjustment layers + curves editor
+// ============================================================================
+const adjDoc = (w = 600, h = 400) => page.evaluate(([w, h]) => {
+  const t = window.tintwork; t.newDocument(w, h, 'white', 'adjust-test');
+  const l = t.doc.layers[0], x = l.canvas.getContext('2d');
+  x.fillStyle = 'rgb(100,100,100)'; x.fillRect(0, 0, w / 2, h);
+  x.fillStyle = 'rgb(200,50,50)'; x.fillRect(w / 2, 0, w / 2, h);
+  t.touch(l); t.commit('Adjust test'); t.fitToScreen();
+}, [w, h]);
+await adjDoc();
+await page.evaluate(() => window.tintwork.run('adjLayer_invert'));
+check(await page.evaluate(() => { const l = window.tintwork.activeLayer(); return l.kind === 'adjust' && l.adj.type === 'invert' && !!l.mask; }), 'invert adjustment layer created with a mask');
+check(near(await compPx(100, 100), [155, 155, 155, 255]), 'invert layer affects the layer below in the composite');
+check(near(await layerPx(0, 100, 100), [100, 100, 100, 255], 0), 'adjustment layer leaves the pixels below untouched');
+// paint the adjustment's mask: hide it on the right half
+await page.evaluate(() => { const t = window.tintwork; t.setSelection(t.makeSelection(600, 400, t.rectMask(600, 400, { x: 300, y: 0, w: 300, h: 400 }))); });
+await page.evaluate(() => window.tintwork.run('clear')); await page.evaluate(() => window.tintwork.run('deselect'));
+check(near(await compPx(450, 200), [200, 50, 50, 255]), 'masked-out area of an adjustment layer is unaffected');
+check(near(await compPx(100, 200), [155, 155, 155, 255]), 'revealed area of an adjustment layer still adjusted');
+await page.evaluate(() => { const l = window.tintwork.activeLayer(); l.opacity = 0.5; window.tintwork.touch(l); window.tintwork.commit('Opacity'); });
+check(near(await compPx(100, 200), [128, 128, 128, 255], 2), 'adjustment layer opacity blends 50% (≈128)');
+await page.evaluate(() => window.tintwork.undo());
+check(near(await compPx(100, 200), [155, 155, 155, 255]), 'undo restores adjustment layer opacity');
+// layers painted above an adjustment layer are not affected by it
+await page.evaluate(() => { const t = window.tintwork; t.run('layerNew'); const l = t.activeLayer(), x = l.canvas.getContext('2d'); x.fillStyle = 'rgb(10,20,30)'; x.fillRect(0, 0, 50, 50); t.touch(l); t.commit('Paint above'); });
+check(near(await compPx(20, 20), [10, 20, 30, 255]), 'layers above an adjustment layer are not adjusted');
+await page.evaluate(() => window.tintwork.undo());
+await page.waitForTimeout(150);
+await page.screenshot({ path: path.join(shots, '2x-adjust-invert-masked.png') });
+
+// curves layer, edited with the interactive editor
+await adjDoc();
+await page.evaluate(() => window.tintwork.run('adjLayer_curves'));
+await page.waitForSelector('#modal:not(.hidden) .curves-graph');
+check(await page.locator('#modalTitle').textContent() === 'Curves layer', 'new curves layer opens the curve editor');
+const graph = await page.locator('.curves-graph').boundingBox();
+const gpt = (x, y) => ({ x: graph.x + (x / 255) * graph.width, y: graph.y + (1 - y / 255) * graph.height });
+let g = gpt(100, 100); await page.mouse.move(g.x, g.y); await page.mouse.down();
+g = gpt(100, 180); await page.mouse.move(g.x, g.y, { steps: 6 }); await page.mouse.up();
+check(await page.evaluate(() => JSON.stringify(window.tintwork.activeLayer().adj.params.rgb)) === '[[0,0],[100,180],[255,255]]', 'clicking the curve adds a point and dragging moves it');
+check(near(await compPx(100, 100), [180, 180, 180, 255], 2), `curve maps 100 → 180 live (got ${(await compPx(100, 100))[0]})`);
+await page.screenshot({ path: path.join(shots, '2x-curves-editor.png') });
+// add a second point then drag it off the graph to remove it
+g = gpt(200, 222); await page.mouse.move(g.x, g.y); await page.mouse.down(); await page.mouse.move(g.x, graph.y + graph.height + 80, { steps: 6 }); await page.mouse.up();
+check(await page.evaluate(() => window.tintwork.activeLayer().adj.params.rgb.length) === 3, 'dragging a point off the graph removes it');
+const beforeRed = await compPx(450, 100);
+await page.locator('.curves [data-ch="r"]').click();
+g = gpt(200, 200); await page.mouse.move(g.x, g.y); await page.mouse.down(); g = gpt(200, 120); await page.mouse.move(g.x, g.y, { steps: 6 }); await page.mouse.up();
+const afterRed = await compPx(450, 100);
+check(Math.abs(afterRed[0] - beforeRed[0]) > 15 && afterRed[1] === beforeRed[1] && afterRed[2] === beforeRed[2], `red channel curve only changes red (${beforeRed} → ${afterRed})`);
+const curvedPx = await compPx(100, 100);
+await page.locator('#modalOk').click();
+check(await page.evaluate(() => window.tintwork.history.entries.at(-1).label === 'Edit Curves layer'), 'curve edit committed to history');
+// re-edit by double-clicking the layer thumbnail; cancel restores
+await page.locator('#layerList li.active .thumb:not(.mask-thumb)').dblclick();
+await page.waitForSelector('#modal:not(.hidden) .curves-graph');
+await page.locator('.curves .curves-reset').click();
+const resetPx = await compPx(100, 100);
+check(resetPx[1] === 100 && resetPx[0] !== 100, `re-opened editor updates live: RGB reset keeps the red curve (${resetPx})`);
+await page.locator('#modalCancel').click();
+check(near(await compPx(100, 100), curvedPx, 0), 'cancelling a re-edit restores the previous curves');
+
+// levels + brightness via the parameter dialog, then merge down bakes it in
+await adjDoc();
+await page.evaluate(() => window.tintwork.run('adjLayer_levels'));
+await page.waitForSelector('#modal:not(.hidden) input[type=range]');
+await page.locator('#modalBody input[data-key="inBlack"]').evaluate((el) => { el.value = 50; el.dispatchEvent(new Event('input')); });
+const lvPx = await compPx(100, 100);
+check(lvPx[0] < 100 && lvPx[0] > 50, `levels layer (black point 50) darkens 100 → ${lvPx[0]}`);
+await page.locator('#modalOk').click();
+await page.locator('#layerList li.active .thumb:not(.mask-thumb)').dblclick();
+check(await page.locator('#modalTitle').textContent() === 'Levels layer' && await page.locator('#modalBody input[data-key="inBlack"]').inputValue() === '50', 'double-click re-opens a levels layer with its values');
+await page.locator('#modalCancel').click();
+await page.evaluate(() => window.tintwork.mergeDown());
+check(await page.evaluate(() => window.tintwork.doc.layers.length === 1), 'merge down removes the adjustment layer');
+check(near(await layerPx(0, 100, 100), lvPx, 1), 'merge down bakes the adjustment into the pixels');
+// cancelling a brand-new adjustment layer removes it
+await page.evaluate(() => window.tintwork.run('adjLayer_exposure'));
+await page.locator('#modalCancel').click();
+check(await page.evaluate(() => window.tintwork.doc.layers.length === 1 && window.tintwork.history.entries.at(-1).label === 'Merge adjustment down'), 'cancelling a new adjustment layer removes it and its history step');
+// grayscale + hue/sat from the chooser button in the Layers panel
+await page.locator('[data-cmd="adjLayerMenu"]').click();
+await page.locator('#modalBody [data-adj-type="grayscale"]').click();
+const gpx = await compPx(450, 100);
+check(Math.abs(gpx[0] - gpx[1]) <= 1 && Math.abs(gpx[1] - gpx[2]) <= 1, 'grayscale adjustment layer desaturates the composite');
+// export includes adjustment layers
+const exportedPx = await page.evaluate(async () => {
+  const b = await window.tintwork.renderExport('image/png'); const bmp = await createImageBitmap(b);
+  const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height; const x = c.getContext('2d'); x.drawImage(bmp, 0, 0); return [...x.getImageData(450, 100, 1, 1).data];
+});
+check(near(exportedPx, gpx, 1), 'export renders adjustment layers');
+// project round trip keeps adjustment layers
+const proj = await page.evaluate(() => JSON.stringify(window.tintwork.serializeProject()));
+check(proj.includes('"kind":"adjust"') && proj.includes('"grayscale"'), 'project file stores adjustment layers');
+
+// big document: adjustment computed in the worker without blocking
+await adjDoc(3000, 2000);
+const tAdj0 = Date.now();
+await page.evaluate(() => { window.tintwork.run('adjLayer_invert'); });
+const blockMs = Date.now() - tAdj0;
+await idle(); await page.waitForTimeout(50); await idle();
+check(near(await compPx(100, 100), [155, 155, 155, 255]), `large-document adjustment layer computed (worker path, ${blockMs} ms to add)`);
+await page.waitForTimeout(150);
+await page.screenshot({ path: path.join(shots, '2x-adjust-layers-panel.png') });
+
 await browser.close();
 server.close();
 if (errors.length) { console.error(`\n${errors.length} problem(s):\n` + errors.join('\n')); process.exit(1); }

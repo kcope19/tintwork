@@ -459,3 +459,14 @@ export function spotHeal(img, cover, w, h) {
   } // otherwise src stays black and the result is a pure smooth fill
   return { data: healRegion(img, src, cover, w, h), offset: best && { dx: best.dx, dy: best.dy } };
 }
+
+/** Per-channel histograms (luminance + R, G, B) for the curves editor. */
+export function channelHistograms(img) {
+  const l = new Uint32Array(256), r = new Uint32Array(256), g = new Uint32Array(256), b = new Uint32Array(256), d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] === 0) continue;
+    r[d[i]]++; g[d[i + 1]]++; b[d[i + 2]]++;
+    l[Math.round(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2])]++;
+  }
+  return { l, r, g, b };
+}

@@ -1,5 +1,6 @@
 // Tintwork — an original, browser-based layered image editor (Canvas 2D).
-import { floodMask, similarMask, histogram } from './pixels.js';
+import { floodMask, similarMask, histogram, runOp, channelHistograms } from './pixels.js';
+import { createCurvesEditor, identityCurves } from './curves-editor.js';
 import { makeSelection, shapeMask, rectMask, combine, invertSelection, selectionCanvas, selectionOutline, maskRegion } from './selection.js';
 import * as ops from './ops.js';
 import { ICONS } from './icons.js';
@@ -25,7 +26,7 @@ const state = {
     brushSize: 24, brushHardness: 70, brushOpacity: 100,
     eraserSize: 40, eraserHardness: 50, eraserOpacity: 100,
     fillTolerance: 32, fillContiguous: true,
-    textFont: 'system-ui', textSize: 64, textBold: true, textItalic: false,
+    textFont: 'system-ui', textSize: 64, textBold: true, textItalic: false, textAlign: 'left',
     sampleAll: true,
     selMode: 'new', wandTolerance: 32, wandContiguous: true, wandSampleAll: false, featherRadius: 8,
     cloneSize: 40, cloneHardness: 60, cloneOpacity: 100, cloneAligned: true,
@@ -84,9 +85,17 @@ function createLayer(name, w, h, opts = {}) {
   };
 }
 function touch(layer) { layer.rev = ++globalRev; compDirty = true; }
+/** Canvas that defines a layer's geometry (adjustment layers are just a mask). */
+const geomCanvas = (l) => (l.kind === 'adjust' ? l.mask.canvas : l.canvas);
+/** Turn a live text layer into plain pixels (before painting, filters or transforms). */
+function rasterize(l, why) {
+  if (l?.kind !== 'text') return;
+  delete l.kind; delete l.text; l.name = l.name.replace(/^Text: /, '') + ' (pixels)';
+  if (why) toast(`Text layer converted to pixels for ${why}.`);
+}
 function touchMask(layer) { if (layer.mask) layer.mask.rev = ++globalRev; compDirty = true; }
 /** Canvas currently being edited on a layer: its mask (when targeted) or its pixels. */
-const editingMask = (l = activeLayer()) => !!(l && l.mask && l.editMask);
+const editingMask = (l = activeLayer()) => !!(l && l.mask && (l.editMask || l.kind === 'adjust'));
 const targetCanvas = (l = activeLayer()) => (editingMask(l) ? l.mask.canvas : l.canvas);
 function touchTarget(l) { if (editingMask(l)) touchMask(l); else touch(l); }
 /** Mask canvas: white with alpha = how much of the layer shows (255 = fully revealed). */
@@ -121,7 +130,7 @@ function rectIntersect(a, b) {
 }
 /** Region of a layer (in layer pixel coords) that an operation should touch. */
 function opRegion(layer) {
-  const full = { x: 0, y: 0, w: layer.canvas.width, h: layer.canvas.height };
+  const g = geomCanvas(layer), full = { x: 0, y: 0, w: g.width, h: g.height };
   const sel = doc().selection;
   if (!sel) return full;
   return rectIntersect(full, { x: sel.x - layer.x, y: sel.y - layer.y, w: sel.w, h: sel.h });
@@ -139,6 +148,7 @@ function setSelection(sel, label) {
 }
 /** Grow a layer's canvas so it covers the whole document (used before painting). */
 function ensureCoversDoc(layer) {
+  if (layer.kind === 'adjust') return;
   const { width: W, height: H } = doc();
   const x0 = Math.min(0, layer.x), y0 = Math.min(0, layer.y);
   const x1 = Math.max(W, layer.x + layer.canvas.width), y1 = Math.max(H, layer.y + layer.canvas.height);
@@ -201,6 +211,7 @@ function snapshot() {
       return {
         id: l.id, name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend,
         x: l.x, y: l.y, rev: l.rev, canvas: old ? old.canvas : cloneCanvas(l.canvas), editMask: l.editMask,
+        kind: l.kind, adj: l.adj, text: l.text, // treated as immutable: edits replace the object
         mask: l.mask ? { enabled: l.mask.enabled, rev: l.mask.rev, canvas: oldMask ? oldMask.canvas : cloneCanvas(l.mask.canvas) } : null,
       };
     }),
@@ -254,14 +265,156 @@ function composite(target = comp, opts = {}) {
   c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1;
   c.clearRect(0, 0, d.width, d.height);
   if (opts.background) { c.fillStyle = opts.background; c.fillRect(0, 0, d.width, d.height); }
+  const below = [opts.background || ''];
   for (const l of d.layers) {
-    if (!l.visible || l.opacity <= 0) continue;
-    c.globalAlpha = l.opacity;
-    c.globalCompositeOperation = l.blend;
-    c.drawImage(renderSource(l), l.x, l.y);
+    if (l.visible && l.opacity > 0) {
+      if (l.kind === 'adjust') drawAdjustmentLayer(c, l, below.join('|'), opts);
+      else {
+        c.globalAlpha = l.opacity;
+        c.globalCompositeOperation = l.blend;
+        c.drawImage(renderSource(l), l.x, l.y);
+      }
+    }
+    below.push(layerSignature(l));
   }
   c.restore();
   return target;
+}
+
+// --- adjustment layers: re-applied to everything below them on each composite ----
+// Results are cached per layer, keyed by a signature of the layers underneath, so
+// painting above an adjustment layer costs nothing extra. Big documents compute in
+// the pixel worker (showing the previous result until the new one is ready).
+const ADJ_LAYER = {
+  brightnessContrast: 'Brightness / contrast', hueSaturation: 'Hue / saturation', exposure: 'Exposure',
+  levels: 'Levels', curves: 'Curves', invert: 'Invert', grayscale: 'Grayscale',
+};
+const ADJ_SYNC_PIXELS = 2_500_000;
+const adjCache = new Map();
+let adjPending = 0;
+let adjScratch = null;
+function layerSignature(l) {
+  return `${l.id}:${l.rev}:${l.visible ? 1 : 0}:${l.opacity}:${l.blend}:${l.x},${l.y}:${l.mask ? `${l.mask.rev}${l.mask.enabled ? 'e' : 'd'}` : '-'}${l.kind === 'adjust' ? ':' + JSON.stringify(l.adj) : ''}`;
+}
+function putInto(canvas, img) {
+  if (!canvas || canvas.width !== img.width || canvas.height !== img.height) canvas = makeCanvas(img.width, img.height);
+  canvas.getContext('2d').putImageData(img, 0, 0);
+  return canvas;
+}
+function drawAdjustmentLayer(c, l, below, opts) {
+  const d = doc(), W = d.width, H = d.height;
+  const key = `${W}x${H}|${below}|${JSON.stringify(l.adj)}`;
+  let e = adjCache.get(l.id); if (!e) { e = { key: null, canvas: null, running: false }; adjCache.set(l.id, e); }
+  if (e.key !== key) {
+    if (!opts.sync && W * H > ADJ_SYNC_PIXELS && ops.workerStatus().available) {
+      if (!e.running) {
+        e.running = true; adjPending++;
+        const img = c.getImageData(0, 0, W, H);
+        ops.process(l.adj.type, img, l.adj.params || {}).then((out) => { e.canvas = putInto(e.canvas, out); e.key = key; })
+          .catch((err) => status(`Adjustment layer failed: ${err.message}`))
+          .finally(() => { e.running = false; adjPending--; compDirty = true; requestRender(); });
+      }
+      if (!e.canvas || e.canvas.width !== W || e.canvas.height !== H) return; // first result not ready yet
+    } else {
+      const img = c.getImageData(0, 0, W, H);
+      runOp(l.adj.type, img, l.adj.params || {});
+      e.canvas = putInto(e.canvas, img); e.key = key;
+    }
+  }
+  if (!adjScratch || adjScratch.width !== W || adjScratch.height !== H) adjScratch = makeCanvas(W, H);
+  const sx = adjScratch.getContext('2d');
+  sx.save(); sx.globalAlpha = 1; sx.globalCompositeOperation = 'copy'; sx.drawImage(e.canvas, 0, 0);
+  const masked = l.mask && l.mask.enabled;
+  if (masked) {
+    sx.globalCompositeOperation = 'destination-in'; sx.drawImage(l.mask.canvas, l.x, l.y);
+    sx.globalCompositeOperation = 'source-over';
+    const mx = l.x, my = l.y, mw = l.mask.canvas.width, mh = l.mask.canvas.height; // nothing outside the mask
+    sx.clearRect(0, 0, W, Math.max(0, my)); sx.clearRect(0, my + mh, W, H); sx.clearRect(0, 0, Math.max(0, mx), H); sx.clearRect(mx + mw, 0, W, H);
+  }
+  sx.restore();
+  c.save(); c.globalAlpha = l.opacity;
+  if (l.blend === 'source-over') {
+    // result = below × (1 − k) + adjusted × k, with k = mask × opacity (exact on premultiplied pixels)
+    c.globalCompositeOperation = 'destination-out';
+    if (masked) c.drawImage(l.mask.canvas, l.x, l.y); else { c.fillStyle = '#000'; c.fillRect(0, 0, W, H); }
+    c.globalCompositeOperation = 'lighter';
+  } else c.globalCompositeOperation = l.blend;
+  c.drawImage(adjScratch, 0, 0);
+  c.restore();
+}
+function defaultAdjParams(type) {
+  if (type === 'curves') return identityCurves();
+  const def = ADJ[type]; return def ? Object.fromEntries(def.params.map((q) => [q.key, q.value])) : {};
+}
+function newAdjustmentLayer(type) {
+  const d = doc(), sel = d.selection;
+  const l = createLayer(ADJ_LAYER[type], 1, 1, { kind: 'adjust', adj: { type, params: defaultAdjParams(type) }, editMask: true });
+  const m = makeMaskCanvas(d.width, d.height, !sel);
+  if (sel) m.getContext('2d').drawImage(selectionCanvas(sel), 0, 0);
+  l.mask = { canvas: m, enabled: true, rev: ++globalRev };
+  addLayer(l, `New ${ADJ_LAYER[type]} layer`);
+  if (type !== 'invert' && type !== 'grayscale') openAdjustmentLayerDialog(l, true);
+}
+/** Edit an adjustment layer's settings live; Cancel restores (or removes a brand-new layer). */
+function openAdjustmentLayerDialog(l, isNew = false) {
+  const before = l.adj, type = before.type;
+  const values = structuredClone(before.params || {});
+  const apply = () => { l.adj = { type, params: structuredClone(values) }; compDirty = true; requestRender(); };
+  const body = document.createElement('div');
+  if (type === 'curves') {
+    // histogram of what the curve will act on (everything below this layer)
+    const d = doc(), idx = d.layers.indexOf(l), tmp = makeCanvas(d.width, d.height);
+    const saved = d.layers; d.layers = saved.slice(0, idx); composite(tmp, { sync: true }); d.layers = saved;
+    const small = makeCanvas(Math.min(512, d.width), Math.min(512, d.height)); small.getContext('2d').drawImage(tmp, 0, 0, small.width, small.height);
+    body.append(createCurvesEditor(values, apply, channelHistograms(small.getContext('2d').getImageData(0, 0, small.width, small.height))));
+  } else if (ADJ[type]) {
+    for (const q of ADJ[type].params) body.append(paramField({ ...q, value: values[q.key] ?? q.value }, values, apply, q.value));
+  } else { status(`${ADJ_LAYER[type]} has no settings.`); return; }
+  showModal({
+    title: `${ADJ_LAYER[type]} layer`, body, passive: true, okLabel: 'Done',
+    ok: () => { apply(); if (JSON.stringify(before) !== JSON.stringify(l.adj)) commit(`Edit ${ADJ_LAYER[type]} layer`); else if (isNew) updateLayersPanel(); },
+    cancel: () => {
+      l.adj = before; compDirty = true;
+      if (isNew) { undo(); history.entries.length = history.index + 1; updateHistoryPanel(); }
+      requestRender();
+    },
+  });
+}
+/** Re-open the settings of an adjustment or text layer (double-click in the Layers panel). */
+function editLayer(l = activeLayer()) {
+  if (!l) return;
+  if (l.kind === 'adjust') openAdjustmentLayerDialog(l);
+  else if (l.kind === 'text') openTextDialog(null, l);
+  else status('Only adjustment and text layers have settings to edit.');
+}
+
+// --- text layers: kept as editable text and re-rendered on change ----------------------
+const TEXT_FONTS = ['system-ui', 'sans-serif', 'serif', 'monospace', 'Georgia', 'Verdana', 'Courier New', 'cursive'];
+function textFont(t) { return `${t.italic ? 'italic ' : ''}${t.bold ? '700 ' : ''}${t.size}px ${t.font}`; }
+/** Draw `l.text` into a canvas sized to the text, keeping its anchor point fixed. */
+function renderTextLayer(l) {
+  const t = l.text, lines = t.text.split('\n'), lh = Math.round(t.size * 1.2);
+  const mx = ctxOf(makeCanvas(1, 1)); mx.font = textFont(t);
+  const widths = lines.map((ln) => mx.measureText(ln).width), w = Math.max(1, ...widths);
+  const pad = Math.ceil(t.size * 0.35);
+  const c = makeCanvas(Math.ceil(w) + pad * 2, lh * lines.length + pad * 2), x = ctxOf(c);
+  x.font = textFont(t); x.fillStyle = t.color; x.textBaseline = 'top'; x.textAlign = t.align;
+  const ax = t.align === 'center' ? pad + w / 2 : t.align === 'right' ? pad + w : pad;
+  lines.forEach((ln, i) => x.fillText(ln, ax, pad + i * lh + t.size * 0.1));
+  // anchor (doc coords) = l.x + t.ox ; keep it where it was
+  const anchorX = l.x + (t.ox ?? 0), anchorY = l.y + (t.oy ?? 0);
+  l.text = { ...t, ox: ax, oy: pad };
+  l.canvas = c; l.x = Math.round(anchorX - ax); l.y = Math.round(anchorY - pad);
+  l.name = `Text: ${lines[0].slice(0, 24) || '(empty)'}`;
+  touch(l);
+}
+function textLayerAt(p) {
+  const d = doc();
+  for (let i = d.layers.length - 1; i >= 0; i--) {
+    const l = d.layers[i];
+    if (l.kind === 'text' && l.visible && p.x >= l.x && p.y >= l.y && p.x < l.x + l.canvas.width && p.y < l.y + l.canvas.height) return l;
+  }
+  return null;
 }
 
 let renderQueued = false;
@@ -545,7 +698,7 @@ const toolHandlers = {
   spot: paintTool('spot'),
   fill: { down(p) { fillAt(p); } },
   eyedropper: { down(p) { drag = {}; pickColor(p); }, move(p) { pickColor(p); } },
-  text: { down(p) { openTextDialog(p); } },
+  text: { down(p) { drag = {}; const hit = textLayerAt(p); if (hit) { doc().activeId = hit.id; openTextDialog(null, hit); } else openTextDialog(p); } },
   zoom: { down(p, e) { const r = view.getBoundingClientRect(); zoomAt(e.altKey ? 1 / 1.5 : 1.5, e.clientX - r.left, e.clientY - r.top); } },
 };
 
@@ -573,6 +726,7 @@ function paintTool(kind) {
       }
       if ((clone || heal) && editingMask(layer)) { status('This tool paints layer pixels. Click the layer thumbnail to target pixels.'); return; }
       if (e.altKey && kind === 'brush') { pickColor(p); return; }
+      if (!editingMask(layer)) rasterize(layer, 'painting');
       ensureCoversDoc(layer);
       const o = state.opts;
       const size = o[`${kind}Size`];
@@ -661,7 +815,7 @@ function applyStroke() {
     c.drawImage(cover, 0, 0);
   }
   c.restore();
-  compDirty = true; requestRender();
+  touchTarget(l); requestRender();
 }
 
 /**
@@ -697,6 +851,7 @@ function fillAt(p) {
   const sel = doc().selection;
   const px = Math.floor(p.x), py = Math.floor(p.y);
   if (sel && !(px >= 0 && py >= 0 && px < sel.W && py < sel.H && sel.mask[py * sel.W + px])) return;
+  if (!editingMask(layer)) rasterize(layer, 'filling');
   ensureCoversDoc(layer);
   const onMask = editingMask(layer), cv = targetCanvas(layer);
   const c = ctxOf(cv);
@@ -940,6 +1095,19 @@ const cmds = {
   export: needDoc(() => openExportDialog()),
   camera: () => { fileMode = 'open'; $('#cameraInput').click(); },
   closePolygon: () => finishPolygon(),
+  editLayer: needDoc(() => editLayer()),
+  adjLayerMenu: needDoc(() => {
+    const body = document.createElement('div'); body.className = 'choice-list';
+    for (const [t, n] of Object.entries(ADJ_LAYER)) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = n; b.dataset.adjType = t;
+      b.addEventListener('click', () => { closeModal(); newAdjustmentLayer(t); });
+      body.append(b);
+    }
+    showModal({ title: 'New adjustment layer', body, hideCancel: true, okLabel: 'Close' });
+  }),
+  rasterizeLayer: needDoc(() => { const l = activeLayer(); if (l.kind !== 'text') { status('Only text layers need converting to pixels.'); return; } rasterize(l); touch(l); commit('Convert text to pixels'); }),
+  ...Object.fromEntries(Object.keys(ADJ_LAYER).map((t) => [`adjLayer_${t}`, needDoc(() => newAdjustmentLayer(t))])),
+  curves: needDoc(() => openAdjust(ADJ.curves)),
   cancelPolygon: () => { state.poly = null; buildOptionsBar(); requestRender(); },
   undo, redo,
   selectAll: needDoc(() => { const d = doc(); setSelection(makeSelection(d.width, d.height, rectMask(d.width, d.height, { x: 0, y: 0, w: d.width, h: d.height })), 'Select all'); }),
@@ -955,13 +1123,14 @@ const cmds = {
   }),
   clear: needDoc(() => {
     const l = activeLayer(), r = opRegion(l); if (!r) return;
+    if (!editingMask(l)) rasterize(l, 'clearing');
     const c = ctxOf(targetCanvas(l)), sel = doc().selection;
     if (sel) { c.save(); c.globalCompositeOperation = 'destination-out'; c.drawImage(selectionCanvas(sel), -l.x, -l.y); c.restore(); }
     else c.clearRect(r.x, r.y, r.w, r.h);
     touchTarget(l); requestRender(); commit(editingMask(l) ? 'Clear mask' : 'Clear'); updateLayersPanel();
   }),
   fillSelection: needDoc(() => {
-    const l = activeLayer(); ensureCoversDoc(l); if (!opRegion(l)) return;
+    const l = activeLayer(); if (!editingMask(l)) rasterize(l, 'filling'); ensureCoversDoc(l); if (!opRegion(l)) return;
     const cv = targetCanvas(l), onMask = editingMask(l);
     const t = makeCanvas(cv.width, cv.height), tx = t.getContext('2d');
     tx.fillStyle = onMask ? '#fff' : state.fg; tx.fillRect(0, 0, t.width, t.height); maskBySelection(tx, l);
@@ -1006,7 +1175,7 @@ const cmds = {
   layerMergeDown: needDoc(() => mergeDown()),
   flatten: needDoc(() => {
     const d = doc(); const flat = createLayer('Background', d.width, d.height);
-    composite(flat.canvas); d.layers = [flat]; d.activeId = flat.id; compDirty = true; requestRender(); commit('Flatten image');
+    composite(flat.canvas, { sync: true }); d.layers = [flat]; d.activeId = flat.id; compDirty = true; requestRender(); commit('Flatten image');
   }),
   rotateCW: needDoc(() => transformDoc('cw', 'Rotate 90° clockwise')),
   rotateCCW: needDoc(() => transformDoc('ccw', 'Rotate 90° counter-clockwise')),
@@ -1049,7 +1218,7 @@ const SHORTCUTS = {
   'mod+c': 'copy', 'mod+shift+c': 'copyMerged', 'mod+x': 'cut',
   'mod+shift+n': 'layerNew', 'mod+j': 'layerDuplicate', 'mod+e': 'layerMergeDown', 'mod+]': 'layerUp', 'mod+[': 'layerDown',
   'mod+=': 'zoomIn', 'mod++': 'zoomIn', 'mod+shift+=': 'zoomIn', 'mod+shift++': 'zoomIn', 'mod+-': 'zoomOut', 'mod+0': 'zoomFit', 'mod+1': 'zoom100',
-  'mod+b': 'brightnessContrast', 'mod+u': 'hueSaturation', 'mod+l': 'levels', 'mod+i': 'invert', 'mod+shift+u': 'grayscale',
+  'mod+b': 'brightnessContrast', 'mod+u': 'hueSaturation', 'mod+l': 'levels', 'mod+m': 'curves', 'mod+i': 'invert', 'mod+shift+u': 'grayscale',
   'x': 'swapColors', 'd': 'resetColors', '?': 'shortcuts', 'shift+?': 'shortcuts',
 };
 
@@ -1064,13 +1233,16 @@ const MENUS = [
     ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Flatten', 'flatten']]],
   ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
     ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
-  ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Delete layer', 'layerDelete'], '-',
+  ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
+    ['New adjustment layer: Brightness / contrast…', 'adjLayer_brightnessContrast'], ['New adjustment layer: Hue / saturation…', 'adjLayer_hueSaturation'],
+    ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
+    ['Edit layer settings…', 'editLayer'], ['Convert text to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Delete layer', 'layerDelete'], '-',
     ['Move up', 'layerUp', 'Ctrl+]'], ['Move down', 'layerDown', 'Ctrl+['], ['Merge down', 'layerMergeDown', 'Ctrl+E'], '-',
     ['Flip layer horizontal', 'flipLayerH'], ['Flip layer vertical', 'flipLayerV'], '-',
     ['Add layer mask (reveal all)', 'addMask'], ['Add mask from selection', 'addMaskFromSelection'], ['Edit mask / pixels', 'editMaskToggle', '\\'],
     ['Enable / disable mask', 'toggleMask'], ['Invert mask', 'invertMask'], ['Apply mask', 'applyMask'], ['Delete mask', 'deleteMask']]],
   ['Adjust', [['Brightness / contrast…', 'brightnessContrast', 'Ctrl+B'], ['Hue / saturation / lightness…', 'hueSaturation', 'Ctrl+U'],
-    ['Exposure…', 'exposure'], ['Levels…', 'levels', 'Ctrl+L'], ['Auto levels', 'autoLevels'], '-',
+    ['Exposure…', 'exposure'], ['Levels…', 'levels', 'Ctrl+L'], ['Curves…', 'curves', 'Ctrl+M'], ['Auto levels', 'autoLevels'], '-',
     ['Invert', 'invert', 'Ctrl+I'], ['Grayscale', 'grayscale', 'Ctrl+Shift+U'], ['Sepia tone…', 'sepia']]],
   ['Filter', [['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
   ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1']]],
@@ -1113,6 +1285,9 @@ function moveLayer(from, to) {
 function mergeDown() {
   const d = doc(); const i = activeIndex(); if (i <= 0) { status('No layer below to merge into.'); return; }
   const upper = d.layers[i], lower = d.layers[i - 1];
+  if (lower.kind === 'adjust') { status('Cannot merge into an adjustment layer. Move the layer or merge the adjustment down first.'); return; }
+  rasterize(lower);
+  if (upper.kind === 'adjust') { bakeAdjustment(upper, lower); d.layers.splice(i, 1); d.activeId = lower.id; compDirty = true; requestRender(); commit('Merge adjustment down'); return; }
   const x0 = Math.min(0, lower.x, upper.x), y0 = Math.min(0, lower.y, upper.y);
   const x1 = Math.max(d.width, lower.x + lower.canvas.width, upper.x + upper.canvas.width);
   const y1 = Math.max(d.height, lower.y + lower.canvas.height, upper.y + upper.canvas.height);
@@ -1125,6 +1300,22 @@ function mergeDown() {
   compDirty = true; requestRender(); commit('Merge down');
 }
 
+/** Permanently apply an adjustment layer's effect (through its mask and opacity) to one layer. */
+function bakeAdjustment(adj, target) {
+  if (!adj.visible || adj.opacity <= 0) return;
+  const w = target.canvas.width, h = target.canvas.height, c = ctxOf(target.canvas);
+  const img = c.getImageData(0, 0, w, h), orig = new Uint8ClampedArray(img.data);
+  runOp(adj.adj.type, img, adj.adj.params || {});
+  const m = makeCanvas(w, h), mx = ctxOf(m);
+  if (adj.mask && adj.mask.enabled) mx.drawImage(adj.mask.canvas, adj.x - target.x, adj.y - target.y); else { mx.fillStyle = '#fff'; mx.fillRect(0, 0, w, h); }
+  const md = mx.getImageData(0, 0, w, h).data, o = img.data;
+  for (let i = 0; i < o.length; i += 4) {
+    const k = (md[i + 3] / 255) * adj.opacity;
+    if (k >= 1) continue; if (k <= 0) { o[i] = orig[i]; o[i + 1] = orig[i + 1]; o[i + 2] = orig[i + 2]; continue; }
+    for (let j = 0; j < 3; j++) o[i + j] = orig[i + j] + (o[i + j] - orig[i + j]) * k;
+  }
+  c.putImageData(img, 0, 0); touch(target);
+}
 function rotatedCanvas(src, kind) {
   const w = src.width, h = src.height, swap = kind === 'cw' || kind === 'ccw';
   const c = makeCanvas(swap ? h : w, swap ? w : h), x = c.getContext('2d');
@@ -1138,14 +1329,16 @@ function rotatedCanvas(src, kind) {
 }
 function transformDoc(kind, label) {
   const d = doc(); const W = d.width, H = d.height;
+  if (d.layers.some((l) => l.kind === 'text')) { d.layers.forEach((l) => rasterize(l)); toast('Text layers were converted to pixels for the rotation/flip.'); }
   for (const l of d.layers) {
-    const w = l.canvas.width, h = l.canvas.height; let { x, y } = l;
+    const g = geomCanvas(l), w = g.width, h = g.height; let { x, y } = l;
     if (kind === 'cw') [x, y] = [H - (l.y + h), l.x];
     else if (kind === 'ccw') [x, y] = [l.y, W - (l.x + w)];
     else if (kind === '180') [x, y] = [W - (l.x + w), H - (l.y + h)];
     else if (kind === 'fh') x = W - (l.x + w);
     else if (kind === 'fv') y = H - (l.y + h);
-    l.canvas = rotatedCanvas(l.canvas, kind); l.x = x; l.y = y; touch(l);
+    if (l.kind !== 'adjust') l.canvas = rotatedCanvas(l.canvas, kind);
+    l.x = x; l.y = y; touch(l);
     if (l.mask) { l.mask.canvas = rotatedCanvas(l.mask.canvas, kind); touchMask(l); }
   }
   if (kind === 'cw' || kind === 'ccw') { d.width = H; d.height = W; }
@@ -1153,7 +1346,9 @@ function transformDoc(kind, label) {
   compDirty = true; fitToScreen(); commit(label);
 }
 function transformLayer(kind, label) {
-  const l = activeLayer(); l.canvas = rotatedCanvas(l.canvas, kind); touch(l);
+  const l = activeLayer(); rasterize(l, 'the transform');
+  if (l.kind !== 'adjust') l.canvas = rotatedCanvas(l.canvas, kind);
+  touch(l);
   if (l.mask) { l.mask.canvas = rotatedCanvas(l.mask.canvas, kind); touchMask(l); }
   requestRender(); commit(label);
 }
@@ -1172,7 +1367,9 @@ function resizeImage(nw, nh) {
     return c;
   };
   for (const l of d.layers) {
-    l.canvas = scale(l.canvas); l.x = Math.round(l.x * sx); l.y = Math.round(l.y * sy); touch(l);
+    rasterize(l);
+    if (l.kind !== 'adjust') l.canvas = scale(l.canvas);
+    l.x = Math.round(l.x * sx); l.y = Math.round(l.y * sy); touch(l);
     if (l.mask) { l.mask.canvas = scale(l.mask.canvas); touchMask(l); }
   }
   d.width = nw; d.height = nh; d.selection = null;
@@ -1181,7 +1378,14 @@ function resizeImage(nw, nh) {
 function resizeCanvas(nw, nh, ax, ay) {
   if (nw * nh > MAX_PIXELS) { const f = fitPixels(nw, nh); toast(`That size exceeds this device's canvas limit; using ${f.w}×${f.h}.`); nw = f.w; nh = f.h; }
   const d = doc(); const dx = Math.round((nw - d.width) * ax), dy = Math.round((nh - d.height) * ay);
-  for (const l of d.layers) { l.x += dx; l.y += dy; touch(l); }
+  for (const l of d.layers) {
+    l.x += dx; l.y += dy; touch(l);
+    if (l.kind === 'adjust') { // grow the adjustment's mask over the new area (revealed), keep its painted part
+      const m = makeMaskCanvas(nw, nh, true), mx = m.getContext('2d'), old = l.mask.canvas;
+      mx.clearRect(l.x, l.y, old.width, old.height); mx.drawImage(old, l.x, l.y);
+      l.mask.canvas = m; l.x = 0; l.y = 0; touchMask(l);
+    }
+  }
   d.width = nw; d.height = nh; d.selection = null;
   compDirty = true; fitToScreen(); commit(`Canvas size ${nw}×${nh}`);
 }
@@ -1189,7 +1393,9 @@ function cropTo(r) {
   const d = doc();
   r = rectIntersect(r, { x: 0, y: 0, w: d.width, h: d.height }); if (!r) return;
   for (const l of d.layers) {
-    const c = makeCanvas(r.w, r.h); c.getContext('2d').drawImage(l.canvas, l.x - r.x, l.y - r.y);
+    if (l.kind === 'text') { l.x -= r.x; l.y -= r.y; touch(l); continue; } // stays editable; just shifts
+    const c = l.kind === 'adjust' ? l.canvas : makeCanvas(r.w, r.h);
+    if (l.kind !== 'adjust') c.getContext('2d').drawImage(l.canvas, l.x - r.x, l.y - r.y);
     if (l.mask) { const m = makeCanvas(r.w, r.h); m.getContext('2d').drawImage(l.mask.canvas, l.x - r.x, l.y - r.y); l.mask.canvas = m; touchMask(l); }
     l.canvas = c; l.x = 0; l.y = 0; touch(l);
   }
@@ -1243,6 +1449,7 @@ const ADJ = {
     { key: 'inWhite', label: 'Input white', min: 1, max: 255, value: 255 },
     { key: 'outBlack', label: 'Output black', min: 0, max: 255, value: 0 },
     { key: 'outWhite', label: 'Output white', min: 0, max: 255, value: 255 }], op: 'levels' },
+  curves: { title: 'Curves', params: [], op: 'curves', curves: true },
   sepia: { title: 'Sepia tone', params: [{ key: 'amount', label: 'Amount', min: 0, max: 100, value: 80, unit: '%' }], op: 'sepia' },
   gaussianBlur: { title: 'Gaussian blur', params: [{ key: 'radius', label: 'Radius', min: 0, max: 100, step: 0.5, value: 4, unit: 'px' }], op: 'gaussianBlur', maskOk: true },
   sharpen: { title: 'Sharpen (unsharp mask)', params: [
@@ -1282,6 +1489,7 @@ function canAdjust(l, def) {
 /** One-shot operation (runs in the pixel worker). */
 async function applyInstant(label, op) {
   const l = activeLayer(); if (!canAdjust(l)) return;
+  if (!editingMask(l)) rasterize(l, label);
   const r = opRegion(l); if (!r) return;
   const c = ctxOf(l.canvas); const img = c.getImageData(r.x, r.y, r.w, r.h);
   setBusy(1);
@@ -1293,6 +1501,7 @@ async function applyInstant(label, op) {
 
 function openAdjust(def, presetValues = {}) {
   const l = activeLayer(); if (!canAdjust(l, def)) return;
+  if (!editingMask(l)) rasterize(l, def.title);
   const r = opRegion(l);
   if (!r) { status('The selection does not overlap the active layer.'); return; }
   const onMask = editingMask(l), cv = targetCanvas(l);
@@ -1308,13 +1517,13 @@ function openAdjust(def, presetValues = {}) {
     running = true;
     while (dirty && !closed) {
       dirty = false;
-      if (!$('#modalPreview').checked) { c.putImageData(original, r.x, r.y); compDirty = true; requestRender(); continue; }
+      if (!$('#modalPreview').checked) { c.putImageData(original, r.x, r.y); touchIt(); requestRender(); continue; }
       setBusy(1);
       let out = null;
       try { out = await ops.process(def.op, original, params(), info, selMask); } catch (err) { status(err.message); }
       setBusy(-1);
       if (closed || !out) continue;
-      c.putImageData(out, r.x, r.y); compDirty = true; requestRender();
+      c.putImageData(out, r.x, r.y); touchIt(); requestRender();
       if (!state.busy) status(`${def.title}: preview`);
     }
     running = false;
@@ -1325,6 +1534,7 @@ function openAdjust(def, presetValues = {}) {
     const hc = document.createElement('canvas'); hc.width = 300; hc.height = 70; hc.style.cssText = 'width:100%;height:70px;background:#16171b;border-radius:4px';
     drawHistogram(hc, histogram(original)); body.append(hc);
   }
+  if (def.curves) { Object.assign(values, identityCurves()); body.append(createCurvesEditor(values, preview, channelHistograms(original))); }
   for (const p of def.params) body.append(paramField({ ...p, value: values[p.key] }, values, preview, p.value));
   showModal({
     title: def.title, body, preview: true, passive: true,
@@ -1337,7 +1547,7 @@ function openAdjust(def, presetValues = {}) {
       } catch (err) { c.putImageData(original, r.x, r.y); compDirty = true; requestRender(); status(`${def.title} failed: ${err.message}`); }
       finally { setBusy(-1); }
     },
-    cancel: () => { closed = true; c.putImageData(original, r.x, r.y); compDirty = true; requestRender(); },
+    cancel: () => { closed = true; c.putImageData(original, r.x, r.y); touchIt(); requestRender(); },
   });
   preview();
 }
@@ -1455,34 +1665,52 @@ function openCanvasSizeDialog() {
   } });
 }
 
-function openTextDialog(p) {
-  const d = doc();
-  const layer = createLayer('Text', d.width, d.height);
-  const o = state.opts;
+function openTextDialog(p, existing = null) {
+  const d = doc(), o = state.opts;
+  const t0 = existing ? existing.text : { text: 'Hello', font: o.textFont, size: o.textSize, bold: o.textBold, italic: o.textItalic, color: state.fg, align: o.textAlign, ox: 0, oy: 0 };
+  const layer = existing || createLayer('Text', 1, 1, { kind: 'text', text: t0, x: Math.round(p.x), y: Math.round(p.y) });
+  const restore = existing ? { text: existing.text, canvas: existing.canvas, x: existing.x, y: existing.y, name: existing.name, rev: existing.rev } : null;
   const body = document.createElement('div');
-  body.innerHTML = `<textarea id="tText" placeholder="Type your text">Hello</textarea>` + formHTML([
-    { label: 'Font', html: `<select id="tFont">${['system-ui', 'sans-serif', 'serif', 'monospace', 'Georgia', 'Verdana', 'Courier New', 'cursive'].map((f) => `<option ${f === o.textFont ? 'selected' : ''}>${f}</option>`).join('')}</select>` },
-    { label: 'Size (px)', html: `<input type="number" id="tSize" value="${o.textSize}" min="4" max="2000" />` },
-    { label: 'Style', html: `<span><input type="checkbox" id="tBold" ${o.textBold ? 'checked' : ''}/> Bold <input type="checkbox" id="tItalic" ${o.textItalic ? 'checked' : ''}/> Italic</span>` },
-    { label: 'Color', html: `<input type="color" id="tColor" value="${state.fg}" />` },
+  body.innerHTML = `<textarea id="tText" placeholder="Type your text">${escapeHtml(t0.text)}</textarea>` + formHTML([
+    { label: 'Font', html: `<select id="tFont">${TEXT_FONTS.map((f) => `<option ${f === t0.font ? 'selected' : ''}>${f}</option>`).join('')}</select>` },
+    { label: 'Size (px)', html: `<input type="number" id="tSize" value="${t0.size}" min="4" max="2000" />` },
+    { label: 'Style', html: `<span><label><input type="checkbox" id="tBold" ${t0.bold ? 'checked' : ''}/> Bold</label> <label><input type="checkbox" id="tItalic" ${t0.italic ? 'checked' : ''}/> Italic</label></span>` },
+    { label: 'Align', html: `<span class="seg" id="tAlign">${['left', 'center', 'right'].map((a) => `<button type="button" data-align="${a}" class="${t0.align === a ? 'on' : ''}">${a[0].toUpperCase() + a.slice(1)}</button>`).join('')}</span>` },
+    { label: 'Color', html: `<input type="color" id="tColor" value="${t0.color}" />` },
   ]);
-  d.layers.splice(activeIndex() + 1, 0, layer);
+  if (!existing) d.layers.splice(activeIndex() + 1, 0, layer);
+  let align = t0.align;
+  const read = () => ({
+    ...layer.text, text: body.querySelector('#tText').value, font: body.querySelector('#tFont').value,
+    size: Math.max(4, Math.min(2000, +body.querySelector('#tSize').value || 64)), bold: body.querySelector('#tBold').checked,
+    italic: body.querySelector('#tItalic').checked, color: body.querySelector('#tColor').value, align,
+  });
   const draw = () => {
-    o.textFont = body.querySelector('#tFont').value; o.textSize = +body.querySelector('#tSize').value || 64;
-    o.textBold = body.querySelector('#tBold').checked; o.textItalic = body.querySelector('#tItalic').checked;
-    const x = ctxOf(layer.canvas); x.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-    x.font = `${o.textItalic ? 'italic ' : ''}${o.textBold ? '700 ' : ''}${o.textSize}px ${o.textFont}`;
-    x.fillStyle = body.querySelector('#tColor').value; x.textBaseline = 'top';
-    const text = body.querySelector('#tText').value;
-    text.split('\n').forEach((line, i) => x.fillText(line, p.x, p.y + i * o.textSize * 1.2));
-    layer.name = `Text: ${text.split('\n')[0].slice(0, 24) || '(empty)'}`;
-    touch(layer); requestRender();
+    const t = read();
+    // changing alignment keeps the text block in place: move the anchor to the new edge
+    if (t.align !== layer.text.align && layer.canvas.width > 1) {
+      const w = layer.canvas.width - 2 * layer.text.oy; // oy is the padding around the text
+      const left = layer.x + layer.text.oy, edge = { left, center: left + w / 2, right: left + w }[t.align];
+      t.ox = edge - layer.x;
+    }
+    layer.text = t; renderTextLayer(layer); compDirty = true; requestRender();
   };
+  body.querySelectorAll('[data-align]').forEach((b) => b.addEventListener('click', () => {
+    align = b.dataset.align; body.querySelectorAll('[data-align]').forEach((q) => q.classList.toggle('on', q === b)); draw();
+  }));
   body.addEventListener('input', draw);
-  draw();
-  showModal({ title: 'Add text', body, passive: true, okLabel: 'Add text',
-    ok: () => { d.activeId = layer.id; touch(layer); commit('Text'); },
-    cancel: () => { d.layers.splice(d.layers.indexOf(layer), 1); compDirty = true; requestRender(); } });
+  if (!existing) { layer.text = { ...read(), ox: 0, oy: 0 }; renderTextLayer(layer); } // anchor = the clicked point
+  compDirty = true; requestRender();
+  showModal({ title: existing ? 'Edit text' : 'Add text', body, passive: true, okLabel: existing ? 'Done' : 'Add text',
+    ok: () => {
+      const t = read(); Object.assign(o, { textFont: t.font, textSize: t.size, textBold: t.bold, textItalic: t.italic, textAlign: t.align });
+      d.activeId = layer.id; touch(layer); commit(existing ? 'Edit text' : 'Text');
+    },
+    cancel: () => {
+      if (existing) { Object.assign(existing, restore); compDirty = true; }
+      else d.layers.splice(d.layers.indexOf(layer), 1);
+      compDirty = true; requestRender(); updateLayersPanel();
+    } });
 }
 
 function openExportDialog() {
@@ -1532,7 +1760,7 @@ const EXPORT_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'web
 function renderExport(type, quality) {
   const out = makeCanvas(doc().width, doc().height);
   // JPEG has no alpha channel: flatten onto white so transparent areas don't turn black
-  composite(out, { background: type === 'image/jpeg' ? '#ffffff' : null });
+  composite(out, { background: type === 'image/jpeg' ? '#ffffff' : null, sync: true });
   return new Promise((res) => out.toBlob((b) => { out.width = out.height = 0; res(b); }, type, quality));
 }
 async function exportImage(type, quality, name) {
@@ -1594,11 +1822,12 @@ for (const id of ['#fileInput', '#cameraInput']) $(id).addEventListener('change'
 function serializeProject() {
   const d = doc();
   return {
-    format: PROJECT_FORMAT, version: 2, app: APP, width: d.width, height: d.height, name: d.name,
+    format: PROJECT_FORMAT, version: 3, app: APP, width: d.width, height: d.height, name: d.name,
     activeIndex: activeIndex(),
     layers: d.layers.map((l) => ({
       name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, data: l.canvas.toDataURL('image/png'),
       mask: l.mask ? { enabled: l.mask.enabled, data: l.mask.canvas.toDataURL('image/png') } : null,
+      ...(l.kind ? { kind: l.kind, adj: l.adj, text: l.text } : {}),
     })),
   };
 }
@@ -1613,10 +1842,12 @@ async function loadProject(data, filename) {
   for (const L of data.layers) {
     const img = await loadImage(L.data);
     const l = createLayer(L.name, img.width, img.height, { visible: L.visible, opacity: L.opacity, blend: L.blend, x: L.x, y: L.y });
+    if (L.kind === 'adjust' && L.adj && L.mask?.data) Object.assign(l, { kind: 'adjust', adj: L.adj, editMask: true });
+    if (L.kind === 'text' && L.text) Object.assign(l, { kind: 'text', text: L.text });
     l.canvas.getContext('2d').drawImage(img, 0, 0);
     if (L.mask?.data) {
       const mi = await loadImage(L.mask.data);
-      const m = makeCanvas(img.width, img.height); m.getContext('2d').drawImage(mi, 0, 0);
+      const m = makeCanvas(mi.width, mi.height); m.getContext('2d').drawImage(mi, 0, 0);
       l.mask = { canvas: m, enabled: L.mask.enabled !== false, rev: ++globalRev };
     }
     layers.push(l);
@@ -1785,10 +2016,18 @@ function updateLayersPanel() {
     const th = makeCanvas(40, 30); const tx = th.getContext('2d');
     const s = Math.min(40 / d.width, 30 / d.height);
     tx.save(); tx.translate((40 - d.width * s) / 2, (30 - d.height * s) / 2); tx.scale(s, s);
-    tx.beginPath(); tx.rect(0, 0, d.width, d.height); tx.clip(); tx.drawImage(l.canvas, l.x, l.y); tx.restore();
-    th.className = 'thumb' + (l.id === d.activeId && l.mask && !l.editMask ? ' target' : '');
-    th.title = 'Layer pixels';
-    th.addEventListener('click', (e) => { e.stopPropagation(); d.activeId = l.id; setMaskTarget(l, false); requestRender(); });
+    if (l.kind !== 'adjust') { tx.beginPath(); tx.rect(0, 0, d.width, d.height); tx.clip(); tx.drawImage(l.canvas, l.x, l.y); }
+    tx.restore();
+    if (l.kind === 'adjust') { // a simple original badge: half-filled circle
+      tx.fillStyle = '#2a2c33'; tx.fillRect(0, 0, 40, 30); tx.strokeStyle = tx.fillStyle = '#d9dce2'; tx.lineWidth = 2;
+      tx.beginPath(); tx.arc(20, 15, 9, 0, Math.PI * 2); tx.stroke(); tx.beginPath(); tx.arc(20, 15, 9, Math.PI / 2, Math.PI * 1.5); tx.fill();
+    } else if (l.kind === 'text') {
+      tx.fillStyle = '#000a'; tx.fillRect(26, 16, 14, 14); tx.fillStyle = '#fff'; tx.font = '700 12px sans-serif'; tx.textAlign = 'center'; tx.textBaseline = 'middle'; tx.fillText('T', 33, 23.5);
+    }
+    th.className = 'thumb' + (l.id === d.activeId && l.mask && !editingMask(l) ? ' target' : '');
+    th.title = l.kind === 'adjust' ? `${ADJ_LAYER[l.adj.type]} — double-click to edit` : l.kind === 'text' ? 'Text — double-click to edit' : 'Layer pixels';
+    th.addEventListener('click', (e) => { e.stopPropagation(); d.activeId = l.id; if (l.kind !== 'adjust') setMaskTarget(l, false); else updateLayersPanel(); buildOptionsBar(); requestRender(); });
+    if (l.kind) th.addEventListener('dblclick', (e) => { e.stopPropagation(); d.activeId = l.id; editLayer(l); });
     let mth = null;
     if (l.mask) {
       mth = makeCanvas(40, 30); const mx = mth.getContext('2d');
@@ -1796,7 +2035,7 @@ function updateLayersPanel() {
       mx.save(); mx.translate((40 - d.width * s) / 2, (30 - d.height * s) / 2); mx.scale(s, s);
       mx.beginPath(); mx.rect(0, 0, d.width, d.height); mx.clip(); mx.drawImage(l.mask.canvas, l.x, l.y); mx.restore();
       if (!l.mask.enabled) { mx.strokeStyle = '#e8453a'; mx.lineWidth = 2.5; mx.beginPath(); mx.moveTo(3, 3); mx.lineTo(37, 27); mx.moveTo(37, 3); mx.lineTo(3, 27); mx.stroke(); }
-      mth.className = 'thumb mask-thumb' + (l.id === d.activeId && l.editMask ? ' target' : '');
+      mth.className = 'thumb mask-thumb' + (l.id === d.activeId && editingMask(l) ? ' target' : '');
       mth.title = `Layer mask${l.mask.enabled ? '' : ' (disabled)'} — click to edit · Shift+click to enable/disable`;
       mth.addEventListener('click', (e) => {
         e.stopPropagation(); d.activeId = l.id;
@@ -1890,10 +2129,11 @@ window.tintwork = {
   state, cmds, run, setTool, openFile, newDocument, history, commit, composite, activeLayer, setFg, serializeProject, openAdjust, ADJ,
   ops, setSelection, makeSelection, rectMask, renderSource, updateLayersPanel, touch, fitToScreen,
   mods, setMod, openSheet, closeSheet, toast, MAX_PIXELS, IS_IOS, fitPixels, renderExport,
+  newAdjustmentLayer, editLayer, adjCache, rasterize, renderTextLayer, textLayerAt, undo, redo, closeModal, mergeDown,
   get zoom() { return state.zoom; },
   compositePixel(x, y) { if (compDirty) { composite(); compDirty = false; } return [...compCtx.getImageData(x, y, 1, 1).data]; },
   get doc() { return state.doc; },
   get workerAvailable() { return ops.workerStatus().available; },
   /** Resolves once queued worker jobs have finished. */
-  idle: () => new Promise((res) => { const t = () => (state.busy ? setTimeout(t, 10) : res()); t(); }),
+  idle: () => new Promise((res) => { const t = () => (state.busy || adjPending ? setTimeout(t, 10) : res()); t(); }),
 };
