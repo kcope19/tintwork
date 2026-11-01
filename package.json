@@ -5,8 +5,12 @@
   "scripts": {
     "start": "serve -l 5173 .",
     "dev": "serve -l 5173 .",
-    "test": "node scripts/smoke-test.mjs",
-    "screenshots": "node scripts/smoke-test.mjs"
+    "test": "node scripts/smoke-test.mjs && node scripts/mobile-test.mjs",
+    "screenshots": "node scripts/smoke-test.mjs",
+    "test:desktop": "node scripts/smoke-test.mjs",
+    "test:mobile": "node scripts/mobile-test.mjs",
+    "serve": "node scripts/serve.mjs 8080",
+    "icons": "node scripts/make-icons.mjs"
   },
   "license": "MIT",
   "type": "module",

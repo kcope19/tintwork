@@ -1,0 +1,39 @@
+// Tintwork service worker: makes the editor work offline once it has been opened.
+// Network-first for app files (so updates show up immediately when online), falling
+// back to the cache when offline. All paths are relative to this file, so the app
+// can live in any sub-folder of any static host.
+const CACHE = 'tintwork-shell-v0.3.0';
+const SHELL = [
+  './', './index.html', './manifest.webmanifest',
+  './src/main.js', './src/pixels.js', './src/selection.js', './src/ops.js', './src/worker.js', './src/icons.js',
+  './src/styles.css', './src/logo.svg',
+  './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
+];
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(caches.keys()
+    .then((keys) => Promise.all(keys.filter((k) => k.startsWith('tintwork-') && k !== CACHE).map((k) => caches.delete(k))))
+    .then(() => self.clients.claim()));
+});
+
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    try {
+      const res = await fetch(req);
+      if (res.ok && res.type === 'basic') cache.put(req, res.clone());
+      return res;
+    } catch (err) {
+      const hit = await cache.match(req, { ignoreSearch: true });
+      if (hit) return hit;
+      if (req.mode === 'navigate') return (await cache.match('./index.html')) || Response.error();
+      throw err;
+    }
+  })());
+});

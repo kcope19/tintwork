@@ -41,7 +41,24 @@ let globalRev = 1;
 let compDirty = true;
 const comp = document.createElement('canvas');
 const compCtx = comp.getContext('2d', { willReadFrequently: true });
-const history = { entries: [], index: -1, limit: 60 };
+// iOS Safari refuses canvases above ~16.7 MP and gets killed when total canvas memory runs high,
+// so phones get a lower working-size cap and a shorter undo history.
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+const MAX_PIXELS = IS_IOS ? 16_000_000 : 64_000_000;
+const WARN_PIXELS = 16_000_000;
+const history = { entries: [], index: -1, limit: IS_IOS ? 24 : IS_TOUCH ? 36 : 60 };
+/** Clamp a working size to the device's canvas budget, keeping the aspect ratio. */
+function fitPixels(w, h, max = MAX_PIXELS) {
+  if (w * h <= max) return { w, h, scaled: false };
+  const k = Math.sqrt(max / (w * h));
+  return { w: Math.max(1, Math.floor(w * k)), h: Math.max(1, Math.floor(h * k)), scaled: true };
+}
+function sizeWarning(w, h, scaled, ow, oh) {
+  const mp = (n) => (n / 1e6).toFixed(1);
+  if (scaled) toast(`Image was ${ow}×${oh} (${mp(ow * oh)} MP) — scaled to ${w}×${h} to stay within this device's ${mp(MAX_PIXELS)} MP canvas limit.`, 6000);
+  else if (w * h > WARN_PIXELS) toast(`Large image (${mp(w * h)} MP). Editing may be slow and phones (especially iPhone Safari) can run out of memory.`, 5000);
+}
 let clipboard = null;
 
 // ---------------------------------------------------------------------------
@@ -141,6 +158,7 @@ function ensureCoversDoc(layer) {
 // Document lifecycle
 // ---------------------------------------------------------------------------
 function newDocument(width, height, background = 'white', name = 'Untitled') {
+  const fit = fitPixels(width, height); sizeWarning(fit.w, fit.h, fit.scaled, width, height); width = fit.w; height = fit.h;
   const base = createLayer('Background', width, height);
   if (background !== 'transparent') {
     const c = base.canvas.getContext('2d');
@@ -151,8 +169,10 @@ function newDocument(width, height, background = 'white', name = 'Untitled') {
   afterDocChange('New canvas');
 }
 function documentFromImage(img, name) {
-  const base = createLayer('Background', img.naturalWidth || img.width, img.naturalHeight || img.height);
-  base.canvas.getContext('2d').drawImage(img, 0, 0);
+  const ow = img.naturalWidth || img.width, oh = img.naturalHeight || img.height, fit = fitPixels(ow, oh);
+  const base = createLayer('Background', fit.w, fit.h);
+  const bc = base.canvas.getContext('2d'); bc.imageSmoothingQuality = 'high'; bc.drawImage(img, 0, 0, fit.w, fit.h);
+  sizeWarning(fit.w, fit.h, fit.scaled, ow, oh);
   state.doc = { width: base.canvas.width, height: base.canvas.height, layers: [base], activeId: base.id, selection: null, name };
   afterDocChange('Open');
 }
@@ -446,7 +466,7 @@ function polygonMask(pts) {
   return shapeMask(d.width, d.height, (x) => { x.moveTo(pts[0].x, pts[0].y); for (const q of pts) x.lineTo(q.x, q.y); x.closePath(); });
 }
 function finishPolygon() {
-  const poly = state.poly; state.poly = null;
+  const poly = state.poly; state.poly = null; queueMicrotask(buildOptionsBar);
   if (!poly || poly.pts.length < 3) { requestRender(); return; }
   applyShape(polygonMask(poly.pts), poly.mode, 'Polygonal lasso');
 }
@@ -505,9 +525,9 @@ const toolHandlers = {
   polylasso: {
     down(p, e) {
       drag = {};
-      if (!state.poly) { state.poly = { pts: [p], mode: selModeFor(e) }; requestRender(); return; }
+      if (!state.poly) { state.poly = { pts: [p], mode: selModeFor(e) }; buildOptionsBar(); requestRender(); return; }
       const pts = state.poly.pts, first = pts[0];
-      const nearStart = Math.hypot(p.x - first.x, p.y - first.y) * state.zoom < 8;
+      const nearStart = Math.hypot(p.x - first.x, p.y - first.y) * state.zoom < (e.pointerType === 'touch' ? 24 : 8);
       if (e.detail >= 2 || (nearStart && pts.length >= 3)) { finishPolygon(); return; }
       pts.push(p); requestRender();
     },
@@ -725,10 +745,67 @@ function pickColor(p) {
 // ---------------------------------------------------------------------------
 // Pointer & keyboard input
 // ---------------------------------------------------------------------------
+// Touch model: one finger runs the active tool; two fingers pinch-zoom and pan (and cancel a
+// stroke that just started); a still long-press acts as Alt (clone/heal source, color pick,
+// subtract selection); a quick two-finger tap undoes. The on-screen Shift/Alt toggles latch.
+const mods = { shift: false, alt: false };
+const pointers = new Map();
+let gesture = null, pendingTouch = null, lastTap = null;
+const LONG_PRESS_MS = 450, TAP_SLOP = 9;
+function toolEvent(e, extra = {}) {
+  return {
+    shiftKey: !!(e.shiftKey || mods.shift), altKey: !!(e.altKey || mods.alt || extra.alt), ctrlKey: e.ctrlKey, metaKey: e.metaKey,
+    detail: extra.detail ?? e.detail, clientX: e.clientX, clientY: e.clientY, pointerType: e.pointerType, buttons: e.buttons,
+  };
+}
+function setMod(name, on) {
+  mods[name] = on;
+  document.querySelectorAll(`[data-mod="${name}"]`).forEach((b) => b.classList.toggle('on', on));
+}
+/** Abandon the in-progress tool drag, restoring pixels/position (used when a pinch starts). */
+function cancelDrag() {
+  if (pendingTouch) { clearTimeout(pendingTouch.timer); pendingTouch = null; }
+  if (!drag) return;
+  if (drag.backup && drag.canvas) {
+    const c = drag.canvas.getContext('2d'); c.save(); c.globalCompositeOperation = 'copy'; c.globalAlpha = 1; c.drawImage(drag.backup, 0, 0); c.restore();
+    if (drag.layer) touchTarget(drag.layer);
+  }
+  if (drag.layer && drag.ox !== undefined) { drag.layer.x = drag.ox; drag.layer.y = drag.oy; touch(drag.layer); }
+  if (state.tool === 'polylasso' && state.poly && state.poly.pts.length === 1) state.poly = null;
+  state.selPreview = null; drag = null; compDirty = true; requestRender();
+}
+function twoPointers() { const [a, b] = [...pointers.values()]; return { a, b, d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; }
+function startGesture() {
+  const g = twoPointers();
+  gesture = { d0: g.d, mx0: g.mx, my0: g.my, zoom0: state.zoom, panX0: state.panX, panY0: state.panY, t0: performance.now(), moved: false };
+}
+function updateGesture() {
+  if (pointers.size < 2) return;
+  const g = twoPointers(), r = view.getBoundingClientRect();
+  if (Math.abs(g.d - gesture.d0) > 10 || Math.hypot(g.mx - gesture.mx0, g.my - gesture.my0) > 10) gesture.moved = true;
+  const nz = Math.min(64, Math.max(0.02, gesture.zoom0 * g.d / gesture.d0));
+  const docX = (gesture.mx0 - r.left - gesture.panX0) / gesture.zoom0, docY = (gesture.my0 - r.top - gesture.panY0) / gesture.zoom0;
+  state.zoom = nz; state.panX = g.mx - r.left - docX * nz; state.panY = g.my - r.top - docY * nz;
+  updateZoomLabel(); requestRender();
+}
+function firePending(alt) {
+  const pt = pendingTouch; if (!pt) return; clearTimeout(pt.timer); pendingTouch = null;
+  const now = performance.now();
+  const dbl = lastTap && now - lastTap.t < 320 && Math.hypot(pt.e.clientX - lastTap.x, pt.e.clientY - lastTap.y) < 24;
+  lastTap = { t: now, x: pt.e.clientX, y: pt.e.clientY };
+  if (state.busy) { status('Still processing… one moment.'); return; }
+  toolHandlers[state.tool]?.down?.(pt.p, toolEvent(pt.e, { alt, detail: dbl ? 2 : 1 }));
+}
 view.addEventListener('pointerdown', (e) => {
   if (!doc()) return;
-  viewport.focus();
-  view.setPointerCapture(e.pointerId);
+  if (document.body.dataset.sheet) { closeSheet(); if (e.pointerType === 'touch') return; }
+  viewport.focus({ preventScroll: true });
+  try { view.setPointerCapture(e.pointerId); } catch { /* synthetic or already released */ }
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+  if (pointers.size === 2 && [...pointers.values()].every((q) => q.type === 'touch')) {
+    const hadStroke = !!drag && !drag.pan; cancelDrag(); drag = null; startGesture(); gesture.cancelledStroke = hadStroke; return;
+  }
+  if (pointers.size > 1 || gesture) return;
   const p = screenToDoc(e);
   if (e.button === 1 || spaceDown || state.tool === 'hand') {
     drag = { pan: true, sx: e.clientX, sy: e.clientY, px: state.panX, py: state.panY };
@@ -737,25 +814,61 @@ view.addEventListener('pointerdown', (e) => {
   }
   if (e.button !== 0) return;
   if (state.busy) { status('Still processing… one moment.'); return; }
-  toolHandlers[state.tool]?.down?.(p, e);
+  if (e.pointerType === 'touch') {
+    // Wait briefly to tell a tap, a drag, a long-press and the start of a pinch apart.
+    pendingTouch = { p, e, timer: setTimeout(() => {
+      if (!pendingTouch) return;
+      navigator.vibrate?.(12);
+      toast(state.tool === 'clone' || state.tool === 'heal' ? 'Source set (long-press)' : 'Long-press: Alt');
+      firePending(true);
+    }, LONG_PRESS_MS) };
+    return;
+  }
+  toolHandlers[state.tool]?.down?.(p, toolEvent(e));
 });
 view.addEventListener('pointermove', (e) => {
   if (!doc()) return;
+  const pt = pointers.get(e.pointerId); if (pt) { pt.x = e.clientX; pt.y = e.clientY; }
+  if (gesture) { updateGesture(); return; }
   const p = screenToDoc(e);
   state.hover = p;
   $('#cursorPos').textContent = `${Math.floor(p.x)}, ${Math.floor(p.y)}`;
   if (drag?.pan) {
     state.panX = drag.px + e.clientX - drag.sx; state.panY = drag.py + e.clientY - drag.sy; requestRender(); return;
   }
-  if (drag && e.buttons & 1) toolHandlers[state.tool]?.move?.(p, e);
+  if (pendingTouch && pendingTouch.e.pointerId === e.pointerId) {
+    if (Math.hypot(e.clientX - pendingTouch.e.clientX, e.clientY - pendingTouch.e.clientY) < TAP_SLOP) return;
+    firePending(false);
+  }
+  if (drag && (e.buttons & 1 || (e.pointerType === 'touch' && pt))) toolHandlers[state.tool]?.move?.(p, toolEvent(e));
   if (PAINT_TOOLS.includes(state.tool) || state.tool === 'polylasso') requestRender();
 });
-view.addEventListener('pointerup', (e) => {
+function endPointer(e, cancelled) {
+  const had = pointers.delete(e.pointerId);
+  if (gesture) {
+    if (!pointers.size) {
+      const quick = !gesture.moved && !gesture.cancelledStroke && performance.now() - gesture.t0 < 300;
+      gesture = null;
+      if (quick && !cancelled) { run('undo'); toast('Undo (two-finger tap)'); }
+    }
+    return;
+  }
+  if (!had && e.pointerType === 'touch') return;
+  if (pendingTouch && pendingTouch.e.pointerId === e.pointerId) { if (cancelled) { cancelDrag(); return; } firePending(false); }
   if (drag?.pan) { drag = null; setTool(state.tool); return; }
-  if (drag) toolHandlers[state.tool]?.up?.(screenToDoc(e), e);
+  if (cancelled) { cancelDrag(); return; }
+  if (drag) toolHandlers[state.tool]?.up?.(screenToDoc(e), toolEvent(e));
   drag = null;
-});
-view.addEventListener('pointerleave', () => { state.hover = null; requestRender(); });
+  if (e.pointerType === 'touch') { state.hover = null; requestRender(); }
+}
+view.addEventListener('pointerup', (e) => endPointer(e, false));
+view.addEventListener('pointercancel', (e) => endPointer(e, true));
+view.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch') { state.hover = null; requestRender(); } });
+// iOS Safari: block its own pinch/double-tap page zoom and long-press callouts on the canvas.
+for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(t, (e) => e.preventDefault(), { passive: false });
+view.addEventListener('touchstart', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+view.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+view.addEventListener('contextmenu', (e) => e.preventDefault());
 view.addEventListener('wheel', (e) => {
   if (!doc()) return;
   e.preventDefault();
@@ -825,6 +938,9 @@ const cmds = {
   place: needDoc(() => { fileMode = 'place'; $('#fileInput').click(); }),
   saveProject: needDoc(() => saveProject()),
   export: needDoc(() => openExportDialog()),
+  camera: () => { fileMode = 'open'; $('#cameraInput').click(); },
+  closePolygon: () => finishPolygon(),
+  cancelPolygon: () => { state.poly = null; buildOptionsBar(); requestRender(); },
   undo, redo,
   selectAll: needDoc(() => { const d = doc(); setSelection(makeSelection(d.width, d.height, rectMask(d.width, d.height, { x: 0, y: 0, w: d.width, h: d.height })), 'Select all'); }),
   deselect: needDoc(() => { state.poly = null; if (doc().selection) setSelection(null, 'Deselect'); }),
@@ -938,7 +1054,7 @@ const SHORTCUTS = {
 };
 
 const MENUS = [
-  ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
+  ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Take photo (camera)…', 'camera'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
     ['Save project', 'saveProject', 'Ctrl+S'], ['Export image…', 'export', 'Ctrl+Shift+E']]],
   ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
     ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-',
@@ -1042,6 +1158,7 @@ function transformLayer(kind, label) {
   requestRender(); commit(label);
 }
 function resizeImage(nw, nh) {
+  if (nw * nh > MAX_PIXELS) { const f = fitPixels(nw, nh); toast(`That size exceeds this device's canvas limit; using ${f.w}×${f.h}.`); nw = f.w; nh = f.h; }
   const d = doc(); const sx = nw / d.width, sy = nh / d.height;
   const scale = (srcC) => {
     const c = makeCanvas(srcC.width * sx, srcC.height * sy), x = c.getContext('2d');
@@ -1062,6 +1179,7 @@ function resizeImage(nw, nh) {
   compDirty = true; fitToScreen(); commit(`Image size ${nw}×${nh}`);
 }
 function resizeCanvas(nw, nh, ax, ay) {
+  if (nw * nh > MAX_PIXELS) { const f = fitPixels(nw, nh); toast(`That size exceeds this device's canvas limit; using ${f.w}×${f.h}.`); nw = f.w; nh = f.h; }
   const d = doc(); const dx = Math.round((nw - d.width) * ax), dy = Math.round((nh - d.height) * ay);
   for (const l of d.layers) { l.x += dx; l.y += dy; touch(l); }
   d.width = nw; d.height = nh; d.selection = null;
@@ -1263,6 +1381,7 @@ function paramField(p, values, onChange, defaultValue) {
 // ---------------------------------------------------------------------------
 let modalHandlers = null;
 function showModal({ title, body, ok, cancel, okLabel = 'OK', preview = false, passive = false, onPreviewToggle, hideCancel = false }) {
+  closeSheet();
   $('#modalTitle').textContent = title;
   const mb = $('#modalBody'); mb.innerHTML = '';
   if (typeof body === 'string') mb.innerHTML = body; else mb.append(body);
@@ -1274,7 +1393,7 @@ function showModal({ title, body, ok, cancel, okLabel = 'OK', preview = false, p
   $('#modal').classList.toggle('passive', passive);
   $('#modal').classList.remove('hidden');
   modalHandlers = { ok, cancel };
-  setTimeout(() => mb.querySelector('textarea, input[type=number], input[type=text], select')?.focus(), 0);
+  if (!IS_TOUCH) setTimeout(() => mb.querySelector('textarea, input[type=number], input[type=text], select')?.focus(), 0);
 }
 function closeModal() { $('#modal').classList.add('hidden'); modalHandlers = null; viewport.focus(); }
 $('#modalOk').addEventListener('click', () => { const h = modalHandlers; if (h?.ok?.() === false) return; closeModal(); });
@@ -1376,21 +1495,50 @@ function openExportDialog() {
     { label: 'Size', html: `<span class="muted">${doc().width} × ${doc().height} px</span>` },
   ]);
   const fmt = body.querySelector('#eFmt'), q = body.querySelector('#eQ');
-  fmt.addEventListener('change', () => { q.disabled = fmt.value === 'image/png'; });
-  q.addEventListener('input', () => { body.querySelector('#eQv').textContent = q.value; });
-  showModal({ title: 'Export image', body, okLabel: 'Export', ok: () => {
+  // navigator.share needs a fresh user gesture, so the file is rendered ahead of time and the
+  // Share button hands it over synchronously (iOS Safari is strict about this).
+  let ready = null, prepTimer = 0;
+  const key = () => `${fmt.value}|${q.value}|${body.querySelector('#eName').value}`;
+  const prepare = () => {
+    clearTimeout(prepTimer);
+    prepTimer = setTimeout(async () => {
+      const k = key(); const blob = await renderExport(fmt.value, q.value / 100);
+      const name = `${body.querySelector('#eName').value || 'image'}.${EXPORT_EXT[fmt.value]}`;
+      ready = { k, file: new File([blob], name, { type: fmt.value }) };
+      const sb = body.querySelector('#eShare'); if (sb) { sb.disabled = false; sb.textContent = 'Share…'; }
+    }, 120);
+  };
+  const canShareFiles = !!(navigator.canShare && navigator.share && (() => { try { return navigator.canShare({ files: [new File([''], 'x.png', { type: 'image/png' })] }); } catch { return false; } })());
+  if (canShareFiles) {
+    const row = document.createElement('div'); row.className = 'field two';
+    row.innerHTML = `<span>Share</span><span><button id="eShare" disabled>Preparing…</button> <span class="muted">Save to Photos, Files or another app</span></span>`;
+    body.append(row);
+    row.querySelector('#eShare').addEventListener('click', () => {
+      if (!ready || ready.k !== key()) { status('Preparing the file… tap Share again in a moment.'); prepare(); return; }
+      const file = ready.file;
+      navigator.share({ files: [file], title: file.name }).then(() => { status(`Shared ${file.name}`); closeModal(); })
+        .catch((err) => { if (err.name !== 'AbortError') { download(file, file.name); status(`Share unavailable (${err.name}); downloaded ${file.name} instead`); } });
+    });
+    prepare();
+  }
+  fmt.addEventListener('change', () => { q.disabled = fmt.value === 'image/png'; if (canShareFiles) prepare(); });
+  q.addEventListener('input', () => { body.querySelector('#eQv').textContent = q.value; if (canShareFiles) prepare(); });
+  body.querySelector('#eName').addEventListener('input', () => { if (canShareFiles) prepare(); });
+  showModal({ title: 'Export image', body, okLabel: canShareFiles ? 'Download' : 'Export', ok: () => {
     exportImage(fmt.value, q.value / 100, body.querySelector('#eName').value || 'image');
   } });
 }
-function exportImage(type, quality, name) {
+const EXPORT_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
+function renderExport(type, quality) {
   const out = makeCanvas(doc().width, doc().height);
   // JPEG has no alpha channel: flatten onto white so transparent areas don't turn black
   composite(out, { background: type === 'image/jpeg' ? '#ffffff' : null });
-  const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[type];
-  out.toBlob((blob) => {
-    download(blob, `${name}.${ext}`);
-    status(`Exported ${name}.${ext} (${(blob.size / 1024).toFixed(0)} KB)`);
-  }, type, quality);
+  return new Promise((res) => out.toBlob((b) => { out.width = out.height = 0; res(b); }, type, quality));
+}
+async function exportImage(type, quality, name) {
+  const blob = await renderExport(type, quality); const ext = EXPORT_EXT[type];
+  download(blob, `${name}.${ext}`);
+  status(`Exported ${name}.${ext} (${(blob.size / 1024).toFixed(0)} KB)`);
 }
 function download(blob, filename) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
@@ -1419,9 +1567,11 @@ function loadImage(src) {
   return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Could not decode image')); i.src = src; });
 }
 function placeImage(img, name) {
-  const d = doc(); const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  const d = doc(); const ow = img.naturalWidth || img.width, oh = img.naturalHeight || img.height;
+  const { w, h, scaled } = fitPixels(ow, oh, Math.min(MAX_PIXELS, WARN_PIXELS));
+  if (scaled) toast(`Placed image scaled to ${w}×${h} to save memory.`);
   const l = createLayer(name, w, h, { x: Math.round((d.width - w) / 2), y: Math.round((d.height - h) / 2) });
-  l.canvas.getContext('2d').drawImage(img, 0, 0);
+  l.canvas.getContext('2d').drawImage(img, 0, 0, w, h);
   addLayer(l, 'Place image');
 }
 async function openFile(file, mode = 'open') {
@@ -1439,7 +1589,7 @@ async function openFile(file, mode = 'open') {
     status(`${mode === 'place' && doc() ? 'Placed' : 'Opened'} ${file.name} (${img.naturalWidth}×${img.naturalHeight})`);
   } catch (err) { status(`Error: ${err.message}`); console.error(err); }
 }
-$('#fileInput').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) openFile(f, fileMode); e.target.value = ''; });
+for (const id of ['#fileInput', '#cameraInput']) $(id).addEventListener('change', (e) => { const f = e.target.files[0]; if (f) openFile(f, fileMode); e.target.value = ''; });
 
 function serializeProject() {
   const d = doc();
@@ -1497,6 +1647,12 @@ window.addEventListener('beforeunload', (e) => { if (history.entries.length > 1)
 // UI building
 // ---------------------------------------------------------------------------
 function status(msg) { $('#status').textContent = msg; }
+let toastTimer = 0;
+function toast(msg, ms = 2200) {
+  let t = $('#toast'); if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.append(t); }
+  t.textContent = msg; t.classList.remove('fade'); status(msg);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('fade'), ms);
+}
 function setFg(hex) { state.fg = hex; $('#fgColor').value = hex; $('#colorHex').textContent = hex.toUpperCase(); }
 function setBg(hex) { state.bg = hex; $('#bgColor').value = hex; }
 $('#fgColor').addEventListener('input', (e) => setFg(e.target.value));
@@ -1523,9 +1679,25 @@ function buildMenus() {
   }
 }
 function closeMenus() { document.querySelectorAll('.menu.open').forEach((m) => m.classList.remove('open')); }
+function openSheet(name) {
+  const cur = document.body.dataset.sheet || '';
+  document.body.dataset.sheet = cur === name ? '' : name;
+  document.querySelectorAll('#mobilebar [data-sheet], #menuBtn').forEach((b) => b.classList.toggle('on', b.dataset.sheet === document.body.dataset.sheet));
+  if (document.body.dataset.sheet === 'layers') updateLayersPanel();
+}
+function closeSheet() { if (document.body.dataset.sheet) openSheet(document.body.dataset.sheet); }
+function buildSheets() {
+  const group = (title, items) => `<h3>${title}</h3><div class="grid">${items.filter((it) => it !== '-').map(([label, cmd]) => `<button data-cmd="${cmd}">${label}</button>`).join('')}</div>`;
+  $('#menuSheet .sheet-groups').innerHTML = MENUS.filter(([t]) => t !== 'Adjust' && t !== 'Filter').map(([t, items]) => group(t, items)).join('');
+  $('#adjustSheet .sheet-groups').innerHTML = MENUS.filter(([t]) => t === 'Adjust' || t === 'Filter').map(([t, items]) => group(t, items)).join('');
+}
 document.addEventListener('click', (e) => {
+  const sh = e.target.closest('button[data-sheet]');
+  if (sh) { openSheet(sh.dataset.sheet); return; }
+  const md = e.target.closest('[data-mod]');
+  if (md) { setMod(md.dataset.mod, !mods[md.dataset.mod]); return; }
   const c = e.target.closest('[data-cmd]');
-  if (c) { run(c.dataset.cmd); return; }
+  if (c) { if (c.closest('#menuSheet, #adjustSheet, #mobilebar')) closeSheet(); run(c.dataset.cmd); return; }
   if (!e.target.closest('.menu')) closeMenus();
 });
 
@@ -1559,6 +1731,7 @@ function buildOptionsBar() {
       parts.push(`<span class="seg">${['new', 'add', 'subtract', 'intersect'].map((m) => `<button data-selmode="${m}" class="${o.selMode === m ? 'on' : ''}" title="${m === 'new' ? 'New selection' : m === 'add' ? 'Add (Shift)' : m === 'subtract' ? 'Subtract (Alt)' : 'Intersect (Shift+Alt)'}">${m[0].toUpperCase() + m.slice(1)}</button>`).join('')}</span>`);
       if (state.tool === 'wand') parts.push(range('wandTolerance', 'Tolerance', 0, 255), `<label><input type="checkbox" data-opt="wandContiguous" ${o.wandContiguous ? 'checked' : ''}/> Contiguous</label>`, `<label><input type="checkbox" data-opt="wandSampleAll" ${o.wandSampleAll ? 'checked' : ''}/> Sample all layers</label>`);
       const hint = { select: 'Drag a rectangle', lasso: 'Drag a freehand outline', polylasso: 'Click points · double-click, Enter or click the start to close · Esc cancels', wand: 'Click a color' }[state.tool];
+      if (state.tool === 'polylasso' && state.poly) parts.push(`<button data-cmd="closePolygon" class="primary poly-close">Close shape</button>`, `<button data-cmd="cancelPolygon">Cancel</button>`);
       parts.push(`<span class="muted">${s ? `${s.w} × ${s.h} px at ${s.x}, ${s.y}` : hint}</span>`, `<button data-cmd="feather">Feather…</button>`, `<button data-cmd="invertSelection">Invert</button>`, `<button data-cmd="deselect">Deselect</button>`);
       break;
     }
@@ -1700,7 +1873,13 @@ function updateAll() { updateLayersPanel(); updateHistoryPanel(); buildOptionsBa
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
-buildMenus(); buildToolbar();
+buildMenus(); buildToolbar(); buildSheets();
+$('#toolsToggle').addEventListener('click', () => { document.body.classList.toggle('tools-collapsed'); $('#toolsToggle').classList.toggle('on', !document.body.classList.contains('tools-collapsed')); });
+$('#toolsToggle').classList.add('on');
+// Installable/offline: register the service worker on secure origins (https or localhost).
+if ('serviceWorker' in navigator && (window.isSecureContext || location.hostname === 'localhost')) {
+  addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('Service worker not registered:', err)));
+}
 document.querySelectorAll('.panel-actions [data-cmd]').forEach((b) => { b.innerHTML = ICONS[b.dataset.cmd] || b.innerHTML; }); setTool('brush'); setFg(state.fg);
 $('#welcome').classList.remove('hidden');
 render();
@@ -1710,6 +1889,8 @@ status(`${APP} ready — open an image (Ctrl+O), drop one in, or create a new ca
 window.tintwork = {
   state, cmds, run, setTool, openFile, newDocument, history, commit, composite, activeLayer, setFg, serializeProject, openAdjust, ADJ,
   ops, setSelection, makeSelection, rectMask, renderSource, updateLayersPanel, touch, fitToScreen,
+  mods, setMod, openSheet, closeSheet, toast, MAX_PIXELS, IS_IOS, fitPixels, renderExport,
+  get zoom() { return state.zoom; },
   compositePixel(x, y) { if (compDirty) { composite(); compDirty = false; } return [...compCtx.getImageData(x, y, 1, 1).data]; },
   get doc() { return state.doc; },
   get workerAvailable() { return ops.workerStatus().available; },
