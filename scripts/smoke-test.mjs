@@ -375,6 +375,38 @@ const sMove = await docToScreen(560, 400); await page.mouse.move(sMove.x, sMove.
 await page.waitForTimeout(200);
 await page.screenshot({ path: path.join(shots, '15-clone-stamp.png') });
 
+// healing brush & spot healing -----------------------------------------------------
+// horizontal brightness ramp with a fine texture, plus two dark blemishes
+await page.evaluate(() => {
+  const t = window.tintwork; t.newDocument(800, 600, 'white', 'heal');
+  const l = t.doc.layers[0], x = l.canvas.getContext('2d'), img = x.createImageData(800, 600);
+  for (let y = 0; y < 600; y++) for (let xx = 0; xx < 800; xx++) {
+    const i = (y * 800 + xx) * 4, v = 60 + (140 * xx) / 800 + (((xx >> 1) + (y >> 1)) % 2) * 10;
+    img.data[i] = v; img.data[i + 1] = v * 0.9; img.data[i + 2] = v * 0.8; img.data[i + 3] = 255;
+  }
+  x.putImageData(img, 0, 0);
+  x.fillStyle = '#000'; x.beginPath(); x.arc(500, 300, 10, 0, 7); x.fill(); x.beginPath(); x.arc(620, 180, 8, 0, 7); x.fill();
+  t.touch(l); t.commit('Heal test'); t.fitToScreen();
+  Object.assign(t.state.opts, { healSize: 40, healHardness: 100, spotSize: 30, spotHardness: 100, cloneAligned: false });
+});
+await page.screenshot({ path: path.join(shots, '20-heal-before.png') });
+const lum = (p) => p[0];
+await page.keyboard.press('r');
+await page.keyboard.down('Alt'); await clickDoc(300, 450); await page.keyboard.up('Alt');
+await dragDoc([[495, 300], [505, 300]]); await idle();
+const healed = await layerPx(0, 500, 300);
+// a plain clone would give the source brightness (~112); healing matches the local level (~147)
+check(Math.abs(lum(healed) - 147) < 15, `healing brush matches local brightness (center R=${healed[0]}, local ≈147, source ≈112)`);
+check(await page.evaluate(() => window.tintwork.history.entries.at(-1).label === 'Healing brush'), 'healing brush recorded in history');
+await page.keyboard.press('j');
+await clickDoc(620, 180); await idle();
+const spotPx = await layerPx(0, 620, 180);
+check(Math.abs(lum(spotPx) - 168) < 18, `spot healing removes the blemish (center R=${spotPx[0]}, local ≈168)`);
+check(await page.evaluate(() => window.tintwork.history.entries.at(-1).label === 'Spot healing'), 'spot healing recorded in history');
+await page.mouse.move(viewBox.x + 5, viewBox.y + 5);
+await page.waitForTimeout(150);
+await page.screenshot({ path: path.join(shots, '21-heal-after.png') });
+
 await browser.close();
 server.close();
 if (errors.length) { console.error(`\n${errors.length} problem(s):\n` + errors.join('\n')); process.exit(1); }

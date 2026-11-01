@@ -29,6 +29,7 @@ const state = {
     sampleAll: true,
     selMode: 'new', wandTolerance: 32, wandContiguous: true, wandSampleAll: false, featherRadius: 8,
     cloneSize: 40, cloneHardness: 60, cloneOpacity: 100, cloneAligned: true,
+    healSize: 40, healHardness: 80, healOpacity: 100, spotSize: 30, spotHardness: 80, spotOpacity: 100,
   },
   selPreview: null,   // in-progress rectangle / lasso outline
   poly: null,         // in-progress polygonal lasso { pts, mode }
@@ -302,7 +303,7 @@ function render() {
     const [fx, fy] = toS(pts[0].x, pts[0].y);
     vctx.save(); vctx.strokeStyle = '#fff'; vctx.fillStyle = '#e8553a'; vctx.beginPath(); vctx.arc(fx, fy, 4, 0, Math.PI * 2); vctx.fill(); vctx.stroke(); vctx.restore();
   }
-  if (state.tool === 'clone' && state.cloneSrc) {
+  if ((state.tool === 'clone' || state.tool === 'heal') && state.cloneSrc) {
     const off = drag?.clone ? { dx: drag.dx, dy: drag.dy } : state.opts.cloneAligned ? state.cloneOffset : null;
     const src = off && state.hover ? { x: state.hover.x + off.dx, y: state.hover.y + off.dy } : state.cloneSrc;
     const [cx, cy] = toS(src.x, src.y);
@@ -322,7 +323,7 @@ function render() {
     }
     vctx.restore();
   }
-  if (state.hover && (state.tool === 'brush' || state.tool === 'eraser' || state.tool === 'clone')) {
+  if (state.hover && PAINT_TOOLS.includes(state.tool)) {
     const size = state.opts[`${state.tool}Size`];
     const [x, y] = toS(state.hover.x, state.hover.y);
     const r = Math.max(1, (size / 2) * z);
@@ -366,6 +367,7 @@ function screenToDoc(e) {
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
+const PAINT_TOOLS = ['brush', 'eraser', 'clone', 'heal', 'spot'];
 const TOOLS = [
   { id: 'move', name: 'Move', key: 'V' },
   { id: 'select', name: 'Rectangle select', key: 'M' },
@@ -377,6 +379,8 @@ const TOOLS = [
   { id: 'brush', name: 'Brush', key: 'B' },
   { id: 'eraser', name: 'Eraser', key: 'E' },
   { id: 'clone', name: 'Clone stamp (Alt+click sets source)', key: 'S' },
+  { id: 'heal', name: 'Healing brush (Alt+click sets source)', key: 'R' },
+  { id: 'spot', name: 'Spot healing', key: 'J' },
   { id: 'fill', name: 'Fill', key: 'G' },
   { id: 'text', name: 'Text', key: 'T' },
   { id: 'eyedropper', name: 'Color picker', key: 'I' },
@@ -390,7 +394,7 @@ function setTool(id) {
   if (state.tool === 'polylasso' && id !== 'polylasso') state.poly = null;
   state.tool = id;
   for (const b of document.querySelectorAll('#toolbar button')) b.classList.toggle('active', b.dataset.tool === id);
-  const cursors = { move: 'move', select: 'crosshair', lasso: 'crosshair', polylasso: 'crosshair', wand: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', clone: 'none', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
+  const cursors = { move: 'move', select: 'crosshair', lasso: 'crosshair', polylasso: 'crosshair', wand: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', clone: 'none', heal: 'none', spot: 'none', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
   view.style.cursor = cursors[id] || 'default';
   buildOptionsBar();
   requestRender();
@@ -517,6 +521,8 @@ const toolHandlers = {
   brush: paintTool('brush'),
   eraser: paintTool('eraser'),
   clone: paintTool('clone'),
+  heal: paintTool('heal'),
+  spot: paintTool('spot'),
   fill: { down(p) { fillAt(p); } },
   eyedropper: { down(p) { drag = {}; pickColor(p); }, move(p) { pickColor(p); } },
   text: { down(p) { openTextDialog(p); } },
@@ -535,16 +541,18 @@ function rectFromPoints(a, b, square) {
 
 /** Brush, eraser and clone stamp share the same stroke machinery. */
 function paintTool(kind) {
-  const erase = kind === 'eraser', clone = kind === 'clone';
+  const erase = kind === 'eraser', clone = kind === 'clone' || kind === 'heal', heal = kind === 'heal' || kind === 'spot';
+  const LABEL = { brush: 'Brush stroke', eraser: 'Eraser', clone: 'Clone stamp', heal: 'Healing brush', spot: 'Spot healing' };
   return {
     down(p, e) {
       const layer = activeLayer(); if (!layer) return;
       if (!layer.visible) { status('The active layer is hidden. Show it to paint.'); return; }
       if (clone) {
         if (e.altKey) { state.cloneSrc = { x: p.x, y: p.y }; state.cloneOffset = null; status(`Clone source set at ${Math.round(p.x)}, ${Math.round(p.y)}`); buildOptionsBar(); requestRender(); return; }
-        if (!state.cloneSrc) { status('Alt+click to set a clone source first.'); return; }
-        if (editingMask(layer)) { status('The clone stamp paints layer pixels. Click the layer thumbnail to target pixels.'); return; }
-      } else if (e.altKey && kind === 'brush') { pickColor(p); return; }
+        if (!state.cloneSrc) { status('Alt+click to set a source point first.'); return; }
+      }
+      if ((clone || heal) && editingMask(layer)) { status('This tool paints layer pixels. Click the layer thumbnail to target pixels.'); return; }
+      if (e.altKey && kind === 'brush') { pickColor(p); return; }
       ensureCoversDoc(layer);
       const o = state.opts;
       const size = o[`${kind}Size`];
@@ -552,13 +560,13 @@ function paintTool(kind) {
       const onMask = editingMask(layer);
       const canvas = targetCanvas(layer);
       drag = {
-        layer, erase, clone, onMask, canvas, size,
+        layer, erase, clone, heal, kind, onMask, canvas, size, bb: null,
         opacity: o[`${kind}Opacity`] / 100,
         lum: onMask && !erase ? luminance(state.fg) : 0,
         backup: cloneCanvas(canvas),
         stroke: makeCanvas(canvas.width, canvas.height),
         tmp: doc().selection || clone ? makeCanvas(canvas.width, canvas.height) : null,
-        stamp: makeStamp(size, hardness, erase || clone || onMask ? '#ffffff' : state.fg),
+        stamp: makeStamp(size, hardness, kind === 'spot' ? '#3a3f4a' : erase || clone || onMask ? '#ffffff' : state.fg),
         last: null,
       };
       if (clone) {
@@ -566,7 +574,7 @@ function paintTool(kind) {
         drag.dx = state.cloneOffset.dx; drag.dy = state.cloneOffset.dy;
         drag.srcTmp = makeCanvas(canvas.width, canvas.height);
       }
-      if (e.shiftKey && lastPaintPoint && !clone) stampLine(lastPaintPoint, p);
+      if (e.shiftKey && lastPaintPoint && !clone && !heal) stampLine(lastPaintPoint, p);
       else stampAt(p);
       drag.last = p;
       applyStroke();
@@ -578,15 +586,19 @@ function paintTool(kind) {
     up() {
       if (!drag?.stroke) return;
       lastPaintPoint = drag.last;
+      if (drag.heal) { finishHeal(drag); return; }
       if (drag.onMask) touchMask(drag.layer); else touch(drag.layer);
-      commit(clone ? 'Clone stamp' : drag.onMask ? (erase ? 'Erase mask' : 'Paint mask') : erase ? 'Eraser' : 'Brush stroke');
+      commit(drag.onMask ? (erase ? 'Erase mask' : 'Paint mask') : LABEL[kind]);
       updateLayersPanel();
     },
   };
 }
 function stampAt(p) {
   const s = drag.stamp, l = drag.layer;
-  drag.stroke.getContext('2d').drawImage(s, p.x - l.x - s.width / 2, p.y - l.y - s.height / 2);
+  const x = p.x - l.x - s.width / 2, y = p.y - l.y - s.height / 2;
+  drag.stroke.getContext('2d').drawImage(s, x, y);
+  const b = drag.bb;
+  drag.bb = b ? { x0: Math.min(b.x0, x), y0: Math.min(b.y0, y), x1: Math.max(b.x1, x + s.width), y1: Math.max(b.y1, y + s.height) } : { x0: x, y0: y, x1: x + s.width, y1: y + s.height };
 }
 function stampLine(a, b) {
   const dist = Math.hypot(b.x - a.x, b.y - a.y);
@@ -605,6 +617,7 @@ function applyStroke() {
     maskBySelection(t, l);
     cover = drag.tmp;
   }
+  drag.cover = cover;
   c.save();
   c.globalCompositeOperation = 'copy';
   c.drawImage(drag.backup, 0, 0);
@@ -616,6 +629,8 @@ function applyStroke() {
     t.globalCompositeOperation = 'destination-in'; t.drawImage(cover, 0, 0);
     t.globalCompositeOperation = 'source-over';
     c.globalAlpha = drag.opacity; c.drawImage(drag.srcTmp, 0, 0);
+  } else if (drag.kind === 'spot') {
+    c.globalAlpha = 0.55; c.drawImage(cover, 0, 0);
   } else if (drag.onMask) {
     // mask' = mask * (1 - a) + lum * a   (white reveals, black hides)
     c.globalAlpha = drag.opacity; c.globalCompositeOperation = 'destination-out'; c.drawImage(cover, 0, 0);
@@ -627,6 +642,34 @@ function applyStroke() {
   }
   c.restore();
   compDirty = true; requestRender();
+}
+
+/**
+ * Healing brush / spot healing: after the stroke, replace the brushed area
+ * (in the worker) with texture whose color is matched to its surroundings.
+ */
+async function finishHeal(dr) {
+  const l = dr.layer, cv = dr.canvas, W = cv.width, H = cv.height, b = dr.bb;
+  const pad = dr.kind === 'spot' ? Math.ceil(dr.size * 2.6) + 4 : 3;
+  const x0 = Math.max(0, Math.floor(b.x0) - pad), y0 = Math.max(0, Math.floor(b.y0) - pad);
+  const x1 = Math.min(W, Math.ceil(b.x1) + pad), y1 = Math.min(H, Math.ceil(b.y1) + pad);
+  const c = ctxOf(cv);
+  const restoreBackup = () => { c.save(); c.globalCompositeOperation = 'copy'; c.globalAlpha = 1; c.drawImage(dr.backup, 0, 0); c.restore(); };
+  if (x1 <= x0 || y1 <= y0) { restoreBackup(); touch(l); requestRender(); return; }
+  const w = x1 - x0, h = y1 - y0;
+  const ca = ctxOf(dr.cover).getImageData(x0, y0, w, h).data, cover = new Uint8Array(w * h);
+  for (let i = 0; i < cover.length; i++) cover[i] = Math.round(ca[i * 4 + 3] * dr.opacity);
+  const bctx = ctxOf(dr.backup), dst = bctx.getImageData(x0, y0, w, h);
+  setBusy(1);
+  try {
+    let out;
+    if (dr.kind === 'spot') out = (await ops.spot(dst, cover)).img;
+    else out = await ops.heal(dst, bctx.getImageData(x0 + Math.round(dr.dx), y0 + Math.round(dr.dy), w, h), cover);
+    restoreBackup();
+    c.putImageData(out, x0, y0);
+    touch(l); requestRender(); commit(dr.kind === 'spot' ? 'Spot healing' : 'Healing brush'); status(dr.kind === 'spot' ? 'Spot healed' : 'Healed');
+  } catch (err) { restoreBackup(); touch(l); requestRender(); status(`Healing failed: ${err.message}`); }
+  finally { setBusy(-1); }
 }
 
 function fillAt(p) {
@@ -705,7 +748,7 @@ view.addEventListener('pointermove', (e) => {
     state.panX = drag.px + e.clientX - drag.sx; state.panY = drag.py + e.clientY - drag.sy; requestRender(); return;
   }
   if (drag && e.buttons & 1) toolHandlers[state.tool]?.move?.(p, e);
-  if (['brush', 'eraser', 'clone', 'polylasso'].includes(state.tool)) requestRender();
+  if (PAINT_TOOLS.includes(state.tool) || state.tool === 'polylasso') requestRender();
 });
 view.addEventListener('pointerup', (e) => {
   if (drag?.pan) { drag = null; setTool(state.tool); return; }
@@ -765,7 +808,7 @@ let commitTimer = null;
 function commitDebounced(label) { clearTimeout(commitTimer); commitTimer = setTimeout(() => commit(label), 350); }
 
 function adjustBrushSize(dir) {
-  const k = state.tool === 'eraser' ? 'eraserSize' : state.tool === 'clone' ? 'cloneSize' : 'brushSize';
+  const k = PAINT_TOOLS.includes(state.tool) ? `${state.tool}Size` : 'brushSize';
   const v = state.opts[k];
   state.opts[k] = Math.max(1, Math.min(1000, Math.round(v + dir * Math.max(1, v * 0.1))));
   buildOptionsBar(); requestRender();
@@ -1358,7 +1401,7 @@ function openShortcutsDialog() {
   const rows = [
     ['V / M / C', 'Move / Rectangle select / Crop'], ['L / P / W', 'Lasso / Polygonal lasso / Magic wand'], ['B / E / S / G', 'Brush / Eraser / Clone stamp / Fill'], ['T / I', 'Text / Color picker'],
     ['Shift / Alt / Shift+Alt (selecting)', 'Add / subtract / intersect'], ['Ctrl+Shift+I, Shift+F6', 'Invert selection / feather'], ['Enter, double-click / Esc', 'Close / cancel polygon'],
-    ['Alt+click (clone stamp)', 'Set clone source'], ['\\', 'Toggle editing mask / pixels'],
+    ['R / J', 'Healing brush / Spot healing'], ['Alt+click (clone, healing)', 'Set source point'], ['\\', 'Toggle editing mask / pixels'],
     ['H, hold Space', 'Pan'], ['Z, mouse wheel', 'Zoom (Shift+wheel pans)'], ['[ and ]', 'Brush size'], ['Shift+click', 'Straight brush line'], ['Alt+click (brush)', 'Pick color'],
     ['X / D', 'Swap / default colors'], ['Ctrl+Z, Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+A / Ctrl+D', 'Select all / deselect'],
     ['Del, Alt+Backspace', 'Clear / fill selection'], ['Ctrl+C / X / V', 'Copy / cut / paste as layer'], ['Ctrl+J / Ctrl+E', 'Duplicate layer / merge down'],
@@ -1506,6 +1549,11 @@ function buildOptionsBar() {
     case 'clone': parts.push(range('cloneSize', 'Size', 1, 500, 'px'), range('cloneHardness', 'Hardness', 0, 100, '%'), range('cloneOpacity', 'Opacity', 1, 100, '%'),
       `<label><input type="checkbox" data-opt="cloneAligned" ${o.cloneAligned ? 'checked' : ''}/> Aligned</label>`,
       `<span class="muted">${state.cloneSrc ? `Source ${Math.round(state.cloneSrc.x)}, ${Math.round(state.cloneSrc.y)}` : 'Alt+click to set the source'}</span>`); break;
+    case 'heal': parts.push(range('healSize', 'Size', 1, 500, 'px'), range('healHardness', 'Hardness', 0, 100, '%'),
+      `<label><input type="checkbox" data-opt="cloneAligned" ${o.cloneAligned ? 'checked' : ''}/> Aligned</label>`,
+      `<span class="muted">${state.cloneSrc ? `Source ${Math.round(state.cloneSrc.x)}, ${Math.round(state.cloneSrc.y)} · texture is color-matched when you release` : 'Alt+click to set the source'}</span>`); break;
+    case 'spot': parts.push(range('spotSize', 'Size', 1, 300, 'px'), range('spotHardness', 'Hardness', 0, 100, '%'),
+      `<span class="muted">Paint over a blemish; a matching patch nearby is picked automatically</span>`); break;
     case 'lasso': case 'polylasso': case 'wand': case 'select': {
       const s = d?.selection;
       parts.push(`<span class="seg">${['new', 'add', 'subtract', 'intersect'].map((m) => `<button data-selmode="${m}" class="${o.selMode === m ? 'on' : ''}" title="${m === 'new' ? 'New selection' : m === 'add' ? 'Add (Shift)' : m === 'subtract' ? 'Subtract (Alt)' : 'Intersect (Shift+Alt)'}">${m[0].toUpperCase() + m.slice(1)}</button>`).join('')}</span>`);

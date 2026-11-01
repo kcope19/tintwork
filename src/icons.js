@@ -15,6 +15,8 @@ export const ICONS = {
   polylasso: svg('<path d="M4 9l6-5 10 4-3 8-9 1z" stroke-dasharray="3 2.2"/><circle cx="4" cy="9" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="20" cy="8" r="1.2"/><circle cx="17" cy="16" r="1.2"/>'),
   wand: svg('<path d="M4 20L15 9M13.5 7.5l3 3"/><path d="M18 3v3M16.5 4.5h3M20.5 9v2M19.5 10h2M10 3v2M9 4h2"/>'),
   clone: svg('<path d="M9 4h6v5l3 3H6l3-3z"/><path d="M5 15h14v3H5zM8 21h8"/>'),
+  heal: svg('<rect x="3.5" y="8" width="17" height="8" rx="4" transform="rotate(-40 12 12)"/><path d="M10.2 10.2h.01M13.8 13.8h.01M13.8 10.2h.01M10.2 13.8h.01" stroke-width="2.4"/>'),
+  spot: svg('<rect x="3.5" y="8" width="17" height="8" rx="4" transform="rotate(-40 12 12)"/><path d="M19 3l.6 1.4L21 5l-1.4.6L19 7l-.6-1.4L17 5l1.4-.6z"/>'),
   addMask: svg('<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="12" cy="12" r="4.2"/><path d="M12 7.8v8.4" /><path d="M12 7.8a4.2 4.2 0 010 8.4z" fill="currentColor"/>'),
   layerNew: svg('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M12 8v8M8 12h8"/>'),
   layerDuplicate: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/>'),

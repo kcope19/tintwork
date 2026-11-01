@@ -1,6 +1,6 @@
 // Client for the pixel worker, with a same-thread fallback (e.g. when module
 // workers are unavailable). All calls return Promises.
-import { runOp, blendMasked, blurMask } from './pixels.js';
+import { runOp, blendMasked, blurMask, healRegion, spotHeal } from './pixels.js';
 
 let worker = null;
 let workerReady = false;
@@ -59,4 +59,21 @@ export async function featherMask(mask, W, H, radius) {
   const res = await post({ kind: 'blurMask', mask: copy.buffer, W, H, radius }, [copy.buffer],
     () => ({ mask: blurMask(mask, W, H, radius).buffer }));
   return new Uint8Array(res.mask);
+}
+
+/** Healing brush: dst/src are ImageData of the same rectangle, cover a Uint8Array. Returns ImageData. */
+export async function heal(dst, src, cover) {
+  const { width: w, height: h } = dst;
+  const a = new Uint8ClampedArray(dst.data), b = new Uint8ClampedArray(src.data), c = new Uint8Array(cover);
+  const res = await post({ kind: 'heal', dst: a.buffer, src: b.buffer, cover: c.buffer, w, h }, [a.buffer, b.buffer, c.buffer],
+    () => ({ data: healRegion(dst.data, src.data, cover, w, h).buffer }));
+  return new ImageData(new Uint8ClampedArray(res.data), w, h);
+}
+/** Spot healing: img is the ImageData around the spot, cover the brushed area. */
+export async function spot(img, cover) {
+  const { width: w, height: h } = img;
+  const a = new Uint8ClampedArray(img.data), c = new Uint8Array(cover);
+  const res = await post({ kind: 'spotHeal', img: a.buffer, cover: c.buffer, w, h }, [a.buffer, c.buffer],
+    () => { const r = spotHeal(img.data, cover, w, h); return { data: r.data.buffer, offset: r.offset }; });
+  return { img: new ImageData(new Uint8ClampedArray(res.data), w, h), offset: res.offset };
 }

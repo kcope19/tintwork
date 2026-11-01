@@ -113,3 +113,17 @@ export function maskRegion(sel, rx, ry, rw, rh) {
 }
 
 export const isFull = (sel) => sel && sel.x === 0 && sel.y === 0 && sel.w === sel.W && sel.h === sel.H && sel.mask.every((v) => v === 255);
+
+/** Selection shifted by whole pixels (parts moved outside the document are dropped). */
+export function translateSelection(sel, dx, dy) {
+  if (!sel) return null;
+  const { W, H } = sel, out = new Uint8Array(W * H);
+  for (let y = Math.max(0, sel.y); y < sel.y + sel.h; y++) {
+    const ty = y + dy; if (ty < 0 || ty >= H) continue;
+    for (let x = sel.x; x < sel.x + sel.w; x++) {
+      const tx = x + dx; if (tx < 0 || tx >= W) continue;
+      out[ty * W + tx] = sel.mask[y * W + x];
+    }
+  }
+  return makeSelection(W, H, out);
+}

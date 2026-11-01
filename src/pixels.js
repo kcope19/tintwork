@@ -318,3 +318,144 @@ export function similarMask(img, sx, sy, tolerance, bounds) {
   }
   return mask;
 }
+
+// ---------------------------------------------------------------------------
+// Curves: monotone cubic interpolation through control points (no overshoot).
+// ---------------------------------------------------------------------------
+export function curveLUT(points) {
+  const lut = new Uint8Array(256);
+  const pts = [...(points || [[0, 0], [255, 255]])].map(([x, y]) => [Math.max(0, Math.min(255, x)), Math.max(0, Math.min(255, y))])
+    .sort((a, b) => a[0] - b[0]).filter((p, i, arr) => i === 0 || p[0] > arr[i - 1][0]);
+  if (pts.length === 1) { lut.fill(Math.round(pts[0][1])); return lut; }
+  const n = pts.length, d = [], m = new Array(n);
+  for (let k = 0; k < n - 1; k++) d.push((pts[k + 1][1] - pts[k][1]) / (pts[k + 1][0] - pts[k][0]));
+  m[0] = d[0]; m[n - 1] = d[n - 2];
+  for (let k = 1; k < n - 1; k++) m[k] = d[k - 1] * d[k] <= 0 ? 0 : (d[k - 1] + d[k]) / 2;
+  for (let k = 0; k < n - 1; k++) {
+    if (d[k] === 0) { m[k] = 0; m[k + 1] = 0; continue; }
+    const a = m[k] / d[k], b = m[k + 1] / d[k], s = a * a + b * b;
+    if (s > 9) { const t = 3 / Math.sqrt(s); m[k] = t * a * d[k]; m[k + 1] = t * b * d[k]; }
+  }
+  let k = 0;
+  for (let x = 0; x < 256; x++) {
+    let y;
+    if (x <= pts[0][0]) y = pts[0][1];
+    else if (x >= pts[n - 1][0]) y = pts[n - 1][1];
+    else {
+      while (x > pts[k + 1][0]) k++;
+      const h = pts[k + 1][0] - pts[k][0], t = (x - pts[k][0]) / h, t2 = t * t, t3 = t2 * t;
+      y = (2 * t3 - 3 * t2 + 1) * pts[k][1] + (t3 - 2 * t2 + t) * h * m[k] + (-2 * t3 + 3 * t2) * pts[k + 1][1] + (t3 - t2) * h * m[k + 1];
+    }
+    lut[x] = Math.max(0, Math.min(255, Math.round(y)));
+  }
+  return lut;
+}
+adjustments.curves = (img, p = {}) => {
+  const all = curveLUT(p.rgb), r = curveLUT(p.r), g = curveLUT(p.g), b = curveLUT(p.b), d = img.data;
+  for (let i = 0; i < d.length; i += 4) { d[i] = all[r[d[i]]]; d[i + 1] = all[g[d[i + 1]]]; d[i + 2] = all[b[d[i + 2]]]; }
+  return img;
+};
+
+// ---------------------------------------------------------------------------
+// Healing: copy texture from `src`, then correct its color/brightness with a
+// smooth "membrane" that matches `dst` along the edge of the brushed area.
+// The membrane is filled with a pull-push pyramid and relaxed with Jacobi
+// iterations (a cheap approximation of solving Laplace's equation).
+// ---------------------------------------------------------------------------
+function membrane(known, wt, w, h, interior, iterations) {
+  // known: Float32Array(3*w*h) values; wt: Float32Array(w*h) 1 where known.
+  const levels = [{ v: known, wt, w, h }];
+  while (levels.at(-1).w > 1 || levels.at(-1).h > 1) {
+    const L = levels.at(-1), w2 = Math.ceil(L.w / 2), h2 = Math.ceil(L.h / 2);
+    const v2 = new Float32Array(w2 * h2 * 3), wt2 = new Float32Array(w2 * h2);
+    for (let y = 0; y < L.h; y++) for (let x = 0; x < L.w; x++) {
+      const i = y * L.w + x, a = L.wt[i]; if (!a) continue;
+      const j = (y >> 1) * w2 + (x >> 1);
+      wt2[j] += a; v2[j * 3] += L.v[i * 3] * a; v2[j * 3 + 1] += L.v[i * 3 + 1] * a; v2[j * 3 + 2] += L.v[i * 3 + 2] * a;
+    }
+    for (let j = 0; j < w2 * h2; j++) if (wt2[j]) { v2[j * 3] /= wt2[j]; v2[j * 3 + 1] /= wt2[j]; v2[j * 3 + 2] /= wt2[j]; wt2[j] = Math.min(1, wt2[j]); }
+    levels.push({ v: v2, wt: wt2, w: w2, h: h2 });
+  }
+  for (let l = levels.length - 2; l >= 0; l--) {
+    const F = levels[l], C = levels[l + 1];
+    for (let y = 0; y < F.h; y++) for (let x = 0; x < F.w; x++) {
+      const i = y * F.w + x, a = F.wt[i]; if (a >= 1) continue;
+      // bilinear sample of the coarse level
+      const cx = Math.min(C.w - 1, Math.max(0, (x + 0.5) / 2 - 0.5)), cy = Math.min(C.h - 1, Math.max(0, (y + 0.5) / 2 - 0.5));
+      const x0 = Math.floor(cx), y0 = Math.floor(cy), x1 = Math.min(C.w - 1, x0 + 1), y1 = Math.min(C.h - 1, y0 + 1), fx = cx - x0, fy = cy - y0;
+      for (let c = 0; c < 3; c++) {
+        const top = C.v[(y0 * C.w + x0) * 3 + c] * (1 - fx) + C.v[(y0 * C.w + x1) * 3 + c] * fx;
+        const bot = C.v[(y1 * C.w + x0) * 3 + c] * (1 - fx) + C.v[(y1 * C.w + x1) * 3 + c] * fx;
+        F.v[i * 3 + c] = a * F.v[i * 3 + c] + (1 - a) * (top * (1 - fy) + bot * fy);
+      }
+      F.wt[i] = 1;
+    }
+  }
+  const v = levels[0].v;
+  for (let it = 0; it < iterations; it++) {
+    for (const i of interior) {
+      const x = i % w, y = (i / w) | 0;
+      const l = x > 0 ? i - 1 : i, r = x < w - 1 ? i + 1 : i, u = y > 0 ? i - w : i, dn = y < h - 1 ? i + w : i;
+      for (let c = 0; c < 3; c++) v[i * 3 + c] = (v[l * 3 + c] + v[r * 3 + c] + v[u * 3 + c] + v[dn * 3 + c]) / 4;
+    }
+  }
+  return v;
+}
+function ringOf(cover, w, h) {
+  const ring = [], interior = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    if (cover[i]) { interior.push(i); continue; }
+    if ((x > 0 && cover[i - 1]) || (x < w - 1 && cover[i + 1]) || (y > 0 && cover[i - w]) || (y < h - 1 && cover[i + w])) ring.push(i);
+  }
+  return { ring, interior };
+}
+/** Heal: returns a new RGBA array (dst with the brushed area replaced by color-matched src texture). */
+export function healRegion(dst, src, cover, w, h, iterations = 60) {
+  const { ring, interior } = ringOf(cover, w, h);
+  const out = new Uint8ClampedArray(dst);
+  if (!interior.length) return out;
+  const known = new Float32Array(w * h * 3), wt = new Float32Array(w * h);
+  for (const i of ring) { wt[i] = 1; for (let c = 0; c < 3; c++) known[i * 3 + c] = dst[i * 4 + c] - src[i * 4 + c]; }
+  if (!ring.length) return out;
+  const diff = membrane(known, wt, w, h, interior, iterations);
+  for (const i of interior) {
+    const k = cover[i] / 255;
+    for (let c = 0; c < 3; c++) {
+      const healed = src[i * 4 + c] + diff[i * 3 + c];
+      out[i * 4 + c] = dst[i * 4 + c] + (healed - dst[i * 4 + c]) * k;
+    }
+  }
+  return out;
+}
+/**
+ * Spot heal: pick a nearby source patch automatically (the candidate whose edge
+ * best matches after a smooth color correction), then heal from it.
+ */
+export function spotHeal(img, cover, w, h) {
+  let bx0 = w, by0 = h, bx1 = -1, by1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (cover[y * w + x]) { if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; }
+  if (bx1 < 0) return { data: new Uint8ClampedArray(img), offset: null };
+  const { ring } = ringOf(cover, w, h);
+  const size = Math.max(bx1 - bx0, by1 - by0) + 4;
+  let best = null;
+  for (const f of [1.05, 1.4, 1.9, 2.5]) for (let a = 0; a < 16; a++) {
+    const ang = (a / 16) * Math.PI * 2, dx = Math.round(Math.cos(ang) * size * f), dy = Math.round(Math.sin(ang) * size * f);
+    if (bx0 - 1 + dx < 0 || by0 - 1 + dy < 0 || bx1 + 1 + dx >= w || by1 + 1 + dy >= h) continue;
+    // variance of (dst - src) along the edge: a smooth correction can remove the mean, not the variance
+    let s = [0, 0, 0], s2 = 0;
+    for (const i of ring) {
+      const j = i + dy * w + dx;
+      for (let c = 0; c < 3; c++) { const dd = img[i * 4 + c] - img[j * 4 + c]; s[c] += dd; s2 += dd * dd; }
+    }
+    const n = ring.length || 1;
+    const score = s2 / n - (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]) / (n * n) + 0.02 * Math.hypot(dx, dy);
+    if (!best || score < best.score) best = { score, dx, dy };
+  }
+  const src = new Uint8ClampedArray(img.length);
+  if (best) {
+    const off = (best.dy * w + best.dx) * 4;
+    for (let i = 0; i < img.length; i++) { const j = i + off; src[i] = j >= 0 && j < img.length ? img[j] : img[i]; }
+  } // otherwise src stays black and the result is a pure smooth fill
+  return { data: healRegion(img, src, cover, w, h), offset: best && { dx: best.dx, dy: best.dy } };
+}
