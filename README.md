@@ -9,6 +9,22 @@ any third-party branding, assets or proprietary code.
 
 ![Workspace](screenshots/04-layer-blend-brush.png)
 
+## What's new in v0.3
+
+- **Adjustment layers** (Layer ▸ New adjustment layer, or the ✦ button in the Layers panel): brightness/contrast, hue/saturation, exposure, levels, curves, invert and grayscale. They work non-destructively: each one re-renders the layers below it, and nothing is baked in. To change the settings, double-click the layer thumbnail or press ✎. Every adjustment layer has a mask. If a selection is active when you create one, the mask is made from that selection. Merge down bakes the adjustment into pixels.
+- **Curves** with an interactive point editor (Adjust ▸ Curves…, Ctrl+M, or as an adjustment layer):
+  - Composite RGB plus R, G and B tabs, drawn over a histogram, with a monotone smooth curve.
+  - Click to add a point and drag it. Drag a point off the graph, double-click it or press Delete to remove it. Arrow keys nudge a point. Reset restores the curve and an In/Out readout shows the values.
+- **Editable text layers**: to change the text, font, size, bold/italic, color or alignment, click the layer with the Text tool, double-click its thumbnail or press ✎. Changing the alignment keeps the text block in place. Painting, filters and transforms first ask to rasterize the layer, and Layer ▸ Rasterize does it manually.
+- **Healing brush** (R; Alt+click sets the source) and **spot healing** (J): these match the texture from the source to the color and tone around the target.
+- **Ellipse selection** (O; Shift/Alt/Shift+Alt add, subtract and intersect; Ctrl draws from the center).
+- **Move selected pixels**: with a selection active, the Move tool lifts and moves just those pixels, and Alt+drag duplicates them. Arrow keys nudge.
+- **Autosave and crash recovery**: about 1.5 s after each change, and when the page is hidden, the document is saved to IndexedDB (layers, masks, adjustment and text settings). After a crash or reload you get a "Recover unsaved work?" prompt. File ▸ Recover autosave… restores it manually.
+- **Mobile / iPhone**: a touch layout with bottom sheets for tools, layers, history and adjustments.
+  - Pinch to zoom, two-finger pan, and on-screen Shift/Alt/Ctrl modifier chips.
+  - Sharing an export uses the Web Share API.
+  - The app is an installable PWA with an offline service worker. iOS Safari is the main target.
+
 ## Features (v0.2)
 
 **Files**
@@ -27,7 +43,7 @@ any third-party branding, assets or proprietary code.
 **Tools** (left toolbar)
 | Tool | Key | Notes |
 |---|---|---|
-| Move | V | Drag the active layer; arrow keys nudge (Shift = 10 px) |
+| Move | V | Drag the active layer, or the selected pixels when there is a selection (Alt duplicates); arrow keys nudge (Shift = 10 px) |
 | Rectangle select | M | Drag a rectangle |
 | Lasso | L | Freehand outline |
 | Polygonal lasso | P | Click points; close with double-click, Enter or a click on the start point; Backspace removes a point; Esc cancels |
@@ -37,7 +53,9 @@ any third-party branding, assets or proprietary code.
 | Eraser | E | Size, hardness, opacity |
 | Clone stamp | S | Alt+click sets the source, then paint to copy pixels. Size, hardness and opacity settings; aligned or non-aligned; a crosshair shows the source point |
 | Fill | G | Tolerance, contiguous or global |
-| Text | T | Click to place; font, size, bold/italic, color, live preview; text goes on its own layer |
+| Ellipse select | O | Drag an ellipse; Ctrl draws from the center |
+| Healing brush / Spot healing | R / J | Alt+click sets the healing source; spot healing samples around the spot automatically |
+| Text | T | Click to place, or click an existing text layer to edit it; font, size, bold/italic, color, alignment, live preview |
 | Color picker | I | Sample the merged image or the current layer |
 | Hand / Zoom | H / Z | Also: hold Space to pan, mouse wheel to zoom at the cursor, middle-drag to pan |
 
@@ -77,14 +95,18 @@ npm install          # installs the static server and Playwright (dev only)
 npm start            # serves on http://localhost:5173
 ```
 
+To try it on a phone on the same network, run `npm run serve` (`scripts/serve.mjs`, port 8080, with no-cache headers suitable for the service worker). Add it to the home screen to install it.
+
 Any static file server works, e.g. `python3 -m http.server 5173`. It needs to be served over
 http(s) rather than opened as a `file://` URL because it uses ES modules.
 
 ### Tests and screenshots
 
 ```bash
-npx playwright install chromium   # one time
-npm test                          # runs scripts/smoke-test.mjs
+npx playwright install chromium webkit   # one time
+npm test                 # desktop smoke test, then mobile tests
+npm run test:desktop     # scripts/smoke-test.mjs (Chromium)
+npm run test:mobile      # scripts/mobile-test.mjs (WebKit iPhone 14 + Chromium Pixel 7, touch input)
 ```
 
 The smoke test starts a temporary server, opens a generated test photo in headless Chromium, applies
@@ -99,7 +121,21 @@ drops a file, and crops. The v0.2 part checks pixels for:
 - Worker availability and UI responsiveness on a 4000×3000 image.
 - The clone stamp.
 
-There are 46 checks in total. Screenshots are written to `screenshots/`:
+v0.3 adds pixel checks for:
+- Every adjustment-layer type, including mask and selection-limited masks, re-editing, cancel, undo and project round-trip, and the cache.
+- Curves editor point add, drag, remove and reset.
+- Text-layer re-edit, alignment and rasterize.
+- Healing.
+- Ellipse modes, moving and duplicating selected pixels, and cancel.
+- Autosave write, reload, recover and discard.
+
+The mobile test covers on both devices:
+- Touch drawing, pinch zoom, the modifier chips and the sheets.
+- Adding a curves layer and dragging its curve by touch.
+- Text by tap, an ellipse plus a one-finger move, and autosave recovery after a reload.
+- The offline service worker.
+
+Screenshots are written to `screenshots/`:
 
 | File | Shows |
 |---|---|
@@ -118,6 +154,14 @@ There are 46 checks in total. Screenshots are written to `screenshots/`:
 | `13-layer-mask.png` | Layer mask painted with brush and eraser, mask thumbnail targeted |
 | `14-worker-large.png` | 4000×3000 image blurring in the worker with the UI live ("Processing…") |
 | `15-clone-stamp.png` | Clone stamp stroke with the source crosshair |
+| `20-heal-before.png`, `21-heal-after.png` | Healing brush / spot healing before and after |
+| `2x-adjust-invert-masked.png` | Invert adjustment layer limited by its mask |
+| `2x-curves-editor.png` | Curves editor with points over the histogram |
+| `2x-adjust-layers-panel.png` | Layers panel with adjustment layers |
+| `2x-text-edit.png`, `2x-text-layers.png` | Re-editing a text layer; text layers with alignment |
+| `2x-ellipse-select.png`, `2x-move-selection.png` | Ellipse selection; selected pixels moved |
+| `2x-autosave-recover.png`, `2x-autosave-recovered.png` | Recovery prompt after reload; recovered document |
+| `m-iphone-*.png`, `m-pixel-*.png` | Mobile: welcome, opened, pinch-zoomed, selection modifiers, tools/layers/history/adjust/menu sheets, adjust dialog, export, landscape, curves, text, recover |
 
 ## Project layout
 
@@ -128,9 +172,14 @@ src/pixels.js         pixel operations (adjustments, blur, sharpen, noise, vigne
 src/selection.js      mask-based selections (combine modes, invert, outline path, clipping canvas)
 src/worker.js         Web Worker that runs pixel operations off the main thread
 src/ops.js            promise client for the worker with a main-thread fallback
+src/curves-editor.js  interactive curves point editor (canvas)
+src/autosave.js       IndexedDB autosave / recovery
 src/icons.js          original SVG icons
 src/styles.css        dark theme
 scripts/smoke-test.mjs  Playwright end-to-end test and screenshot generator
+scripts/mobile-test.mjs Playwright mobile (WebKit iPhone / Chromium Pixel) touch tests
+scripts/serve.mjs     tiny static server for phones on the LAN
+sw.js, manifest.webmanifest  PWA offline shell
 test-assets/          generated test image (export outputs are git-ignored)
 ```
 
@@ -138,31 +187,34 @@ test-assets/          generated test image (export outputs are git-ignored)
 
 ## Known limitations
 
-- There is no ellipse selection, color-range selection, or way to move the selected pixels in place yet. Use copy, paste and the Move tool instead.
+- Adjustment layers apply with Normal blending at their opacity, and their blend mode is ignored. Merge down bakes them in with Normal blending.
+- On documents over 2.5 MP, adjustment layers are computed in the worker, so the previous result shows briefly after each edit.
+- Recovery restores the document but not its undo history.
+- Text layers use system fonts only and have no per-character styling, paragraph boxes or text on a path. Transforms and filters rasterize a text layer.
+- Floating selections can be moved and duplicated, but there is no free transform (scale or rotate) for them. There is no color-range selection.
 - Masks are pixel-only (there are no vector masks or clipping masks). Of the adjustments, only Gaussian blur and invert apply to a mask.
-- The clone stamp samples the active layer only, as it was when the stroke started. There is no "sample all layers" option and no healing yet.
-- Text is rasterized when you click "Add text" and can't be edited afterwards (it stays on its own layer, so you can still move it, change its opacity or delete it).
-- Adjustments and filters are destructive once applied (the preview is live, but there are no adjustment layers yet).
+- The clone stamp samples the active layer only, as it was when the stroke started. There is no "sample all layers" option for clone or heal.
+- Filters (blur, sharpen, noise, vignette) are still destructive; there are no smart filters.
 - History stores full layer snapshots (shared when unchanged), so very large images with many steps use a lot of memory.
 - Reading and writing pixels (`getImageData`/`putImageData`) still happens on the main thread, which costs roughly 0.1 s per step on a 12 MP image. Brush strokes, the magic wand and selection outlines are computed on the main thread too.
 - Masks and selections are full document-size 8-bit arrays, so very large documents use more memory.
 - 8-bit sRGB only; no RAW, 16-bit, color management or CMYK.
 - Brush has no pressure sensitivity, spacing or texture settings yet.
-- Single document at a time; no autosave.
+- Single document at a time; only one autosave slot.
 
 ## Roadmap
 
 1. ~~Layer masks~~ (done in v0.2). Next: clipping masks and vector masks.
-2. ~~Lasso, polygonal lasso, magic wand, add/subtract/intersect, feather~~ (done in v0.2). Next: ellipse, select by color range, select-and-move pixels, a quick-mask editing mode, and saved selections.
-3. **Non-destructive editing**: adjustment layers and smart filters re-rendered from the source, editable text layers.
-4. **Retouching**: ~~clone stamp~~ (done in v0.2), healing brush (texture plus color match), spot removal, dodge/burn, smudge.
+2. ~~Lasso, polygonal lasso, magic wand, add/subtract/intersect, feather~~ (done in v0.2). ~~Ellipse, select-and-move pixels~~ (v0.3). Next: select by color range, free transform of selections, a quick-mask editing mode, and saved selections.
+3. **Non-destructive editing**: ~~adjustment layers, editable text layers~~ (v0.3). Next: smart filters, clipping masks.
+4. **Retouching**: ~~clone stamp~~ (done in v0.2), ~~healing brush, spot healing~~ (v0.3), dodge/burn, smudge.
 5. **History snapshots**: named snapshots, a history brush, and IndexedDB-backed history so large documents don't run out of memory.
-6. **Curves** with a point editor, per-channel levels/curves, color balance, vibrance, white balance, LUT import (.cube).
+6. ~~**Curves** with a point editor~~ (v0.3). Next: per-channel levels/curves, color balance, vibrance, white balance, LUT import (.cube).
 7. **Performance**: ~~Web Worker for filters~~ (done in v0.2); next OffscreenCanvas, WebGL/WebGPU pipeline for real-time adjustments, tiled rendering for very large images.
 8. **RAW support** via a WASM decoder (e.g. LibRaw compiled to WASM), EXIF reading and orientation, 16-bit pipeline.
 9. **Plugin system**: a sandboxed filter/tool API (worker-based, ImageData in/out), a manifest format and a plugin manager.
 10. **Packaging**: installable PWA with offline cache and file handling, and desktop builds (Tauri or Electron) with native open/save dialogs.
-11. Multiple documents (tabs), autosave and recovery, pen pressure, custom brushes, guides, rulers and snapping.
+11. Multiple documents (tabs), ~~autosave and recovery~~ (v0.3), pen pressure, custom brushes, guides, rulers and snapping.
 
 ## License
 
