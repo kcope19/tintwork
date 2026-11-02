@@ -157,7 +157,7 @@ for (const [type, extra] of [['innerGlow', { size: 16, opacity: 90 }], ['innerSh
 
 // --- version / about ------------------------------------------------------------------------------------------
 const ver = await page.evaluate(() => window.tintwork.APP_VERSION || document.title);
-check(/1\.0\.0/.test(ver), `version 1.0.0 (${ver})`);
+check(/^1\.\d+\.\d+$/.test(ver), `version 1.x (${ver})`);
 
 // screenshot: a finished edit on a photo-like scene
 await page.evaluate(async () => {
