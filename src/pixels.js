@@ -51,6 +51,35 @@ function makeLUT(fn) {
   return t;
 }
 
+/**
+ * Per-channel float transfer functions (0..255 in, 0..255 out, already clamped) for the point operations,
+ * or null for ops that are not per-channel curves. The 16-bit path builds 65536-entry tables from these and
+ * the GPU path builds lookup textures, so all three engines share one definition.
+ */
+export function pointFns(name, p = {}) {
+  const cl = (f) => (v) => clamp(f(v));
+  switch (name) {
+    case 'brightnessContrast': {
+      const b = (p.brightness || 0) * 1.5, c = (p.contrast || 0) * 2.55, f = (259 * (c + 255)) / (255 * (259 - c));
+      const fn = cl((v) => f * (v + b - 128) + 128); return [fn, fn, fn];
+    }
+    case 'exposure': {
+      const m = Math.pow(2, p.exposure ?? 0), off = p.offset ?? 0, gm = p.gamma ?? 1;
+      const fn = cl((v) => Math.pow(Math.max(0, (v / 255) * m + off), 1 / gm) * 255); return [fn, fn, fn];
+    }
+    case 'levels': {
+      const inB = p.inBlack ?? 0, inW = p.inWhite ?? 255, gm = p.gamma ?? 1, oB = p.outBlack ?? 0, oW = p.outWhite ?? 255, range = Math.max(1, inW - inB);
+      const fn = cl((v) => oB + Math.pow(Math.min(1, Math.max(0, (v - inB) / range)), 1 / gm) * (oW - oB)); return [fn, fn, fn];
+    }
+    case 'invert': { const fn = (v) => 255 - v; return [fn, fn, fn]; }
+    case 'curves': {
+      const all = cl(curveFn(p.rgb)), ch = [p.r, p.g, p.b].map((pts) => cl(curveFn(pts)));
+      return ch.map((f) => (v) => all(f(v)));
+    }
+    default: return null;
+  }
+}
+
 export const adjustments = {
   brightnessContrast(img, { brightness = 0, contrast = 0 }) {
     // brightness -100..100, contrast -100..100
@@ -114,7 +143,7 @@ export const adjustments = {
 // ---- Filters ---------------------------------------------------------------
 
 /** Single horizontal+vertical box blur pass with premultiplied alpha. */
-function boxBlurPass(src, dst, w, h, r, horizontal) {
+export function boxBlurPass(src, dst, w, h, r, horizontal) {
   const iarr = 1 / (r + r + 1);
   const len = horizontal ? w : h, lines = horizontal ? h : w;
   const stride = horizontal ? 4 : w * 4;
@@ -136,16 +165,20 @@ function boxBlurPass(src, dst, w, h, r, horizontal) {
   }
 }
 
-/** Gaussian blur approximated with three box blurs (standard technique). */
-export function gaussianBlur(img, radius) {
-  if (radius <= 0) return img;
-  const { width: w, height: h, data } = img;
-  const n = 3;
+/** Box widths for three box passes approximating a Gaussian of standard deviation `radius`. */
+export function boxSizes(radius, n = 3) {
   const wIdeal = Math.sqrt((12 * radius * radius) / n + 1);
   let wl = Math.floor(wIdeal); if (wl % 2 === 0) wl--;
   const wu = wl + 2;
   const m = Math.round((12 * radius * radius - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4));
   const sizes = []; for (let i = 0; i < n; i++) sizes.push(i < m ? wl : wu);
+  return sizes;
+}
+/** Gaussian blur approximated with three box blurs (standard technique). */
+export function gaussianBlur(img, radius) {
+  if (radius <= 0) return img;
+  const { width: w, height: h, data } = img;
+  const sizes = boxSizes(radius);
   // premultiply alpha to avoid dark fringes
   let a = new Float32Array(data.length), b = new Float32Array(data.length);
   for (let i = 0; i < data.length; i += 4) {
@@ -322,11 +355,11 @@ export function similarMask(img, sx, sy, tolerance, bounds) {
 // ---------------------------------------------------------------------------
 // Curves: monotone cubic interpolation through control points (no overshoot).
 // ---------------------------------------------------------------------------
-export function curveLUT(points) {
-  const lut = new Uint8Array(256);
+/** Float version of a curve: x 0..255 -> y (0..255), shared by the 8-bit LUT and the 16-bit / GPU paths. */
+export function curveFn(points) {
   const pts = [...(points || [[0, 0], [255, 255]])].map(([x, y]) => [Math.max(0, Math.min(255, x)), Math.max(0, Math.min(255, y))])
     .sort((a, b) => a[0] - b[0]).filter((p, i, arr) => i === 0 || p[0] > arr[i - 1][0]);
-  if (pts.length === 1) { lut.fill(Math.round(pts[0][1])); return lut; }
+  if (pts.length === 1) { const c = pts[0][1]; return () => c; }
   const n = pts.length, d = [], m = new Array(n);
   for (let k = 0; k < n - 1; k++) d.push((pts[k + 1][1] - pts[k][1]) / (pts[k + 1][0] - pts[k][0]));
   m[0] = d[0]; m[n - 1] = d[n - 2];
@@ -336,18 +369,17 @@ export function curveLUT(points) {
     const a = m[k] / d[k], b = m[k + 1] / d[k], s = a * a + b * b;
     if (s > 9) { const t = 3 / Math.sqrt(s); m[k] = t * a * d[k]; m[k + 1] = t * b * d[k]; }
   }
-  let k = 0;
-  for (let x = 0; x < 256; x++) {
-    let y;
-    if (x <= pts[0][0]) y = pts[0][1];
-    else if (x >= pts[n - 1][0]) y = pts[n - 1][1];
-    else {
-      while (x > pts[k + 1][0]) k++;
-      const h = pts[k + 1][0] - pts[k][0], t = (x - pts[k][0]) / h, t2 = t * t, t3 = t2 * t;
-      y = (2 * t3 - 3 * t2 + 1) * pts[k][1] + (t3 - 2 * t2 + t) * h * m[k] + (-2 * t3 + 3 * t2) * pts[k + 1][1] + (t3 - t2) * h * m[k + 1];
-    }
-    lut[x] = Math.max(0, Math.min(255, Math.round(y)));
-  }
+  return (x) => {
+    if (x <= pts[0][0]) return pts[0][1];
+    if (x >= pts[n - 1][0]) return pts[n - 1][1];
+    let k = 0; while (x > pts[k + 1][0]) k++;
+    const h = pts[k + 1][0] - pts[k][0], t = (x - pts[k][0]) / h, t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * pts[k][1] + (t3 - 2 * t2 + t) * h * m[k] + (-2 * t3 + 3 * t2) * pts[k + 1][1] + (t3 - t2) * h * m[k + 1];
+  };
+}
+export function curveLUT(points) {
+  const lut = new Uint8Array(256), f = curveFn(points);
+  for (let x = 0; x < 256; x++) lut[x] = Math.max(0, Math.min(255, Math.round(f(x))));
   return lut;
 }
 adjustments.curves = (img, p = {}) => {

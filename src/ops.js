@@ -1,6 +1,7 @@
 // Client for the pixel worker, with a same-thread fallback (e.g. when module
 // workers are unavailable). All calls return Promises.
 import { runOp, blendMasked, blurMask, healRegion, spotHeal, colorRangeMask, refineMask } from './pixels.js';
+import { runDeep, blendMaskedDeep, createDeep } from './deep.js';
 
 let worker = null;
 let workerReady = false;
@@ -38,7 +39,25 @@ function post(msg, transfer, fallback) {
  * Run an operation on a copy of `img` (ImageData). Returns a new ImageData.
  * `mask` (Uint8Array, same pixel count) blends the result with the original.
  */
+// Optional GPU accelerator (see gpu.js). When set and it supports the op, filters run on the GPU
+// synchronously; any GPU failure falls back to the worker / inline CPU path below.
+let accel = null;
+export function setAccelerator(engine) { accel = engine; }
+export const accelerator = () => accel;
+let lastPath = 'cpu';
+/** Which engine ran the most recent process()/processDeep() call: 'gpu' | 'cpu'. */
+export const lastOpPath = () => lastPath;
+
 export async function process(name, img, params = {}, info = {}, mask = null) {
+  if (accel && accel.supports(name, img.width, img.height)) {
+    try {
+      const out = accel.processImageData(name, img, params, info);
+      if (mask) blendMasked(img.data, out.data, mask);
+      lastPath = 'gpu';
+      return out;
+    } catch (err) { console.warn('GPU op failed, using CPU', err); }
+  }
+  lastPath = 'cpu';
   const data = new Uint8ClampedArray(img.data);
   const { width, height } = img;
   const inline = () => {
@@ -92,4 +111,28 @@ export async function refine(mask, W, H, params) {
   const res = await post({ kind: 'refineMask', mask: copy.buffer, W, H, params }, [copy.buffer],
     () => ({ mask: refineMask(mask, W, H, params).buffer }));
   return new Uint8Array(res.mask);
+}
+
+/** 16-bit version of process(): `d` is a DImage (see deep.js); returns a new DImage. */
+export async function processDeep(name, d, params = {}, info = {}, mask = null) {
+  const { width, height } = d;
+  if (accel && accel.supportsDeep && accel.supportsDeep(name, width, height, info)) {
+    try {
+      const out = accel.processDeep(name, d, params, info);
+      if (mask) blendMaskedDeep(d.data, out.data, mask);
+      lastPath = 'gpu';
+      return out;
+    } catch (err) { console.warn('GPU 16-bit op failed, using CPU', err); }
+  }
+  lastPath = 'cpu';
+  const inline = () => {
+    const out = createDeep(width, height, new Uint16Array(d.data));
+    runDeep(name, out, params, info);
+    if (mask) blendMaskedDeep(d.data, out.data, mask);
+    return { buffer: out.data.buffer };
+  };
+  const data = new Uint16Array(d.data), m = mask ? new Uint8Array(mask) : null;
+  const res = await post({ kind: 'deep', name, width, height, buffer: data.buffer, params, info, mask: m && m.buffer },
+    m ? [data.buffer, m.buffer] : [data.buffer], inline);
+  return createDeep(width, height, new Uint16Array(res.buffer));
 }

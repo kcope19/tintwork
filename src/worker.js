@@ -1,5 +1,6 @@
 // Background worker for heavy pixel work so the UI stays responsive.
 import { runOp, blendMasked, blurMask, healRegion, spotHeal, colorRangeMask, refineMask } from './pixels.js';
+import { runDeep, blendMaskedDeep, createDeep } from './deep.js';
 
 self.onmessage = (e) => {
   const { id, kind } = e.data;
@@ -32,6 +33,15 @@ self.onmessage = (e) => {
       const { img, cover, w, h } = e.data;
       const res = spotHeal(new Uint8ClampedArray(img), new Uint8Array(cover), w, h);
       self.postMessage({ id, data: res.data.buffer, offset: res.offset }, [res.data.buffer]);
+      return;
+    }
+    if (kind === 'deep') {
+      const { name, width, height, buffer, params, info, mask } = e.data;
+      const d = createDeep(width, height, new Uint16Array(buffer));
+      const orig = mask ? new Uint16Array(d.data) : null;
+      runDeep(name, d, params, info);
+      if (mask) blendMaskedDeep(orig, d.data, new Uint8Array(mask));
+      self.postMessage({ id, buffer: d.data.buffer }, [d.data.buffer]);
       return;
     }
     const { name, width, height, buffer, params, info, mask } = e.data;

@@ -1,13 +1,17 @@
 // Tintwork — an original, browser-based layered image editor (Canvas 2D).
 import { floodMask, similarMask, histogram, runOp, channelHistograms, colorRangeMask, HUE_PRESETS } from './pixels.js';
 import { createCurvesEditor, identityCurves } from './curves-editor.js';
-import { readAutosave, writeAutosave, clearAutosave, markAutosaveClean, listAutosaves, readImages, imageRef, adoptImage, decodeImage, MAX_SLOTS } from './autosave.js';
+import { readAutosave, writeAutosave, clearAutosave, markAutosaveClean, listAutosaves, readImages, imageRef, deepRef, isDeepId, adoptImage, decodeImage, MAX_SLOTS } from './autosave.js';
 import { makeSelection, shapeMask, rectMask, combine, invertSelection, selectionCanvas, selectionOutline, maskRegion, translateSelection } from './selection.js';
 import * as ops from './ops.js';
 import { ICONS } from './icons.js';
+import { createEngine } from './gpu.js';
+import { blendIndex, createDeep, cloneDeep, deepFromImageData, deepToImageData, reconcileDeep, compositeDeep, accToDeep, runDeep, DEEP_OPS } from './deep.js';
+import { decodePNG, encodePNG, pngInfo } from './png.js';
+import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.5.0';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -54,6 +58,16 @@ const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPo
 const MAX_PIXELS = IS_IOS ? 16_000_000 : 64_000_000;
 const WARN_PIXELS = 16_000_000;
 const history = { entries: [], index: -1, limit: IS_IOS ? 24 : IS_TOUCH ? 36 : 60 };
+// Rendering engine (gpu.js) — View ▸ Rendering engine… chooses Auto / GPU / CPU (remembered per browser).
+const ENGINE_KEY = 'tintwork.engine';
+const readPref = (k, def) => { try { return localStorage.getItem(k) || def; } catch { return def; } };
+const gfx = { pref: readPref(ENGINE_KEY, 'auto'), engine: null, reason: 'not started', path: 'cpu', notices: new Set(), frame: 0, linear: readPref('tintwork.linear', '0') === '1' };
+// GPU memory budget for textures. iPhones share RAM between CPU and GPU and kill tabs early, so keep it small.
+const GPU_BUDGET_MB = IS_IOS ? 384 : 1536;
+const GPU_PROBE_MS = 40; // 1 MP blur (upload + 2 passes + readback): hardware GPUs take a few ms, software GL 50–300 ms
+// 16-bit documents keep layer data as Uint16 (8 bytes per pixel); only the newest steps keep 16-bit undo data.
+const DEEP_HISTORY = IS_IOS ? 4 : 10;
+const DEEP_LIMIT_MB = IS_IOS ? 512 : 3072;
 /** Clamp a working size to the device's canvas budget, keeping the aspect ratio. */
 function fitPixels(w, h, max = MAX_PIXELS) {
   if (w * h <= max) return { w, h, scaled: false };
@@ -186,6 +200,7 @@ function ensureCoversDoc(layer) {
     layer.x = x0; layer.y = y0; composeSmart(layer, filteredSync(layer));
     return;
   }
+  if (layer.deep) { layer.deepOX = (layer.deepOX || 0) + layer.x - x0; layer.deepOY = (layer.deepOY || 0) + layer.y - y0; }
   layer.canvas = c; layer.x = x0; layer.y = y0; touch(layer);
 }
 
@@ -211,6 +226,22 @@ function documentFromImage(img, name) {
   state.doc = { width: base.canvas.width, height: base.canvas.height, layers: [base], activeId: base.id, selection: null, name };
   afterDocChange('Open');
 }
+/** Open a 16-bit PNG as a 16 bits/channel document (false = too big, use the 8-bit path). */
+function documentFromDeepPNG(buf, name, info) {
+  const fit = fitPixels(info.width, info.height);
+  if (fit.scaled || info.width * info.height * 8 > DEEP_LIMIT_MB * 1048576 / 2) {
+    toast(`${name} is a 16-bit PNG but too large to edit at 16 bits/channel on this device; opening it as 8-bit.`, 6000);
+    return false;
+  }
+  const p = decodePNG(buf), deep = createDeep(p.width, p.height, p.data);
+  const base = createLayer('Background', p.width, p.height);
+  setDeep(base, deep);
+  sizeWarning(p.width, p.height, false, p.width, p.height);
+  state.doc = { width: p.width, height: p.height, layers: [base], activeId: base.id, selection: null, name, depth: 16 };
+  afterDocChange('Open');
+  status(`Opened ${name} (${p.width}×${p.height}, 16 bits/channel)`);
+  return true;
+}
 function afterDocChange(label) {
   history.entries = []; history.index = -1;
   state.doc.slot ||= newSlot(); state.xf = null;
@@ -229,7 +260,7 @@ function snapshot() {
   const prev = history.entries[history.index]?.snap;
   const d = doc();
   return {
-    width: d.width, height: d.height, activeId: d.activeId,
+    width: d.width, height: d.height, activeId: d.activeId, depth: d.depth || 8,
     selection: d.selection, // selections are immutable, so they can be shared
     layers: d.layers.map((l) => {
       const old = prev?.layers.find((p) => p.id === l.id && p.rev === l.rev);
@@ -239,6 +270,7 @@ function snapshot() {
         id: l.id, name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend,
         x: l.x, y: l.y, rev: l.rev, canvas: old ? old.canvas : cloneCanvas(l.canvas), editMask: l.editMask,
         kind: l.kind, adj: l.adj, text: l.text, // treated as immutable: edits replace the object
+        ...(l.deep ? { deep: l.deep, deepRev: l.deepRev, deepOX: l.deepOX || 0, deepOY: l.deepOY || 0 } : {}), // 16-bit data is immutable too
         mask: l.mask ? { enabled: l.mask.enabled, rev: l.mask.rev, canvas: oldMask ? oldMask.canvas : cloneCanvas(l.mask.canvas) } : null,
         ...(l.kind === 'smart' ? { // live filters: the source canvas and the filter list are immutable, so they are shared
           source: l.source, filters: l.filters, editFMask: l.editFMask,
@@ -255,6 +287,8 @@ function commit(label) {
   history.entries.push({ label, snap: snapshot() });
   if (history.entries.length > history.limit) history.entries.shift();
   history.index = history.entries.length - 1;
+  // 16-bit undo data costs 8 bytes/pixel per changed layer: older steps fall back to their 8-bit pixels
+  for (let i = 0; i < history.entries.length - 1 - DEEP_HISTORY; i++) for (const L of history.entries[i].snap.layers) if (L.deep) L.deep = null;
   updateHistoryPanel();
   updateLayersPanel();
   scheduleHistogram();
@@ -264,7 +298,7 @@ function restore(i) {
   const e = history.entries[i];
   if (!e) return;
   const s = e.snap;
-  state.doc.width = s.width; state.doc.height = s.height;
+  state.doc.width = s.width; state.doc.height = s.height; state.doc.depth = s.depth || 8;
   state.doc.activeId = s.activeId;
   state.doc.selection = s.selection;
   state.doc.layers = s.layers.map((l) => ({ ...l, canvas: cloneCanvas(l.canvas), mask: cloneMask(l.mask), ...(l.kind === 'smart' ? { fmask: cloneMask(l.fmask) } : {}) }));
@@ -295,6 +329,8 @@ function composite(target = comp, opts = {}) {
   const c = target === comp ? compCtx : target.getContext('2d');
   c.save();
   c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1;
+  if (!opts.cpu && gfx.engine && gpuComposite(c, opts, target === comp)) { c.restore(); return target; }
+  if (target === comp) gfx.path = 'cpu';
   c.clearRect(0, 0, d.width, d.height);
   if (opts.background) { c.fillStyle = opts.background; c.fillRect(0, 0, d.width, d.height); }
   const below = [opts.background || ''];
@@ -374,6 +410,183 @@ function drawAdjustmentLayer(c, l, below, opts) {
   c.drawImage(adjScratch, 0, 0);
   c.restore();
 }
+// ---------------------------------------------------------------------------
+// GPU engine glue. Every GPU job has a CPU fallback: unsupported, too large, out of budget or a lost
+// context all drop back to the Canvas 2D / worker path (with a one-time notice).
+// ---------------------------------------------------------------------------
+function initEngine() {
+  if (gfx.engine) { try { gfx.engine.destroy(); } catch { /* already gone */ } }
+  gfx.engine = null; ops.setAccelerator(null); gfx.path = 'cpu'; gfx.notices.clear();
+  if (gfx.pref === 'cpu') { gfx.reason = 'CPU engine selected'; compDirty = true; updateDocInfo(); return; }
+  let e;
+  try { e = createEngine({ budgetMB: GPU_BUDGET_MB, tile: IS_IOS ? 2048 : 4096, onLost: onGpuLost }); }
+  catch (err) { e = { error: err?.message || String(err) }; }
+  if (e.error) {
+    gfx.reason = e.error;
+    if (gfx.pref === 'gpu') toast(`GPU engine unavailable (${e.error}) — using the CPU engine.`, 5000);
+  } else if (gfx.pref === 'auto' && gpuIsSlow(e)) {
+    // Automatic mode only uses a hardware GPU: a software rasteriser (SwiftShader, llvmpipe…) runs on the
+    // main thread and is slower than the CPU worker path. View ▸ Rendering engine ▸ GPU still forces it.
+    gfx.reason = `software / slow GPU renderer (${e.info.renderer}); the CPU engine is faster here`;
+    e.destroy();
+  } else { gfx.engine = e; ops.setAccelerator(e); gfx.reason = ''; }
+  compDirty = true; updateDocInfo();
+}
+/** True for software GL, or when a 1 MP blur probe is slower than a hardware GPU would be (cached per renderer). */
+function gpuIsSlow(e) {
+  if (e.info.software) { gfx.probeMs = null; return true; }
+  const key = 'tintwork.gpuProbe', id = `${e.info.vendor}|${e.info.renderer}|${APP_VERSION}`;
+  try { const c = JSON.parse(localStorage.getItem(key) || 'null'); if (c && c.id === id) { gfx.probeMs = c.ms; return c.ms > GPU_PROBE_MS; } } catch { /* ignore */ }
+  let ms = Infinity;
+  try {
+    const n = 1024, img = new ImageData(n, n), info = { docW: n, docH: n, offX: 0, offY: 0 };
+    for (let i = 0; i < img.data.length; i++) img.data[i] = (i * 7) & 255;
+    e.processImageData('gaussianBlur', img, { radius: 8 }, info); // compiles shaders, allocates
+    const t0 = performance.now(); e.processImageData('gaussianBlur', img, { radius: 8 }, info); ms = performance.now() - t0;
+  } catch (err) { console.warn('GPU probe failed', err); }
+  gfx.probeMs = Math.round(ms);
+  try { if (Number.isFinite(ms)) localStorage.setItem(key, JSON.stringify({ id, ms: gfx.probeMs })); } catch { /* ignore */ }
+  return ms > GPU_PROBE_MS;
+}
+function onGpuLost() {
+  gfx.engine = null; ops.setAccelerator(null); gfx.reason = 'GPU context lost'; gfx.path = 'cpu';
+  toast('The GPU stopped responding (context lost) — switched to the CPU engine. View ▸ Rendering engine… can retry.', 6000);
+  compDirty = true; requestRender(); updateDocInfo();
+}
+function setEnginePref(p) {
+  gfx.pref = p; try { localStorage.setItem(ENGINE_KEY, p); } catch { /* private mode */ }
+  smartCache.clear(); initEngine();
+  for (const l of doc()?.layers || []) if (l.kind === 'smart') composeSmart(l, filteredSync(l));
+  requestRender();
+}
+function gpuNotice(key, msg) { if (gfx.notices.has(key)) return; gfx.notices.add(key); toast(msg, 5000); status(msg); }
+/** Layers being edited right now are re-uploaded every frame (their canvas changes between revisions). */
+const isVolatile = (l) => !!(drag || state.xf) && l.id === doc().activeId;
+function gpuLayerList(d) {
+  const out = [];
+  for (const l of d.layers) {
+    if (!l.visible || l.opacity <= 0) continue;
+    const vol = isVolatile(l) ? `:f${gfx.frame}` : '';
+    const mode = blendIndex(l.blend);
+    const mask = l.mask && l.mask.enabled ? { key: `m${l.id}:${l.mask.rev}${vol}`, slot: `m${l.id}`, canvas: l.mask.canvas, x: l.x, y: l.y } : null;
+    if (l.kind === 'adjust') { out.push({ kind: 'adjust', op: l.adj.type, params: l.adj.params || {}, opacity: l.opacity, mode, mask }); continue; }
+    const deep = deepIfSynced(l), src = deep || l.canvas;
+    out.push({ kind: 'pixels', key: `${deep ? 'd' : 'c'}${l.id}:${l.rev}${vol}`, slot: `p${l.id}`, src, x: l.x, y: l.y, w: src.width, h: src.height, opacity: l.opacity, mode, mask });
+  }
+  return out;
+}
+function gpuComposite(c, opts, display) {
+  const d = doc(), e = gfx.engine; if (!e || e.lost) return false;
+  gfx.frame++;
+  const layers = gpuLayerList(d), big = d.width > e.info.maxTextureSize || d.height > e.info.maxTextureSize;
+  if (!e.canComposite(layers, d.width, d.height)) {
+    gpuNotice(`size:${d.width}x${d.height}`, big ? `This canvas (${d.width}×${d.height}) is larger than this GPU's texture limit (${e.info.maxTextureSize}px), so it is composited on the CPU.`
+      : `${d.width}×${d.height} does not fit this device's GPU memory budget (${e.budgetMB} MB), so it is composited on the CPU.`);
+    return false;
+  }
+  try {
+    const fmt = e.composite(layers, d.width, d.height, c, { background: opts.background ? hexToRgb(opts.background) : null, dither: d.depth === 16 });
+    if (fmt === 'rgba8') gpuNotice(`acc8:${d.width}x${d.height}`, 'Large canvas: GPU compositing runs at 8-bit precision to fit in GPU memory.');
+    if (display) gfx.path = fmt === 'rgba8' ? 'gpu-8' : 'gpu';
+    return true;
+  } catch (err) {
+    console.warn('GPU composite failed; using the CPU', err);
+    if (err.code === 'memory') gpuNotice(`mem:${d.width}x${d.height}`, `GPU memory budget exceeded, so this canvas is composited on the CPU. (${err.message})`);
+    else if (err.code !== 'lost') gpuNotice(`err:${err.message}`, `GPU compositing failed (${err.message}); using the CPU.`);
+    return false;
+  }
+}
+/** Live filters on the GPU (null = not possible, use the CPU). */
+function gpuFilter(l, filters) {
+  const e = gfx.engine; if (!e || e.lost) return null;
+  const chain = filters.filter((f) => f.enabled).map((f) => ({ name: f.type, params: filterParams(f) }));
+  if (!chain.every((f) => e.supports(f.name, l.source.width, l.source.height))) return null;
+  try { return e.filterCanvas(l.source, chain, filterInfo(l)); } catch (err) { console.warn('GPU filter failed; using the CPU', err); return null; }
+}
+
+// --- 16-bit layer data ------------------------------------------------------------------------
+// l.deep (DImage) holds 16-bit pixels; l.canvas is always its rounded 8-bit proxy. l.deepRev === l.rev
+// means the two are in step. After an 8-bit edit (brush, transform…) deepOf() reconciles them: untouched
+// pixels keep 16 bits, edited ones take the 8-bit value. l.deepOX/OY = offset of l.deep inside the canvas.
+const is16 = () => doc()?.depth === 16;
+const deepIfSynced = (l) => (is16() && l.deep && l.deepRev === l.rev && !l.kind ? l.deep : null);
+function deepOf(l) {
+  if (l.kind) return deepFromImageData(ctxOf(l.canvas).getImageData(0, 0, l.canvas.width, l.canvas.height)); // text / live layers stay 8-bit
+  if (l.deep && l.deepRev === l.rev && !l.deepOX && !l.deepOY && l.deep.width === l.canvas.width && l.deep.height === l.canvas.height) return l.deep;
+  const img = ctxOf(l.canvas).getImageData(0, 0, l.canvas.width, l.canvas.height);
+  const d = reconcileDeep(l.deep || null, l.deepOX || 0, l.deepOY || 0, img);
+  l.deep = d; l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0;
+  return d;
+}
+function setDeep(l, d) {
+  if (l.canvas.width !== d.width || l.canvas.height !== d.height) l.canvas = makeCanvas(d.width, d.height);
+  ctxOf(l.canvas).putImageData(deepToImageData(d), 0, 0); touch(l);
+  l.deep = d; l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0;
+}
+const useDeep = (l) => is16() && !editingMask(l) && !l.kind;
+function cropDeep(d, r) {
+  const out = createDeep(r.w, r.h);
+  for (let y = 0; y < r.h; y++) out.data.set(d.data.subarray(((r.y + y) * d.width + r.x) * 4, ((r.y + y) * d.width + r.x + r.w) * 4), y * r.w * 4);
+  return out;
+}
+function pasteDeep(d, part, r) {
+  const out = createDeep(d.width, d.height, new Uint16Array(d.data));
+  for (let y = 0; y < r.h; y++) out.data.set(part.data.subarray(y * r.w * 4, (y + 1) * r.w * 4), ((r.y + y) * d.width + r.x) * 4);
+  return out;
+}
+/** Run a filter / adjustment on region r of a layer at 16 bits (GPU float32 when possible, else the worker). */
+async function deepOp(l, src, r, op, params, info, mask) {
+  const res = await ops.processDeep(op, cropDeep(src, r), params, { ...info, linear: gfx.linear }, mask);
+  ctxOf(l.canvas).putImageData(deepToImageData(res), r.x, r.y);
+  touch(l); l.deep = pasteDeep(src, res, r); l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0;
+}
+function maskDesc(l, dx = 0, dy = 0) {
+  if (!l.mask || !l.mask.enabled) return null;
+  const m = l.mask.canvas, a = ctxOf(m).getImageData(0, 0, m.width, m.height).data, alpha = new Uint8Array(m.width * m.height);
+  for (let i = 0; i < alpha.length; i++) alpha[i] = a[i * 4 + 3];
+  return { alpha, w: m.width, h: m.height, x: l.x + dx, y: l.y + dy };
+}
+/** Float composite of the document (or a subset of layers) -> 16-bit DImage. */
+function compositeDeepDoc({ background = null, layers = doc().layers } = {}) {
+  const d = doc(), list = [];
+  for (const l of layers) {
+    if (!l.visible || l.opacity <= 0) continue;
+    const mode = blendIndex(l.blend), mask = maskDesc(l);
+    if (l.kind === 'adjust') list.push({ kind: 'adjust', op: l.adj.type, params: l.adj.params || {}, opacity: l.opacity, mode, mask });
+    else list.push({ kind: 'pixels', img: is16() ? deepOf(l) : deepOf({ ...l, kind: 'tmp' }), x: l.x, y: l.y, opacity: l.opacity, mode, mask });
+  }
+  return accToDeep(compositeDeep(d.width, d.height, list, { background: background ? hexToRgb(background) : null, info: { linear: gfx.linear } }), d.width, d.height);
+}
+/** Image ▸ Mode ▸ 8 / 16 bits per channel (a history step). */
+function setDepth(bits) {
+  const d = doc(); if ((d.depth || 8) === bits) { status(`The document is already ${bits} bits/channel.`); return; }
+  if (bits === 16) {
+    let bytes = 0; for (const l of d.layers) if (!l.kind) bytes += l.canvas.width * l.canvas.height * 8;
+    if (bytes > DEEP_LIMIT_MB * 1048576) {
+      toast(`Not enough memory for 16 bits/channel on this device: ${Math.round(bytes / 1048576)} MB of layer data needed, ${DEEP_LIMIT_MB} MB allowed. The document stays 8-bit.`, 6500);
+      return;
+    }
+    d.depth = 16;
+  } else { d.depth = 8; for (const l of d.layers) { delete l.deep; delete l.deepRev; delete l.deepOX; delete l.deepOY; } }
+  compDirty = true; requestRender(); commit(`Mode: ${bits} bits/channel`); updateDocInfo();
+  status(bits === 16 ? 'Document is now 16 bits/channel: adjustments, filters, merges and exports keep 16-bit precision.' : 'Document is now 8 bits/channel.');
+}
+function openEngineDialog() {
+  const e = gfx.engine, i = e?.info, body = document.createElement('div');
+  const opt = (v, label) => `<label class="radio-row"><input type="radio" name="engine" value="${v}" ${gfx.pref === v ? 'checked' : ''}/> ${label}</label>`;
+  body.innerHTML = `<div class="field two"><span>Engine</span><span>${opt('auto', 'Automatic (GPU when available)')}${opt('gpu', 'GPU (WebGL2)')}${opt('cpu', 'CPU (Canvas 2D + worker)')}</span></div>
+    <div class="field two"><span>16-bit blur</span><label><input type="checkbox" id="engLinear" ${gfx.linear ? 'checked' : ''}/> Blur &amp; sharpen in linear light (16-bit documents)</label></div>
+    <p class="muted" id="engInfo">${e ? `Active: GPU — ${escapeHtml(i.renderer)}${i.software ? ' (software renderer)' : ''}<br>Max texture ${i.maxTextureSize}px · tile ${i.tile}px · half-float ${i.halfFloat ? 'yes' : 'no'} · float32 targets ${i.float32 ? 'yes' : 'no'} · memory ${e.usedMB.toFixed(0)} / ${e.budgetMB} MB${i.webgpu ? ' · WebGPU present (not used yet)' : ''}`
+      : `Active: CPU${gfx.reason ? ` — ${escapeHtml(gfx.reason)}` : ''}`}${gfx.probeMs != null ? `<br>GPU speed probe: ${gfx.probeMs} ms for a 1 MP blur` : ''}</p>`;
+  showModal({ title: 'Rendering engine', body, okLabel: 'Apply', ok: () => {
+    const v = body.querySelector('input[name=engine]:checked')?.value || 'auto';
+    gfx.linear = body.querySelector('#engLinear').checked; try { localStorage.setItem('tintwork.linear', gfx.linear ? '1' : '0'); } catch { /* ignore */ }
+    if (v !== gfx.pref || (v !== 'cpu' && !gfx.engine)) setEnginePref(v);
+    status(gfx.engine ? `Rendering engine: GPU (${gfx.engine.info.renderer})` : `Rendering engine: CPU${gfx.reason ? ` (${gfx.reason})` : ''}`);
+  } });
+}
+const engineLabel = () => (gfx.engine ? (gfx.path === 'cpu' ? 'GPU idle' : gfx.path === 'gpu-8' ? 'GPU 8-bit' : 'GPU') : 'CPU');
+
 function defaultAdjParams(type) {
   if (type === 'curves') return identityCurves();
   const def = ADJ[type]; return def ? Object.fromEntries(def.params.map((q) => [q.key, q.value])) : {};
@@ -441,6 +654,7 @@ function smartCachePut(l, key, canvas) {
 function filteredSync(l, filters = l.filters) {
   if (!filters.some((f) => f.enabled)) return l.source;
   const key = smartKey(l, filters), hit = smartCacheGet(l, key); if (hit) return hit;
+  const g = gpuFilter(l, filters); if (g) return smartCachePut(l, key, g);
   const src = l.source, img = ctxOf(src).getImageData(0, 0, src.width, src.height);
   for (const f of filters) if (f.enabled) runOp(f.type, img, filterParams(f), filterInfo(l));
   return smartCachePut(l, key, putInto(null, img));
@@ -448,6 +662,7 @@ function filteredSync(l, filters = l.filters) {
 async function filteredAsync(l, filters = l.filters) {
   if (!filters.some((f) => f.enabled)) return l.source;
   const key = smartKey(l, filters), hit = smartCacheGet(l, key); if (hit) return hit;
+  const g = gpuFilter(l, filters); if (g) return smartCachePut(l, key, g);
   const src = l.source; let img = ctxOf(src).getImageData(0, 0, src.width, src.height);
   for (const f of filters) if (f.enabled) img = await ops.process(f.type, img, filterParams(f), filterInfo(l));
   return smartCachePut(l, key, putInto(null, img));
@@ -893,8 +1108,8 @@ const toolHandlers = {
   ellipse: {
     down(p, e) { drag = { start: clampPt(p), moved: false, mode: selModeFor(e) }; },
     move(p, e) {
-      // Ctrl/Cmd = draw from the center
-      let r = e.ctrlKey || e.metaKey ? rectFromPoints({ x: 2 * drag.start.x - p.x, y: 2 * drag.start.y - p.y }, p, false) : rectFromPoints(drag.start, clampPt(p), false);
+      // Ctrl (Windows/Linux) or Cmd (Mac) = draw from the center
+      let r = primaryMod(e) ? rectFromPoints({ x: 2 * drag.start.x - p.x, y: 2 * drag.start.y - p.y }, p, false) : rectFromPoints(drag.start, clampPt(p), false);
       state.selPreview = r.w >= 1 && r.h >= 1 ? { ellipse: r } : null; drag.moved = true; requestRender();
     },
     up() {
@@ -1110,7 +1325,7 @@ function xfHit(p, e) {
   for (const h of xfHandlePoints(x, M)) { const dd = Math.hypot(p.x - h.x, p.y - h.y); if (dd <= bd) { bd = dd; best = h; } }
   if (best) {
     const edge = (best.u === 0) !== (best.v === 0);
-    return { kind: edge && (e.ctrlKey || e.metaKey || state.opts.xfSkew) ? 'skew' : 'scale', u: best.u, v: best.v };
+    return { kind: edge && (primaryMod(e) || state.opts.xfSkew) ? 'skew' : 'scale', u: best.u, v: best.v };
   }
   const q = applyM(invertM(M), p.x, p.y);
   return q.x >= 0 && q.y >= 0 && q.x <= x.w && q.y <= x.h ? { kind: 'move' } : { kind: 'rotate' };
@@ -1589,16 +1804,16 @@ window.addEventListener('keydown', (e) => {
   if (state.xf) {
     if (e.key === 'Enter') { e.preventDefault(); run('xfApply'); return; }
     if (e.key === 'Escape') { e.preventDefault(); run('xfCancel'); return; }
-    if (e.key.startsWith('Arrow') && !(e.ctrlKey || e.metaKey)) {
+    if (e.key.startsWith('Arrow') && !primaryMod(e)) {
       const st = e.shiftKey ? 10 : 1, x = state.xf;
       if (e.key === 'ArrowLeft') x.cx -= st; if (e.key === 'ArrowRight') x.cx += st;
       if (e.key === 'ArrowUp') x.cy -= st; if (e.key === 'ArrowDown') x.cy += st;
       e.preventDefault(); previewTransform(); requestRender(); return;
     }
   }
-  const mod = e.ctrlKey || e.metaKey;
+  const mod = primaryMod(e) || (IS_MAC && e.ctrlKey);
   const key = e.key.toLowerCase();
-  const combo = (mod ? 'mod+' : '') + (e.shiftKey ? 'shift+' : '') + (e.altKey ? 'alt+' : '') + key;
+  const combo = comboOf(e);
   const cmd = SHORTCUTS[combo];
   if (cmd) { e.preventDefault(); run(cmd); return; }
   if (key === ' ') { if (!spaceDown) { spaceDown = true; view.style.cursor = 'grab'; } e.preventDefault(); return; }
@@ -1639,6 +1854,9 @@ const cmds = {
   place: needDoc(() => { fileMode = 'place'; $('#fileInput').click(); }),
   saveProject: needDoc(() => saveProject()),
   export: needDoc(() => openExportDialog()),
+  mode8: needDoc(() => setDepth(8)),
+  mode16: needDoc(() => setDepth(16)),
+  engine: () => openEngineDialog(),
   camera: () => { fileMode = 'open'; $('#cameraInput').click(); },
   closePolygon: () => finishPolygon(),
   editLayer: needDoc(() => editLayer()),
@@ -1729,7 +1947,8 @@ const cmds = {
   layerMergeDown: needDoc(() => mergeDown()),
   flatten: needDoc(() => {
     const d = doc(); const flat = createLayer('Background', d.width, d.height);
-    composite(flat.canvas, { sync: true }); d.layers = [flat]; d.activeId = flat.id; compDirty = true; requestRender(); commit('Flatten image');
+    if (is16()) setDeep(flat, compositeDeepDoc()); else composite(flat.canvas, { sync: true });
+    d.layers = [flat]; d.activeId = flat.id; compDirty = true; requestRender(); commit('Flatten image');
   }),
   rotateCW: needDoc(() => transformDoc('cw', 'Rotate 90° clockwise')),
   rotateCCW: needDoc(() => transformDoc('ccw', 'Rotate 90° counter-clockwise')),
@@ -1746,7 +1965,7 @@ const cmds = {
   zoomIn: needDoc(() => zoomAt(1.25)), zoomOut: needDoc(() => zoomAt(0.8)),
   zoomFit: needDoc(() => fitToScreen()), zoom100: needDoc(() => setZoom(1)),
   shortcuts: () => openShortcutsDialog(),
-  about: () => openInfo(`About ${APP}`, `<p>${APP} ${APP_VERSION} is an original, browser-based layered image editor built on the HTML Canvas 2D API.</p><p class="muted">Everything runs locally in your browser; images never leave your device.</p>`),
+  about: () => openInfo(`About ${APP}`, `<p>${APP} ${APP_VERSION} is an original, browser-based layered image editor (WebGL2 GPU engine with a Canvas 2D fallback, 8- and 16-bit documents).</p><p class="muted">Everything runs locally in your browser; images never leave your device.</p>`),
   brightnessContrast: needDoc(() => openAdjust(ADJ.brightnessContrast)),
   hueSaturation: needDoc(() => openAdjust(ADJ.hueSaturation)),
   exposure: needDoc(() => openAdjust(ADJ.exposure)),
@@ -1776,8 +1995,25 @@ const SHORTCUTS = {
   'mod+=': 'zoomIn', 'mod++': 'zoomIn', 'mod+shift+=': 'zoomIn', 'mod+shift++': 'zoomIn', 'mod+-': 'zoomOut', 'mod+0': 'zoomFit', 'mod+1': 'zoom100',
   'mod+b': 'brightnessContrast', 'mod+u': 'hueSaturation', 'mod+l': 'levels', 'mod+m': 'curves', 'mod+i': 'invert', 'mod+shift+u': 'grayscale',
   'mod+t': 'freeTransform', 'mod+alt+r': 'refineEdge',
+  // Alternates for combos the browser or OS keeps (see RESERVED in platform.js); the menus show these where needed.
+  'mod+alt+n': 'new', 'mod+shift+alt+n': 'layerNew', 'mod+alt+t': 'freeTransform', 'mod+shift+m': 'curves',
+  'shift+f7': 'invertSelection', 'mod+shift+alt+c': 'copyMerged', 'mod+alt+0': 'zoom100',
   'x': 'swapColors', 'd': 'resetColors', '?': 'shortcuts', 'shift+?': 'shortcuts',
 };
+/** Neutral spec ('Ctrl+Shift+N') → combo ('mod+shift+n'), in comboOf()'s modifier order. */
+function specCombo(spec) {
+  const parts = spec.split('+'), key = parts.pop().toLowerCase();
+  return (parts.includes('Ctrl') ? 'mod+' : '') + (parts.includes('Shift') ? 'shift+' : '') + (parts.includes('Alt') ? 'alt+' : '') + key;
+}
+const ALTERNATE_KEYS = { new: 'Ctrl+Alt+N', layerNew: 'Ctrl+Alt+Shift+N', freeTransform: 'Ctrl+Alt+T', curves: 'Ctrl+Shift+M',
+  invertSelection: 'Shift+F7', copyMerged: 'Ctrl+Alt+Shift+C', zoom100: 'Ctrl+Alt+0', feather: 'Shift+F6' };
+/** The shortcut to show for a command: its usual combo, or the alternate when this browser/OS reserves the usual one. */
+function shortcutFor(cmd, spec) {
+  if (!spec) return '';
+  if (spec.includes('+') && RESERVED.has(specCombo(spec)) && ALTERNATE_KEYS[cmd]) return ALTERNATE_KEYS[cmd];
+  return spec;
+}
+const shortcutLabel = (cmd, spec) => keyLabel(shortcutFor(cmd, spec));
 
 const MENUS = [
   ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Take photo (camera)…', 'camera'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
@@ -1787,7 +2023,7 @@ const MENUS = [
     ['Clear', 'clear', 'Del'], ['Fill with color', 'fillSelection', 'Alt+⌫'], '-', ['Free transform', 'freeTransform', 'Ctrl+T']]],
   ['Image', [['Image size…', 'imageSize'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], '-',
     ['Rotate 90° clockwise', 'rotateCW'], ['Rotate 90° counter-clockwise', 'rotateCCW'], ['Rotate 180°', 'rotate180'],
-    ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Flatten', 'flatten']]],
+    ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
   ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
     ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
@@ -1802,7 +2038,7 @@ const MENUS = [
     ['Exposure…', 'exposure'], ['Levels…', 'levels', 'Ctrl+L'], ['Curves…', 'curves', 'Ctrl+M'], ['Auto levels', 'autoLevels'], '-',
     ['Invert', 'invert', 'Ctrl+I'], ['Grayscale', 'grayscale', 'Ctrl+Shift+U'], ['Sepia tone…', 'sepia']]],
   ['Filter', [['Convert to live layer', 'convertSmart'], '-', ['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
-  ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1']]],
+  ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1'], '-', ['Rendering engine…', 'engine']]],
   ['Help', [['Keyboard shortcuts', 'shortcuts', '?'], [`About ${APP}`, 'about']]],
 ];
 
@@ -1848,6 +2084,14 @@ function mergeDown() {
   const x0 = Math.min(0, lower.x, upper.x), y0 = Math.min(0, lower.y, upper.y);
   const x1 = Math.max(d.width, lower.x + lower.canvas.width, upper.x + upper.canvas.width);
   const y1 = Math.max(d.height, lower.y + lower.canvas.height, upper.y + upper.canvas.height);
+  if (is16()) { // float composite of the two layers keeps 16-bit precision
+    const W2 = x1 - x0, H2 = y1 - y0, list = [{ kind: 'pixels', img: deepOf(lower), x: lower.x - x0, y: lower.y - y0, opacity: 1, mode: 0, mask: maskDesc(lower, -x0, -y0) }];
+    if (upper.visible) list.push({ kind: 'pixels', img: deepOf(upper), x: upper.x - x0, y: upper.y - y0, opacity: upper.opacity, mode: blendIndex(upper.blend), mask: maskDesc(upper, -x0, -y0) });
+    const nd = accToDeep(compositeDeep(W2, H2, list), W2, H2);
+    lower.x = x0; lower.y = y0; lower.mask = null; lower.editMask = false; setDeep(lower, nd);
+    d.layers.splice(i, 1); d.activeId = lower.id;
+    compDirty = true; requestRender(); commit('Merge down'); return;
+  }
   const c = makeCanvas(x1 - x0, y1 - y0), x = c.getContext('2d');
   x.drawImage(renderSource(lower), lower.x - x0, lower.y - y0);
   x.globalAlpha = upper.opacity; x.globalCompositeOperation = upper.blend;
@@ -1861,6 +2105,7 @@ function mergeDown() {
 function bakeAdjustment(adj, target) {
   if (!adj.visible || adj.opacity <= 0) return;
   if (adj.blend && adj.blend !== 'source-over') { bakeAdjustmentBlended(adj, target); return; }
+  if (is16() && !target.kind) { bakeAdjustmentDeep(adj, target); return; }
   const w = target.canvas.width, h = target.canvas.height, c = ctxOf(target.canvas);
   const img = c.getImageData(0, 0, w, h), orig = new Uint8ClampedArray(img.data);
   runOp(adj.adj.type, img, adj.adj.params || {});
@@ -1873,6 +2118,19 @@ function bakeAdjustment(adj, target) {
     for (let j = 0; j < 3; j++) o[i + j] = orig[i + j] + (o[i + j] - orig[i + j]) * k;
   }
   c.putImageData(img, 0, 0); touch(target);
+}
+/** 16-bit version of bakeAdjustment (normal blend): the adjustment runs on the layer's 16-bit data. */
+function bakeAdjustmentDeep(adj, target) {
+  const src = deepOf(target), w = src.width, h = src.height, res = runDeep(adj.adj.type, cloneDeep(src), adj.adj.params || {});
+  const m = makeCanvas(w, h), mx = ctxOf(m);
+  if (adj.mask && adj.mask.enabled) mx.drawImage(adj.mask.canvas, adj.x - target.x, adj.y - target.y); else { mx.fillStyle = '#fff'; mx.fillRect(0, 0, w, h); }
+  const md = mx.getImageData(0, 0, w, h).data, o = res.data, s = src.data;
+  for (let i = 0; i < o.length; i += 4) {
+    const k = (md[i + 3] / 255) * adj.opacity;
+    if (k >= 1) continue;
+    for (let j = 0; j < 3; j++) o[i + j] = k <= 0 ? s[i + j] : Math.round(s[i + j] + (o[i + j] - s[i + j]) * k);
+  }
+  setDeep(target, res);
 }
 /** Blend-mode adjustment: blend the adjusted copy over the layer (like the live composite), keep the layer's alpha. */
 function bakeAdjustmentBlended(adj, target) {
@@ -1977,6 +2235,7 @@ function cropTo(r) {
     const c = l.kind === 'adjust' ? l.canvas : makeCanvas(r.w, r.h);
     if (l.kind !== 'adjust') c.getContext('2d').drawImage(l.canvas, l.x - r.x, l.y - r.y);
     if (l.mask) { const m = makeCanvas(r.w, r.h); m.getContext('2d').drawImage(l.mask.canvas, l.x - r.x, l.y - r.y); l.mask.canvas = m; touchMask(l); }
+    if (l.deep && l.kind !== 'adjust') { l.deepOX = (l.deepOX || 0) + l.x - r.x; l.deepOY = (l.deepOY || 0) + l.y - r.y; }
     l.canvas = c; l.x = 0; l.y = 0; touch(l);
   }
   d.width = r.w; d.height = r.h; d.selection = null; state.crop = null;
@@ -2072,10 +2331,12 @@ async function applyInstant(label, op) {
   if (!editingMask(l)) rasterize(l, label);
   const r = opRegion(l); if (!r) return;
   const c = ctxOf(l.canvas); const img = c.getImageData(r.x, r.y, r.w, r.h);
+  const deepSrc = useDeep(l) && DEEP_OPS.includes(op) ? deepOf(l) : null;
   setBusy(1);
   try {
-    const out = await ops.process(op, img, {}, regionInfo(l, r), regionMask(l, r));
-    c.putImageData(out, r.x, r.y); touch(l); requestRender(); commit(label); status(label);
+    if (deepSrc) await deepOp(l, deepSrc, r, op, {}, regionInfo(l, r), regionMask(l, r));
+    else { const out = await ops.process(op, img, {}, regionInfo(l, r), regionMask(l, r)); c.putImageData(out, r.x, r.y); touch(l); }
+    requestRender(); commit(label); status(label);
   } catch (err) { status(`${label} failed: ${err.message}`); } finally { setBusy(-1); }
 }
 
@@ -2088,6 +2349,7 @@ function openAdjust(def, presetValues = {}) {
   const onMask = editingMask(l), cv = targetCanvas(l);
   const c = ctxOf(cv);
   const original = c.getImageData(r.x, r.y, r.w, r.h);
+  const deepSrc = !onMask && useDeep(l) && DEEP_OPS.includes(def.op) ? deepOf(l) : null; // 16-bit source, taken before previews touch the canvas
   const values = Object.fromEntries(def.params.map((p) => [p.key, presetValues[p.key] ?? p.value]));
   const info = regionInfo(l, r), selMask = regionMask(l, r);
   const params = () => ({ ...values, ...(def.extra || {}) });
@@ -2123,12 +2385,13 @@ function openAdjust(def, presetValues = {}) {
     ok: async () => {
       closed = true; setBusy(1);
       try {
-        const out = await ops.process(def.op, original, params(), info, selMask);
-        c.putImageData(out, r.x, r.y); touchIt(); requestRender(); commit(def.title); status(def.title); updateLayersPanel();
+        if (deepSrc) await deepOp(l, deepSrc, r, def.op, params(), info, selMask);
+        else { const out = await ops.process(def.op, original, params(), info, selMask); c.putImageData(out, r.x, r.y); touchIt(); }
+        requestRender(); commit(def.title); status(def.title); updateLayersPanel();
       } catch (err) { c.putImageData(original, r.x, r.y); compDirty = true; requestRender(); status(`${def.title} failed: ${err.message}`); }
       finally { setBusy(-1); }
     },
-    cancel: () => { closed = true; c.putImageData(original, r.x, r.y); touchIt(); requestRender(); },
+    cancel: () => { closed = true; c.putImageData(original, r.x, r.y); touchIt(); if (deepSrc && l.deep === deepSrc) l.deepRev = l.rev; requestRender(); },
   });
   preview();
 }
@@ -2400,7 +2663,7 @@ function openExportDialog() {
   const base = (doc().name || 'image').replace(/\.[^.]+$/, '');
   body.innerHTML = formHTML([
     { label: 'File name', html: `<input type="text" id="eName" value="${escapeHtml(base)}" />` },
-    { label: 'Format', html: `<select id="eFmt"><option value="image/png">PNG (lossless)</option><option value="image/jpeg">JPEG</option><option value="image/webp">WebP</option></select>` },
+    { label: 'Format', html: `<select id="eFmt"><option value="image/png">PNG (lossless)</option><option value="image/png16">PNG 16-bit</option><option value="image/jpeg">JPEG</option><option value="image/webp">WebP</option></select>` },
     { label: 'Quality', html: `<span><input type="range" id="eQ" min="1" max="100" value="90" disabled /> <output id="eQv">90</output></span>` },
     { label: 'Size', html: `<span class="muted">${doc().width} × ${doc().height} px</span>` },
   ]);
@@ -2414,7 +2677,7 @@ function openExportDialog() {
     prepTimer = setTimeout(async () => {
       const k = key(); const blob = await renderExport(fmt.value, q.value / 100);
       const name = `${body.querySelector('#eName').value || 'image'}.${EXPORT_EXT[fmt.value]}`;
-      ready = { k, file: new File([blob], name, { type: fmt.value }) };
+      ready = { k, file: new File([blob], name, { type: blob.type || 'image/png' }) };
       const sb = body.querySelector('#eShare'); if (sb) { sb.disabled = false; sb.textContent = 'Share…'; }
     }, 120);
   };
@@ -2431,15 +2694,26 @@ function openExportDialog() {
     });
     prepare();
   }
-  fmt.addEventListener('change', () => { q.disabled = fmt.value === 'image/png'; if (canShareFiles) prepare(); });
+  fmt.addEventListener('change', () => { q.disabled = fmt.value.startsWith('image/png'); if (canShareFiles) prepare(); });
   q.addEventListener('input', () => { body.querySelector('#eQv').textContent = q.value; if (canShareFiles) prepare(); });
   body.querySelector('#eName').addEventListener('input', () => { if (canShareFiles) prepare(); });
   showModal({ title: 'Export image', body, okLabel: canShareFiles ? 'Download' : 'Export', ok: () => {
     exportImage(fmt.value, q.value / 100, body.querySelector('#eName').value || 'image');
   } });
 }
-const EXPORT_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
-function renderExport(type, quality) {
+const EXPORT_EXT = { 'image/png': 'png', 'image/png16': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
+/**
+ * 'image/png16' writes a 16-bit PNG (png.js). 16-bit documents are composited in float (deep.js) and
+ * dithered down for 8-bit formats so smooth gradients don't band.
+ */
+async function renderExport(type, quality) {
+  const d = doc(), bg = type === 'image/jpeg' ? '#ffffff' : null;
+  if (type === 'image/png16' || is16()) {
+    const deep = compositeDeepDoc({ background: bg });
+    if (type === 'image/png16') return new Blob([encodePNG({ width: deep.width, height: deep.height, data: deep.data, depth: 16 })], { type: 'image/png' });
+    const out = makeCanvas(d.width, d.height); ctxOf(out).putImageData(deepToImageData(deep, { dither: true }), 0, 0);
+    return new Promise((res) => out.toBlob((b) => { out.width = out.height = 0; res(b); }, type, quality));
+  }
   const out = makeCanvas(doc().width, doc().height);
   // JPEG has no alpha channel: flatten onto white so transparent areas don't turn black
   composite(out, { background: type === 'image/jpeg' ? '#ffffff' : null, sync: true });
@@ -2456,17 +2730,23 @@ function download(blob, filename) {
 }
 
 function openShortcutsDialog() {
+  const K = (cmd, spec) => keyLabel(shortcutFor(cmd, spec));
   const rows = [
     ['V / M / C', 'Move / Rectangle select / Crop'], ['L / P / W', 'Lasso / Polygonal lasso / Magic wand'], ['B / E / S / G', 'Brush / Eraser / Clone stamp / Fill'], ['T / I', 'Text / Color picker'],
-    ['Shift / Alt / Shift+Alt (selecting)', 'Add / subtract / intersect'], ['Ctrl+Shift+I, Shift+F6', 'Invert selection / feather'], ['Enter, double-click / Esc', 'Close / cancel polygon'],
-    ['R / J', 'Healing brush / Spot healing'], ['Alt+click (clone, healing)', 'Set source point'], ['\\', 'Toggle editing mask / pixels'],
-    ['H, hold Space', 'Pan'], ['Z, mouse wheel', 'Zoom (Shift+wheel pans)'], ['[ and ]', 'Brush size'], ['Shift+click', 'Straight brush line'], ['Alt+click (brush)', 'Pick color'],
-    ['X / D', 'Swap / default colors'], ['Ctrl+Z, Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+A / Ctrl+D', 'Select all / deselect'],
-    ['Del, Alt+Backspace', 'Clear / fill selection'], ['Ctrl+C / X / V', 'Copy / cut / paste as layer'], ['Ctrl+J / Ctrl+E', 'Duplicate layer / merge down'],
-    ['Ctrl+B / U / L / I', 'Brightness-contrast / Hue-sat / Levels / Invert'], ['Ctrl+0 / Ctrl+1', 'Fit / 100%'], ['Enter / Esc', 'Apply / cancel crop'],
-    ['Arrows (Move tool)', 'Nudge layer (Shift = 10px)'], ['Ctrl+S / Ctrl+Shift+E', 'Save project / export'],
+    [platformText('Shift / Alt / Shift+Alt (selecting)'), 'Add / subtract / intersect'], [`${K('invertSelection', 'Ctrl+Shift+I')}, ${keyLabel('Shift+F6')}`, 'Invert selection / feather'], ['Enter, double-click / Esc', 'Close / cancel polygon'],
+    ['R / J', 'Healing brush / Spot healing'], [platformText('Alt+click (clone, healing)'), 'Set source point'], ['\\', 'Toggle editing mask / pixels'],
+    ['H, hold Space', 'Pan'], ['Z, mouse wheel', platformText('Zoom (Shift+wheel pans)')], ['[ and ]', 'Brush size'], [platformText('Shift+click'), 'Straight brush line'], [platformText('Alt+click (brush)'), 'Pick color'],
+    ['X / D', 'Swap / default colors'], [`${K('undo', 'Ctrl+Z')}, ${K('redo', 'Ctrl+Shift+Z')}`, 'Undo / redo'], [`${K('selectAll', 'Ctrl+A')} / ${K('deselect', 'Ctrl+D')}`, 'Select all / deselect'],
+    [`${IS_MAC ? '⌦ / ⌫' : 'Del'}, ${keyLabel('Alt+Backspace')}`, 'Clear / fill selection'], [`${K('copy', 'Ctrl+C')} / ${K('cut', 'Ctrl+X')} / ${K('paste', 'Ctrl+V')}`, 'Copy / cut / paste as layer'], [`${K('layerDuplicate', 'Ctrl+J')} / ${K('layerMergeDown', 'Ctrl+E')}`, 'Duplicate layer / merge down'],
+    [`${K('new', 'Ctrl+N')} / ${K('layerNew', 'Ctrl+Shift+N')}`, 'New canvas / new layer'], [K('freeTransform', 'Ctrl+T'), 'Free transform'],
+    [`${K('brightnessContrast', 'Ctrl+B')} / ${K('hueSaturation', 'Ctrl+U')} / ${K('levels', 'Ctrl+L')} / ${K('curves', 'Ctrl+M')} / ${K('invert', 'Ctrl+I')}`, 'Brightness-contrast / Hue-sat / Levels / Curves / Invert'],
+    [`${K('zoomFit', 'Ctrl+0')} / ${K('zoom100', 'Ctrl+1')}`, 'Fit / 100%'], ['Enter / Esc', 'Apply / cancel crop'],
+    ['Arrows (Move tool)', platformText('Nudge layer (Shift = 10px)')], [`${K('saveProject', 'Ctrl+S')} / ${K('export', 'Ctrl+Shift+E')}`, 'Save project / export'],
   ];
-  openInfo('Keyboard shortcuts', `<table style="width:100%;border-collapse:collapse">${rows.map(([k, v]) => `<tr><td style="padding:3px 8px 3px 0;white-space:nowrap"><b>${k}</b></td><td class="muted">${v}</td></tr>`).join('')}</table>`);
+  const note = `<p class="muted" id="kbNote">${IS_MAC ? 'Mac keyboard: ⌘ Command · ⌥ Option · ⇧ Shift.' : 'Ctrl / Alt / Shift keyboard (Windows, Linux, ChromeOS).'} ` +
+    `Some combinations are kept by the browser or system (${(IS_MAC ? ['Ctrl+N', 'Ctrl+T', 'Ctrl+W', 'Ctrl+Q', 'Ctrl+M', 'Ctrl+Shift+N'] : ['Ctrl+N', 'Ctrl+T', 'Ctrl+W', 'Ctrl+Shift+N', 'Ctrl+Shift+I', 'Ctrl+Shift+C']).map(keyLabel).join(', ')}), so Tintwork shows an alternate for those. ` +
+    'The usual combination still works where the browser passes it on, e.g. in an installed app window.</p>';
+  openInfo('Keyboard shortcuts', `<table id="kbTable" style="width:100%;border-collapse:collapse">${rows.map(([k, v]) => `<tr><td style="padding:3px 8px 3px 0;white-space:nowrap"><b>${k}</b></td><td class="muted">${v}</td></tr>`).join('')}</table>${note}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2490,7 +2770,13 @@ async function openFile(file, mode = 'open') {
       await loadProject(JSON.parse(await file.text()), file.name);
       return;
     }
-    if (!file.type.startsWith('image/')) { status(`Unsupported file: ${file.name}`); return; }
+    if (!file.type.startsWith('image/') && !/\.png$/i.test(file.name)) { status(`Unsupported file: ${file.name}`); return; }
+    if (mode !== 'place' || !doc()) {
+      if (file.type === 'image/png' || /\.png$/i.test(file.name)) {
+        const buf = new Uint8Array(await file.arrayBuffer()), info = pngInfo(buf);
+        if (info && info.bitDepth === 16 && documentFromDeepPNG(buf, file.name, info)) return;
+      }
+    }
     const url = URL.createObjectURL(file);
     const img = await loadImage(url);
     if (mode === 'place' && doc()) placeImage(img, file.name.replace(/\.[^.]+$/, ''));
@@ -2504,15 +2790,26 @@ for (const id of ['#fileInput', '#cameraInput']) $(id).addEventListener('change'
 function serializeProject() {
   const d = doc();
   return {
-    format: PROJECT_FORMAT, version: 4, app: APP, width: d.width, height: d.height, name: d.name,
+    format: PROJECT_FORMAT, version: 5, app: APP, width: d.width, height: d.height, name: d.name, depth: d.depth === 16 ? 16 : 8,
     activeIndex: activeIndex(),
     layers: d.layers.map((l) => ({
       name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, data: l.canvas.toDataURL('image/png'),
       mask: l.mask ? { enabled: l.mask.enabled, data: l.mask.canvas.toDataURL('image/png') } : null,
       ...(l.kind ? { kind: l.kind, adj: l.adj, text: l.text } : {}),
+      ...(d.depth === 16 && !l.kind ? { deep: deepDataURL(deepOf(l)) } : {}), // v5: 16-bit pixels; `data` stays as the 8-bit fallback
       ...(l.kind === 'smart' ? { source: l.source.toDataURL('image/png'), filters: l.filters, fmask: l.fmask ? { enabled: l.fmask.enabled, data: l.fmask.canvas.toDataURL('image/png') } : null } : {}),
     })),
   };
+}
+function deepDataURL(d) {
+  const bytes = encodePNG({ width: d.width, height: d.height, data: d.data, depth: 16 });
+  let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return `data:image/png;base64,${btoa(bin)}`;
+}
+function deepFromDataURL(url) {
+  const bin = atob(url.slice(url.indexOf(',') + 1)), b = new Uint8Array(bin.length);
+  for (let i = 0; i < b.length; i++) b[i] = bin.charCodeAt(i);
+  const p = decodePNG(b); return createDeep(p.width, p.height, p.data);
 }
 function saveProject() {
   const name = (doc().name || 'project').replace(/\.[^.]+$/, '').replace(/\.tintwork$/, '');
@@ -2534,6 +2831,7 @@ function scheduleAutosave() {
   clearTimeout(autosaveTimer); autosaveTimer = setTimeout(autosaveNow, AUTOSAVE_DELAY);
 }
 const AUTOSAVE_STEPS = 20; // undo steps kept in each autosave
+const AUTOSAVE_DEEP_PX = IS_IOS ? 4e6 : 8e6; // max 16-bit pixels autosaved (current step only)
 const newSlot = () => `doc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 /**
  * Autosave record v2: the last AUTOSAVE_STEPS history entries with every canvas stored once
@@ -2541,18 +2839,25 @@ const newSlot = () => `doc-${Date.now().toString(36)}-${Math.random().toString(3
  */
 function encodeHistory(d, dirty) {
   const images = new Map(), ref = (c) => { const r = imageRef(c); images.set(r.id, r.encode); return r.id; };
+  const dref = (dd) => { const r = deepRef(dd); images.set(r.id, r.encode); return r.id; };
   const n = history.entries.length;
+  // 16-bit data is autosaved for the current step only, and only up to a size cap (it is 8 bytes/pixel)
+  const curSnap = history.entries[history.index].snap;
+  let deepPx = 0; for (const l of curSnap.layers) if (l.deep) deepPx += l.deep.width * l.deep.height;
+  const deepOk = curSnap.depth === 16 && deepPx <= AUTOSAVE_DEEP_PX;
+  if (curSnap.depth === 16 && !deepOk) gpuNotice('autosave-deep', 'This 16-bit document is too large for 16-bit autosave; crash recovery keeps an 8-bit copy. Save the project to keep 16-bit data.');
   const start = Math.max(0, Math.min(history.index, n - AUTOSAVE_STEPS)), end = Math.min(n, start + AUTOSAVE_STEPS);
   const entries = history.entries.slice(start, end).map((e) => {
     const sn = e.snap;
     return {
       label: e.label,
       snap: {
-        width: sn.width, height: sn.height, activeId: sn.activeId,
+        width: sn.width, height: sn.height, activeId: sn.activeId, depth: sn.depth || 8,
         selection: sn.selection ? ref(selectionCanvas(sn.selection)) : null,
         layers: sn.layers.map((l) => ({
           id: l.id, name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, rev: l.rev, editMask: l.editMask,
           kind: l.kind, adj: l.adj, text: l.text, canvas: ref(l.canvas),
+          ...(deepOk && sn === curSnap && l.deep ? { deep: dref(l.deep), deepRev: l.deepRev, deepOX: l.deepOX || 0, deepOY: l.deepOY || 0 } : {}),
           mask: l.mask ? { enabled: l.mask.enabled, rev: l.mask.rev, canvas: ref(l.mask.canvas) } : null,
           ...(l.kind === 'smart' ? { source: ref(l.source), filters: l.filters, editFMask: l.editFMask,
             fmask: l.fmask ? { enabled: l.fmask.enabled, rev: l.fmask.rev, canvas: ref(l.fmask.canvas) } : null } : {}),
@@ -2593,6 +2898,7 @@ async function restoreAutosave(r) {
   if (r.version !== 2 || !r.history) return restoreLegacyAutosave(r);
   const bufs = await readImages(r), canv = new Map();
   for (const [id, buf] of bufs) {
+    if (isDeepId(id)) { const p = decodePNG(buf), dd = createDeep(p.width, p.height, p.data); adoptImage(dd, id); canv.set(id, dd); continue; }
     const img = await decodeImage(buf), c = makeCanvas(img.width, img.height);
     c.getContext('2d').drawImage(img, 0, 0); img.close?.();
     adoptImage(c, id); canv.set(id, c); // re-saving this session reuses the stored bytes
@@ -2613,10 +2919,11 @@ async function restoreAutosave(r) {
   const entries = r.history.entries.map((e) => ({
     label: e.label,
     snap: {
-      width: e.snap.width, height: e.snap.height, activeId: e.snap.activeId, selection: selOf(e.snap.selection, e.snap.width, e.snap.height),
+      width: e.snap.width, height: e.snap.height, depth: e.snap.depth || 8, activeId: e.snap.activeId, selection: selOf(e.snap.selection, e.snap.width, e.snap.height),
       layers: e.snap.layers.map((L) => {
         maxId = Math.max(maxId, L.id); maxRev = Math.max(maxRev, L.rev, L.mask?.rev || 0, L.fmask?.rev || 0);
         const l = { ...L, canvas: get(L.canvas), mask: L.mask ? { ...L.mask, canvas: get(L.mask.canvas) } : null };
+        if (L.deep) l.deep = get(L.deep); else delete l.deep;
         if (L.kind === 'smart') Object.assign(l, { source: get(L.source), fmask: L.fmask ? { ...L.fmask, canvas: get(L.fmask.canvas) } : null });
         return l;
       }),
@@ -2712,12 +3019,16 @@ async function loadProject(data, filename) {
       const m = makeCanvas(mi.width, mi.height); m.getContext('2d').drawImage(mi, 0, 0);
       l.mask = { canvas: m, enabled: L.mask.enabled !== false, rev: ++globalRev };
     }
+    if (L.deep && !l.kind && data.depth === 16) {
+      const dd = deepFromDataURL(L.deep);
+      if (dd.width === l.canvas.width && dd.height === l.canvas.height) setDeep(l, dd);
+    }
     layers.push(l);
   }
   if (!layers.length) throw new Error('Project has no layers');
   for (const l of layers) if (l.kind === 'smart') renderSmartSync(l);
   const ai = Math.min(layers.length - 1, Math.max(0, data.activeIndex ?? layers.length - 1));
-  state.doc = { width: data.width, height: data.height, layers, activeId: layers[ai].id, selection: null, name: data.name || filename };
+  state.doc = { width: data.width, height: data.height, layers, activeId: layers[ai].id, selection: null, name: data.name || filename, depth: data.depth === 16 ? 16 : 8 };
   afterDocChange('Open project');
   status(`Opened project ${filename} (${layers.length} layers)`);
 }
@@ -2740,11 +3051,11 @@ window.addEventListener('beforeunload', (e) => { if (history.entries.length > 1)
 // ---------------------------------------------------------------------------
 // UI building
 // ---------------------------------------------------------------------------
-function status(msg) { $('#status').textContent = msg; }
+function status(msg) { $('#status').textContent = platformText(msg); }
 let toastTimer = 0;
 function toast(msg, ms = 2200) {
   let t = $('#toast'); if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.append(t); }
-  t.textContent = msg; t.classList.remove('fade'); status(msg);
+  t.textContent = platformText(msg); t.classList.remove('fade'); status(msg);
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('fade'), ms);
 }
 function setFg(hex) { state.fg = hex; $('#fgColor').value = hex; $('#colorHex').textContent = hex.toUpperCase(); }
@@ -2764,7 +3075,8 @@ function buildMenus() {
       if (it === '-') { list.append(document.createElement('hr')); continue; }
       const [label, cmd, key] = it;
       const ib = document.createElement('button'); ib.dataset.cmd = cmd;
-      ib.innerHTML = `<span>${label}</span>${key ? `<kbd>${key}</kbd>` : ''}`;
+      const kl = shortcutLabel(cmd, key); if (kl) ib.title = `${label} (${kl})`;
+      ib.innerHTML = `<span>${label}</span>${kl ? `<kbd>${kl}</kbd>` : ''}`;
       list.append(ib);
     }
     m.append(list); nav.append(m);
@@ -2799,7 +3111,7 @@ function buildToolbar() {
   const tb = $('#toolbar');
   for (const t of TOOLS) {
     if (t.sep) { const s = document.createElement('div'); s.className = 'sep'; tb.append(s); continue; }
-    const b = document.createElement('button'); b.dataset.tool = t.id; b.title = `${t.name} (${t.key})`;
+    const b = document.createElement('button'); b.dataset.tool = t.id; b.title = platformText(`${t.name} (${t.key})`);
     b.innerHTML = ICONS[t.id]; b.addEventListener('click', () => setTool(t.id)); tb.append(b);
   }
 }
@@ -2847,7 +3159,7 @@ function buildOptionsBar() {
   if (!state.xf && d && ['select', 'lasso', 'polylasso', 'wand', 'ellipse'].includes(state.tool)) parts.push(`<button data-cmd="colorRange">Color range…</button>`, `<button data-cmd="refineEdge" ${d.selection ? '' : 'disabled'}>Refine edge…</button>`);
   if (!state.xf && d && state.tool === 'move') parts.push(`<button data-cmd="freeTransform">Transform</button>`);
   bar.classList.toggle('xf', !!state.xf);
-  bar.innerHTML = parts.join('');
+  bar.innerHTML = platformText(parts.join(''));
   bar.querySelectorAll('[data-xf]').forEach((inp) => inp.addEventListener('change', () => setXfField(inp.dataset.xf, +inp.value)));
   bar.querySelectorAll('[data-selmode]').forEach((b) => b.addEventListener('click', () => { o.selMode = b.dataset.selmode; buildOptionsBar(); }));
   bar.querySelectorAll('[data-opt]').forEach((inp) => {
@@ -3008,7 +3320,7 @@ function scheduleHistogram() {
   }, 150);
 }
 function updateDocInfo() {
-  const d = doc(); $('#docinfo').textContent = d ? `${d.name} — ${d.width} × ${d.height} px · ${d.layers.length} layer${d.layers.length > 1 ? 's' : ''}` : '';
+  const d = doc(); $('#docinfo').textContent = d ? `${d.name} — ${d.width} × ${d.height} px · ${d.depth === 16 ? 16 : 8}-bit · ${d.layers.length} layer${d.layers.length > 1 ? 's' : ''} · ${engineLabel()}` : `${engineLabel()} engine`;
   document.title = d ? `${d.name} — ${APP}` : `${APP} — browser image editor`;
 }
 function updateAll() { updateLayersPanel(); updateHistoryPanel(); buildOptionsBar(); updateDocInfo(); updateZoomLabel(); scheduleHistogram(); requestRender(); }
@@ -3016,7 +3328,7 @@ function updateAll() { updateLayersPanel(); updateHistoryPanel(); buildOptionsBa
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
-buildMenus(); buildToolbar(); buildSheets();
+buildMenus(); buildToolbar(); buildSheets(); initEngine();
 $('#toolsToggle').addEventListener('click', () => { document.body.classList.toggle('tools-collapsed'); $('#toolsToggle').classList.toggle('on', !document.body.classList.contains('tools-collapsed')); });
 $('#toolsToggle').classList.add('on');
 // Installable/offline: register the service worker on secure origins (https or localhost).
@@ -3029,7 +3341,14 @@ render();
 checkRecovery();
 // warm the bundled open-licensed fonts so text renders with them on the first try
 if (document.fonts) for (const f of Object.keys(BUNDLED_FONTS)) for (const bold of [false, true]) loadFont({ font: f, size: 16, bold }).catch(() => {});
-status(`${APP} ready — open an image (Ctrl+O), drop one in, or create a new canvas (Ctrl+N).`);
+// Platform-correct shortcut labels in static tooltips (index.html is written with neutral Ctrl/Alt/Shift names).
+document.documentElement.dataset.platform = PLATFORM;
+document.querySelectorAll('[title]').forEach((el) => {
+  const cmd = el.dataset.cmd;
+  el.title = el.title.replace(/\(((?:Ctrl|Alt|Shift)\+[^)]+)\)$/, (m, k) => `(${cmd ? shortcutLabel(cmd, k) : keyLabel(k)})`);
+  el.title = platformText(el.title);
+});
+status(`${APP} ready — open an image (${shortcutLabel('open', 'Ctrl+O')}), drop one in, or create a new canvas (${shortcutLabel('new', 'Ctrl+N')}).`);
 
 // Small automation/testing hook (also handy from the devtools console).
 window.tintwork = {
@@ -3042,6 +3361,8 @@ window.tintwork = {
   startTransform, applyTransform, cancelTransform, get xf() { return state.xf; }, previewTransform, xfMatrix,
   convertToSmart, setSmartFilters, updateSmart, openSmartFilterDialog, openLiveFilterPanel, composeSmart, filteredSync, addFilterMask,
   openColorRangeDialog, openRefineDialog, colorRangeMask, bakeAdjustment, BUNDLED_FONTS, fontReady, loadFont, AUTOSAVE_STEPS, MAX_SLOTS, newAdjustmentLayer, editLayer, adjCache, rasterize, renderTextLayer, textLayerAt, undo, redo, closeModal, mergeDown,
+  createLayer, defaultAdjParams, gfx, initEngine, setEnginePref, setDepth, deepOf, setDeep, compositeDeepDoc, encodePNG, decodePNG, pngInfo, deepToImageData, deepFromImageData, createDeep, loadProject, openEngineDialog, exportImage, gpuLayerList, platform: { IS_MAC, PLATFORM, keyLabel, platformText, shortcutFor, comboOf, RESERVED },
+  get engine() { return gfx.engine; },
   get zoom() { return state.zoom; },
   compositePixel(x, y) { if (compDirty) { composite(); compDirty = false; } return [...compCtx.getImageData(x, y, 1, 1).data]; },
   get doc() { return state.doc; },

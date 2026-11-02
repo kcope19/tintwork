@@ -1,3 +1,4 @@
+import { encodePNG } from './png.js';
 // Crash recovery: keeps copies of open documents in IndexedDB.
 //
 // Format v2 (Tintwork 0.4): one small record per document "slot" (the layer stack of the last
@@ -109,6 +110,17 @@ export function imageRef(canvas) {
   };
   return { id, encode };
 }
+/** 16-bit layer data (deep.js DImage): stored as a 16-bit PNG (fast deflate level), ids start with 'D-'. */
+export function deepRef(d) {
+  let id = ids.get(d);
+  if (!id) { id = `D-${SESSION}-${++seq}`; ids.set(d, id); }
+  const encode = () => {
+    if (!encoded.has(d)) encoded.set(d, Promise.resolve().then(() => encodePNG({ width: d.width, height: d.height, data: d.data, depth: 16, level: 1 }).buffer));
+    return encoded.get(d);
+  };
+  return { id, encode };
+}
+export const isDeepId = (id) => id.startsWith('D-');
 /** Adopt decoded canvases under their stored ids so a recovered session does not re-encode them. */
 export function adoptImage(canvas, id) { ids.set(canvas, id); }
 /** PNG bytes (or a Blob from older records) -> ImageBitmap */

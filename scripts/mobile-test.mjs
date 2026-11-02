@@ -434,6 +434,41 @@ async function runDevice({ tag, browserType, device, realTouch, stubShare }) {
   await T(async () => { await window.tintwork.clearAutosave(); });
   await page.reload(); await page.waitForFunction(() => !!window.tintwork);
 
+  // --- v0.5: engine choice, 16-bit documents on the phone (screenshots m-v5-*) ---------------------------
+  {
+    const shot5 = (name) => page.screenshot({ path: path.join(shots, `m-v5-${tag}-${name}.png`) });
+    const eng = await T(() => { const t = window.tintwork; return { auto: !!t.engine, reason: t.gfx.reason }; });
+    console.log(`note ${prefix} automatic engine: ${eng.auto ? 'GPU' : `CPU (${eng.reason})`}`);
+    const gpu = await T(() => { const t = window.tintwork; t.setEnginePref('gpu'); const e = t.engine; return e ? { budget: e.budgetMB, tile: e.info.tile, renderer: e.info.renderer } : null; });
+    check(!!gpu, `GPU engine can be forced (${gpu ? gpu.renderer : 'unavailable'})`);
+    if (gpu && tag === 'iphone') check(gpu.budget === 384 && gpu.tile === 2048, `iPhone GPU limits: ${gpu.budget} MB texture budget, ${gpu.tile}px tiles`);
+    const par = await T(async () => {
+      const t = window.tintwork; t.newDocument(300, 200, 'white', 'phone16'); const d = t.doc;
+      const c = d.layers[0].canvas.getContext('2d'), g = c.createLinearGradient(0, 0, 300, 0); g.addColorStop(0, '#000'); g.addColorStop(1, '#fff'); c.fillStyle = g; c.fillRect(0, 0, 300, 200); t.touch(d.layers[0]);
+      const l = t.createLayer('o', 300, 200, { blend: 'overlay', opacity: 0.7 }); const x = l.canvas.getContext('2d'); x.fillStyle = '#3080ff'; x.fillRect(50, 50, 200, 100); d.layers.push(l); t.touch(l); t.commit('layers');
+      const a = document.createElement('canvas'), b = document.createElement('canvas'); t.composite(a); t.composite(b, { cpu: true });
+      const A = a.getContext('2d').getImageData(0, 0, 300, 200).data, B = b.getContext('2d').getImageData(0, 0, 300, 200).data; let max = 0; for (let i = 0; i < A.length; i++) max = Math.max(max, Math.abs(A[i] - B[i]));
+      return max;
+    });
+    check(par <= 3, `GPU composite matches CPU on the phone (max diff ${par})`);
+    await T(() => window.tintwork.run('mode16'));
+    const m16 = await T(async () => {
+      const t = window.tintwork; t.doc.activeId = t.doc.layers[0].id;
+      t.openAdjust(t.ADJ.levels, { outBlack: 100, outWhite: 140 }); await new Promise((r) => setTimeout(r, 80)); document.querySelector('#modalOk').click(); await t.idle();
+      t.openAdjust(t.ADJ.levels, { inBlack: 100, inWhite: 140 }); await new Promise((r) => setTimeout(r, 80)); document.querySelector('#modalOk').click(); await t.idle();
+      const px = t.activeLayer().canvas.getContext('2d').getImageData(0, 10, 300, 1).data, s = new Set(); for (let i = 0; i < px.length; i += 4) s.add(px[i]);
+      const blob = await t.renderExport('image/png16'), info = t.pngInfo(new Uint8Array(await blob.arrayBuffer()));
+      return { depth: t.doc.depth, levels: s.size, png: info.bitDepth };
+    });
+    check(m16.depth === 16 && m16.levels > 120 && m16.png === 16, `16-bit document on the phone: ${m16.levels} levels after squeeze+stretch, PNG export ${m16.png}-bit`);
+    await page.waitForTimeout(150); await shot5('16bit');
+    await T(() => window.tintwork.openEngineDialog()); await page.waitForTimeout(150);
+    const fits = await T(() => [...document.querySelectorAll('#modal *')].every((el) => { const r = el.getBoundingClientRect(); return r.width === 0 || (r.left >= -1 && r.right <= innerWidth + 1); }));
+    check(fits, 'rendering engine dialog fits the phone screen');
+    await shot5('engine');
+    await T(() => { window.tintwork.closeModal(); window.tintwork.setEnginePref('auto'); });
+  }
+
   // --- service worker / offline ------------------------------------------------------------
   const swOk = await T(() => Promise.race([navigator.serviceWorker?.ready.then(() => true), new Promise((r) => setTimeout(() => r(false), 6000))]));
   if (swOk) {

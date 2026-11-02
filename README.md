@@ -9,6 +9,47 @@ any third-party branding, assets or proprietary code.
 
 ![Workspace](screenshots/04-layer-blend-brush.png)
 
+## What's new in v0.5
+
+- **GPU engine (WebGL2)** with an automatic CPU fallback. Layers, every blend mode, opacity, layer masks, adjustment layers and live filters are composited in half-float or float textures. Gaussian blur (separable), sharpen, noise, vignette, curves/levels (LUT textures), hue/saturation, exposure, brightness/contrast, invert, grayscale and sepia run as shaders.
+  - **View ▸ Rendering engine…** offers Automatic, GPU or CPU, and shows the renderer, texture limits, GPU memory use and the speed-probe time. The status bar shows `GPU` or `CPU`.
+  - Automatic mode uses the GPU only when it is real hardware and passes a 1 MP blur probe (≤ 40 ms). Software rasterizers such as SwiftShader or llvmpipe stay on the faster CPU/worker path.
+  - The CPU path takes over, with a notice, when WebGL2 or float render targets are missing, when the GPU context is lost, or when a document exceeds the max texture size or the GPU memory budget (1.5 GB on desktop, 384 MB on iOS). Large images are drawn back in tiles (2048 px on iOS).
+- **16 bits per channel**: Image ▸ Mode: 8 / 16 bits/channel. In 16-bit mode, layer pixels are stored as 16-bit and the canvas you see is an 8-bit proxy.
+  - Adjustments, adjustment layers, merge down and flatten work at 16 bits. An optional setting runs blur and sharpen in linear light.
+  - Opening a 16-bit PNG creates a 16-bit document. There is a **PNG 16-bit** export, and 8-bit exports of a 16-bit document are dithered.
+  - Project files are now format v5 and store 16-bit layers as 16-bit PNG; v4 files still open. Autosave keeps the 16-bit data of the current step, up to 8 MP (4 MP on iOS).
+  - The PNG codec is in `src/png.js` and uses the bundled [fflate](vendor/fflate/LICENSE) (MIT) for deflate.
+- **Platform-aware keyboard**: Windows and Linux use Ctrl, Alt and Shift; macOS uses ⌘, ⌥ and ⇧. Menus, tooltips, hints and the shortcuts dialog show the right names for the platform.
+  - Combinations the browser or OS keeps for itself (Ctrl+N, Ctrl+T, Ctrl+W, Ctrl+Shift+N, Ctrl+Shift+I/C on Windows; ⌘N, ⌘T, ⌘W, ⌘Q, ⌘M on Mac) get alternates: Ctrl+Alt+N new canvas, Ctrl+Alt+Shift+N new layer, Ctrl+Alt+T free transform, Shift+F7 invert selection, ⇧⌘M curves on Mac. The usual combination still works wherever the browser passes it on.
+  - Ctrl+Y and Ctrl+Shift+Z both redo. You can force the platform with `?platform=win|mac`.
+- **Comparison doc**: [docs/COMPARISON.md](docs/COMPARISON.md) compares each milestone's features with current paid editors, with sources.
+
+### v0.5 benchmarks (`npm run bench`)
+
+These were measured on this Linux box with **no GPU**. Headless Chromium renders WebGL2 with **SwiftShader**, a software emulation. Headless WebKit reports a masked "Apple GPU" but also renders in software (Mesa). So the GPU column measures a CPU pretending to be a GPU, and it is **not representative of real hardware**; on a real GPU these shaders are expected to be much faster. That is also why automatic mode picked the CPU path here. Times are in ms per operation, including texture upload and readback.
+
+| Operation | Chromium GPU (SwiftShader) | Chromium CPU / worker | WebKit GPU (software) | WebKit CPU |
+|---|---|---|---|---|
+| Gaussian blur 25 px, 12 MP | 5907 | 1794 | 1569 | 1239 |
+| Gaussian blur 25 px, 24 MP | 12092 | 3888 | 3389 | 2765 |
+| Curves, 12 MP | 307 | 79 | 105 | 59 |
+| Curves, 24 MP | 657 | 149 | 230 | 133 |
+| 10-layer composite, 12 MP (cold / one layer changed) | 4627 / 3633 | 341 | 1935 / 445 | 366 |
+| 10-layer composite, 24 MP (cold / one layer changed) | 9106 / 7582 | 1086 | 4138 / 981 | 585 |
+
+GPU memory for the 10-layer composite was 916 MB at 12 MP and 2426 MB at 24 MP (half-float textures, budget raised to 4 GB for the benchmark).
+
+**Banding** (a 4096 px ramp covering levels 100–140, stretched to the full range by a steep curve):
+
+| Pipeline | Distinct output levels |
+|---|---|
+| 8-bit | 41 |
+| 16-bit (internal) | 4062 |
+| 16-bit result shown or exported at 8 bits | 256 |
+
+The default dithered 8-bit export has a mean error of 0.33 levels.
+
 ## What's new in v0.4
 
 - **Blend modes on adjustment layers**: an adjustment layer's blend mode (Multiply, Screen, Overlay, …) is honored together with its opacity and mask, both live and when it is merged down.
@@ -121,7 +162,9 @@ http(s) rather than opened as a `file://` URL because it uses ES modules.
 
 ```bash
 npx playwright install chromium webkit   # one time
-npm test                 # desktop smoke test, then mobile tests
+npm test                 # desktop smoke test, desktop platform test (Chromium + WebKit), then mobile tests
+npm run test:platform    # scripts/desktop-platform-test.mjs: Windows/Mac keyboard labels and shortcuts
+npm run bench            # scripts/bench.mjs: GPU vs CPU timings and banding
 npm run test:desktop     # scripts/smoke-test.mjs (Chromium)
 npm run test:mobile      # scripts/mobile-test.mjs (WebKit iPhone 14 + Chromium Pixel 7, touch input)
 ```
@@ -154,6 +197,15 @@ v0.4 adds pixel checks for:
 - Color range: sampling, presets and tonal ranges.
 - Refine edge: expand, contract, feather and smooth.
 - Bundled fonts: serving, loading and glyph rendering.
+
+v0.5 adds checks for:
+- GPU vs CPU composite parity in 30 cases (every blend mode, masks, 7 adjustment-layer types × 2 blend modes): max difference ≤ 4 levels, mean < 0.5.
+- Filter parity: point operations within 2 levels; blur and sharpen mean < 1.5 (the GPU uses a true Gaussian, the CPU three box passes); noise statistically equal.
+- Live filters on the GPU.
+- 16-bit banding (41 vs 175 levels after a squeeze and stretch), undo, an exact 16-bit PNG round trip, dithered 8-bit export, an exact project v5 round trip, opening a 16-bit PNG, and merge down in 16-bit.
+- The engine dialog, the forced-CPU mode, the memory-budget notice, and a page without WebGL2 (the fallback path).
+- The desktop platform test: Windows labels and shortcuts in Chromium and WebKit, and Mac labels and ⌘ shortcuts in WebKit.
+- On mobile (`m-v5-*`): forcing the GPU, the iPhone limits (384 MB, 2048 px tiles), composite parity, a 16-bit document with 16-bit PNG export, and the engine dialog layout.
 
 The mobile test (screenshots `m-v4-*`) adds a two-finger pinch/rotate transform, a live blur toggled from the layers sheet, a color-range tap sample, a bundled-font text layer, and recovery of one of two slots with its 20-step history.
 
@@ -202,6 +254,13 @@ src/worker.js         Web Worker that runs pixel operations off the main thread
 src/ops.js            promise client for the worker with a main-thread fallback
 src/curves-editor.js  interactive curves point editor (canvas)
 src/autosave.js       IndexedDB autosave / recovery (slots, bounded history)
+src/gpu.js            WebGL2 engine: compositing, blend modes, masks, filter shaders, texture budget
+src/deep.js           16-bit (Uint16) layer data: blending, compositing, adjustments
+src/png.js            PNG decoder/encoder (8 and 16 bit)
+src/platform.js       Mac vs Windows/Linux modifiers, key labels, reserved shortcuts
+vendor/fflate/        bundled deflate library (MIT)
+docs/COMPARISON.md    living comparison with paid editors
+scripts/bench.mjs     GPU vs CPU benchmark
 fonts/                bundled OFL web fonts + licenses
 src/icons.js          original SVG icons
 src/styles.css        dark theme
@@ -227,11 +286,24 @@ test-assets/          generated test image (export outputs are git-ignored)
 - History stores full layer snapshots (shared when unchanged), so very large images with many steps use a lot of memory.
 - Reading and writing pixels (`getImageData`/`putImageData`) still happens on the main thread, which costs roughly 0.1 s per step on a 12 MP image. Brush strokes, the magic wand and selection outlines are computed on the main thread too.
 - Masks and selections are full document-size 8-bit arrays, so very large documents use more memory.
-- 8-bit sRGB only; no RAW, 16-bit, color management or CMYK.
+- 16-bit, not 32-bit: there is no HDR/float mode, color management (ICC), CMYK or RAW. The PNG decoder ignores gAMA/iCCP and assumes sRGB. 16-bit TIFF/PSD are not supported.
+- In 16-bit mode, brushes, the eraser, clone/heal, transforms and moving selected pixels edit the 8-bit proxy and are then reconciled. Pixels they touch drop to 8-bit precision; untouched pixels keep 16-bit.
+- GPU and CPU differ slightly: blur is a true Gaussian on the GPU and a 3-box approximation on the CPU (mean difference under 1 level), and noise uses a different random pattern. Linear-light blur and sharpen run on the CPU only.
+- The GPU path runs on the main thread. On software GL it is slower than the CPU worker, so automatic mode avoids it there.
 - Brush has no pressure sensitivity, spacing or texture settings yet.
 - Single open document at a time (tabs are not implemented).
 
 ## Roadmap
+
+Milestones to 1.0 (Windows desktop, Chrome and Edge first; Mac and iPhone kept working):
+- **v0.6**: WebGPU engine (with WebGL2 then CPU fallback), pen tablets (pressure, tilt, coalesced/predicted events, pressure curves), File System Access (Save / Save As / recent files), installable PWA (window controls overlay, file handling), Windows conventions. Also shapes, gradients, dodge/burn, warp, perspective and red-eye.
+- **v0.7**: groups, clipping masks, layer styles.
+- **v0.8**: auto enhance, auto white balance, straighten, looks and presets.
+- **v0.9**: multi-document tabs, crop presets, batch export.
+- **v1.0**: onboarding, help, accessibility, error handling, memory tuning, full tests, user guide.
+
+Longer-term items:
+
 
 1. ~~Layer masks~~ (done in v0.2). Next: clipping masks and vector masks.
 2. ~~Lasso, polygonal lasso, magic wand, add/subtract/intersect, feather~~ (done in v0.2). ~~Ellipse, select-and-move pixels~~ (v0.3). ~~Color range, refine edge, free transform of selections~~ (v0.4). Next: a quick-mask editing mode, and saved selections.
@@ -239,7 +311,7 @@ test-assets/          generated test image (export outputs are git-ignored)
 4. **Retouching**: ~~clone stamp~~ (done in v0.2), ~~healing brush, spot healing~~ (v0.3), dodge/burn, smudge.
 5. **History snapshots**: named snapshots, a history brush, and IndexedDB-backed history so large documents don't run out of memory.
 6. ~~**Curves** with a point editor~~ (v0.3). Next: per-channel levels/curves, color balance, vibrance, white balance, LUT import (.cube).
-7. **Performance**: ~~Web Worker for filters~~ (done in v0.2); next OffscreenCanvas, WebGL/WebGPU pipeline for real-time adjustments, tiled rendering for very large images.
+7. **Performance**: ~~Web Worker for filters~~ (done in v0.2), ~~WebGL2 GPU pipeline, 16-bit~~ (v0.5). Next: WebGPU compute engine as the primary path on Chrome/Edge (v0.6), OffscreenCanvas, tiled rendering for very large images.
 8. **RAW support** via a WASM decoder (e.g. LibRaw compiled to WASM), EXIF reading and orientation, 16-bit pipeline.
 9. **Plugin system**: a sandboxed filter/tool API (worker-based, ImageData in/out), a manifest format and a plugin manager.
 10. **Packaging**: installable PWA with offline cache and file handling, and desktop builds (Tauri or Electron) with native open/save dialogs.

@@ -798,7 +798,7 @@ const reloaded = await page.evaluate(async () => {
   const l = t.doc.layers[0];
   return { v: data.version, kind: l.kind, filters: l.filters?.length, fmask: !!l.fmask, before, after: t.compositePixel(160, 100) };
 });
-check(reloaded.v === 4 && reloaded.kind === 'smart' && reloaded.filters === 2 && reloaded.fmask && near(reloaded.before, reloaded.after, 1), 'project files (v4) keep the layer live: original pixels, filter stack and filter mask');
+check(reloaded.v === 5 && reloaded.kind === 'smart' && reloaded.filters === 2 && reloaded.fmask && near(reloaded.before, reloaded.after, 1), 'project files (v5) keep the layer live: original pixels, filter stack and filter mask');
 await page.evaluate(() => { const t = window.tintwork; t.setTool('move'); t.run('rasterizeLayer'); });
 check(await page.evaluate(() => !window.tintwork.activeLayer().kind && window.tintwork.history.entries.at(-1).label === 'Convert live layer to pixels'), 'Layer ▸ Convert to pixels bakes a live layer');
 
@@ -997,6 +997,202 @@ check(inkInk > 1500, `Pacifico text layer has rendered glyph pixels (${inkInk})`
 await page.screenshot({ path: path.join(shots, '3x-fonts.png') });
 
 } // end v0.4 section
+
+// ===================================================================================================
+// v0.5: GPU engine (WebGL2) + 16-bit documents. Screenshots 4x-*.png
+// ===================================================================================================
+{
+const { encodePNG } = await import('../src/png.js');
+// a smooth 16-bit test asset (values a 8-bit file can't hold)
+const g16 = path.join(root, 'test-assets', 'gradient16.png');
+{
+  const W = 1024, H = 96, data = new Uint16Array(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4, v = Math.round((100 + 40 * x / (W - 1)) * 257); data[i] = v; data[i + 1] = Math.round(v * 0.9); data[i + 2] = 65535 - v; data[i + 3] = 65535; }
+  fs.writeFileSync(g16, encodePNG({ width: W, height: H, data, depth: 16 }));
+}
+// --- engine selection -----------------------------------------------------------------------------
+const auto = await page.evaluate(() => ({ pref: window.tintwork.gfx.pref, engine: !!window.tintwork.engine, reason: window.tintwork.gfx.reason }));
+console.log(`note automatic engine choice in headless Chromium: ${auto.engine ? 'GPU' : `CPU (${auto.reason})`}`);
+const forced = await page.evaluate(() => { const t = window.tintwork; t.setEnginePref('gpu'); const e = t.engine; return e ? { renderer: e.info.renderer, software: e.info.software, max: e.info.maxTextureSize, half: e.info.halfFloat, f32: e.info.float32 } : { err: t.gfx.reason }; });
+check(!!forced.renderer, `GPU engine starts when forced (WebGL2 renderer: ${forced.renderer || forced.err}${forced.software ? ', software GL' : ''})`);
+console.log(`note GPU caps: max texture ${forced.max}, half-float targets ${forced.half}, float32 targets ${forced.f32}`);
+
+// --- composite parity: 16 blend modes (some masked), 7 adjustment-layer types (normal + overlay) -----------
+const parity = await page.evaluate(async () => {
+  const t = window.tintwork, W = 240, H = 160;
+  t.newDocument(W, H, 'transparent', 'parity'); const d = t.doc, base = d.layers[0], bx = base.canvas.getContext('2d');
+  const gr = bx.createLinearGradient(0, 0, W, H); gr.addColorStop(0, '#203060'); gr.addColorStop(0.5, '#c08040'); gr.addColorStop(1, '#40e0a0'); bx.fillStyle = gr; bx.fillRect(0, 0, W, H - 20); t.touch(base);
+  const cmp = () => {
+    const a = document.createElement('canvas'), b = document.createElement('canvas');
+    t.composite(a, {}); t.composite(b, { cpu: true });
+    const A = a.getContext('2d').getImageData(0, 0, W, H).data, B = b.getContext('2d').getImageData(0, 0, W, H).data;
+    let max = 0, sum = 0; for (let i = 0; i < A.length; i++) { const e = Math.abs(A[i] - B[i]); sum += e; if (e > max) max = e; }
+    return { max, mean: sum / A.length };
+  };
+  const out = [];
+  const blends = ['source-over', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
+  const before = t.engine.stats.composites;
+  for (const [i, bl] of blends.entries()) {
+    d.layers.length = 1;
+    const l = t.createLayer('L', W - 40, H - 30, { blend: bl, opacity: 0.8, x: 25, y: 10 }), c = l.canvas.getContext('2d');
+    const g = c.createRadialGradient(100, 65, 5, 100, 65, 100); g.addColorStop(0, 'rgba(250,40,120,1)'); g.addColorStop(0.6, 'rgba(30,200,240,0.7)'); g.addColorStop(1, 'rgba(255,255,0,0)'); c.fillStyle = g; c.fillRect(0, 0, W, H);
+    if (i % 3 === 1) { const m = document.createElement('canvas'); m.width = W - 40; m.height = H - 30; const mc = m.getContext('2d'), mg = mc.createLinearGradient(0, 0, m.width, 0); mg.addColorStop(0, '#000'); mg.addColorStop(1, 'rgba(0,0,0,0)'); mc.fillStyle = mg; mc.fillRect(0, 0, m.width, m.height); l.mask = { canvas: m, enabled: true, rev: 99000 + i }; }
+    d.layers.push(l); t.touch(l); out.push({ what: bl, ...cmp() });
+  }
+  const cur = t.defaultAdjParams('curves'); cur.rgb = [[0, 0], [64, 110], [190, 200], [255, 255]];
+  const adjp = { brightnessContrast: { brightness: 25, contrast: 40 }, hueSaturation: { hue: 40, saturation: 30, lightness: -10 }, exposure: { exposure: 0.7, offset: 0.02, gamma: 1.2 }, levels: { inBlack: 20, gamma: 1.4, inWhite: 230, outBlack: 10, outWhite: 245 }, curves: cur, invert: {}, grayscale: {} };
+  for (const [type, params] of Object.entries(adjp)) {
+    d.layers.length = 1;
+    const m = document.createElement('canvas'); m.width = W; m.height = H; const mc = m.getContext('2d'); mc.fillStyle = '#000'; mc.fillRect(0, 0, W * 0.7, H);
+    const a = t.createLayer(type, 1, 1, { kind: 'adjust', adj: { type, params }, editMask: true, opacity: 0.9 }); a.mask = { canvas: m, enabled: true, rev: 98000 };
+    d.layers.push(a); t.touch(a); out.push({ what: `${type} layer`, ...cmp() });
+    a.blend = 'overlay'; t.touch(a); out.push({ what: `${type} layer (overlay)`, ...cmp() });
+  }
+  return { out, gpuComposites: t.engine.stats.composites - before };
+});
+const worstC = parity.out.reduce((a, b) => (b.max > a.max ? b : a));
+check(parity.gpuComposites >= parity.out.length && parity.out.every((r) => r.max <= 4 && r.mean < 0.5),
+  `GPU vs CPU composite parity: ${parity.out.length} cases (16 blend modes incl. masks, 7 adjustment layers × 2 blends), worst max diff ${worstC.max} (${worstC.what}), mean ≤ ${Math.max(...parity.out.map((r) => r.mean)).toFixed(2)}`);
+
+// --- filter parity (GPU shaders vs CPU / worker) -----------------------------------------------
+const fpar = await page.evaluate(async () => {
+  const t = window.tintwork, W = 200, H = 140, e = t.engine;
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  const g = x.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#102040'); g.addColorStop(0.5, '#e09050'); g.addColorStop(1, '#30f0b0'); x.fillStyle = g; x.fillRect(0, 0, W, H);
+  x.fillStyle = 'rgba(255,255,255,0.8)'; x.fillRect(60, 40, 50, 30); x.clearRect(150, 0, 50, 30);
+  const img = () => x.getImageData(0, 0, W, H), info = { docW: W, docH: H, offX: 0, offY: 0 };
+  const cur = t.defaultAdjParams('curves'); cur.rgb = [[0, 0], [64, 110], [190, 200], [255, 255]];
+  const jobs = { gaussianBlur: { radius: 12 }, sharpen: { amount: 120, radius: 2, threshold: 2 }, vignette: { amount: 50, size: 45, feather: 60 }, hueSaturation: { hue: 30, saturation: 40, lightness: 0 }, curves: cur, levels: { inBlack: 20, gamma: 1.4, inWhite: 230, outBlack: 0, outWhite: 255 }, exposure: { exposure: 0.5, offset: 0, gamma: 1 }, brightnessContrast: { brightness: 20, contrast: 30 }, grayscale: {}, sepia: { amount: 80 }, invert: {}, noise: { amount: 12, monochrome: true, seed: 1234 } };
+  const out = {};
+  for (const [name, p] of Object.entries(jobs)) {
+    t.ops.setAccelerator(e); const a = await t.ops.process(name, img(), p, info, null); const path = t.ops.lastOpPath();
+    t.ops.setAccelerator(null); const b = await t.ops.process(name, img(), p, info, null);
+    let max = 0, sum = 0, ma = 0, mb = 0;
+    for (let i = 0; i < a.data.length; i++) { if (a.data[i | 3] === 0 && b.data[i | 3] === 0) continue; /* colour of fully transparent pixels is undefined */ const dd = Math.abs(a.data[i] - b.data[i]); sum += dd; ma += a.data[i]; mb += b.data[i]; if (dd > max) max = dd; }
+    out[name] = { path, max, mean: sum / a.data.length, meanShift: Math.abs(ma - mb) / a.data.length };
+  }
+  for (const name of ['gaussianBlur', 'curves', 'hueSaturation', 'levels']) {
+    t.ops.setAccelerator(e); const a = await t.ops.processDeep(name, t.deepFromImageData(img()), jobs[name], info, null); const path = t.ops.lastOpPath();
+    t.ops.setAccelerator(null); const b = await t.ops.processDeep(name, t.deepFromImageData(img()), jobs[name], info, null);
+    let max = 0, sum = 0; for (let i = 0; i < a.data.length; i++) { const dd = Math.abs(a.data[i] - b.data[i]) / 257; sum += dd; if (dd > max) max = dd; }
+    out[`16-bit ${name}`] = { path, max: +max.toFixed(2), mean: sum / a.data.length };
+  }
+  t.ops.setAccelerator(e);
+  return out;
+});
+const pointOps = ['vignette', 'hueSaturation', 'curves', 'levels', 'exposure', 'brightnessContrast', 'grayscale', 'sepia', 'invert', '16-bit curves', '16-bit hueSaturation', '16-bit levels'];
+check(Object.values(fpar).every((r) => r.path === 'gpu'), 'all filters ran on the GPU when it is selected');
+const worstP = pointOps.reduce((a, n) => (fpar[n].max > fpar[a].max ? n : a));
+check(pointOps.every((n) => fpar[n].max <= 2), `GPU point ops / HSL / vignette match the CPU within 2 levels (worst ${fpar[worstP].max}, ${worstP})`);
+check(['gaussianBlur', 'sharpen', '16-bit gaussianBlur'].every((n) => fpar[n].mean < 1.5 && fpar[n].max <= 14),
+  `GPU blur/sharpen ≈ CPU (true Gaussian vs 3-box approximation): mean diff ${fpar.gaussianBlur.mean.toFixed(2)} / ${fpar.sharpen.mean.toFixed(2)} / 16-bit ${fpar['16-bit gaussianBlur'].mean.toFixed(2)} levels`);
+check(fpar.noise.meanShift < 1, `GPU noise is statistically equivalent (mean shift ${fpar.noise.meanShift.toFixed(2)})`);
+
+// --- live (smart) filters render on the GPU -------------------------------------------------------
+const live = await page.evaluate(async () => {
+  const t = window.tintwork; t.newDocument(300, 200, 'white', 'live');
+  const l = t.doc.layers[0], c = l.canvas.getContext('2d'); c.fillStyle = '#e04020'; c.fillRect(60, 50, 180, 100); t.touch(l);
+  t.convertToSmart(); const s = t.activeLayer();
+  const ops0 = t.engine.stats.ops;
+  t.setSmartFilters(s, [{ type: 'gaussianBlur', params: { radius: 6 }, enabled: true }, { type: 'hueSaturation', params: { hue: 60, saturation: 0, lightness: 0 }, enabled: true }]);
+  await t.idle(); const gpu = t.compositePixel(64, 100);
+  t.setEnginePref('cpu'); t.setSmartFilters(s, [...s.filters]); await t.idle(); await new Promise((r) => setTimeout(r, 100)); await t.idle();
+  const cpu = t.compositePixel(64, 100); t.setEnginePref('gpu');
+  return { gpuOps: t.engine ? 1 : 0, ops: ops0, gpu, cpu };
+});
+check(live.gpu.every((v, i) => Math.abs(v - live.cpu[i]) <= 8), `live filter stack (blur + hue) renders on the GPU like the CPU (${live.gpu} vs ${live.cpu})`);
+
+// --- 16-bit documents ---------------------------------------------------------------------------------
+const okModal = async () => { await page.waitForTimeout(60); await page.click('#modalOk'); await idle(); await page.waitForTimeout(60); await idle(); };
+const band = {};
+for (const depth of [8, 16]) {
+  await page.evaluate(() => {
+    const t = window.tintwork, W = 1024, H = 200; t.newDocument(W, H, 'white', 'banding');
+    const c = t.activeLayer().canvas.getContext('2d'), g = c.createLinearGradient(0, 0, W, 0); g.addColorStop(0, '#000'); g.addColorStop(1, '#fff'); c.fillStyle = g; c.fillRect(0, 0, W, H); t.touch(t.activeLayer()); t.commit('gradient'); t.fitToScreen();
+  });
+  if (depth === 16) await menuCmd('mode16');
+  await page.evaluate(() => window.tintwork.openAdjust(window.tintwork.ADJ.levels, { outBlack: 100, outWhite: 140 })); await okModal();
+  await page.evaluate(() => window.tintwork.openAdjust(window.tintwork.ADJ.levels, { inBlack: 100, inWhite: 140 })); await okModal();
+  band[depth] = await page.evaluate(() => { const t = window.tintwork, px = t.activeLayer().canvas.getContext('2d').getImageData(0, 10, 1024, 1).data, s = new Set(); for (let i = 0; i < px.length; i += 4) s.add(px[i]); return { levels: s.size, depth: t.doc.depth || 8, info: document.querySelector('#docinfo').textContent }; });
+  await page.screenshot({ path: path.join(shots, `4x-banding-${depth}bit.png`) });
+}
+check(band[16].depth === 16 && /16-bit/.test(band[16].info), `Image ▸ Mode ▸ 16 bits/channel switches the document (${band[16].info})`);
+check(band[8].levels <= 45 && band[16].levels >= 150, `levels squeeze + stretch: ${band[8].levels} grey levels survive in 8-bit vs ${band[16].levels} in 16-bit`);
+const undo16 = await page.evaluate(() => { const t = window.tintwork; t.undo(); const l = t.activeLayer(), ok = !!l.deep && l.deepRev === l.rev; t.redo(); return ok; });
+check(undo16, 'undo/redo keeps 16-bit layer data in step');
+// 16-bit PNG export round trip
+const rt16 = await page.evaluate(async () => {
+  const t = window.tintwork, blob = await t.renderExport('image/png16'), buf = new Uint8Array(await blob.arrayBuffer()), info = t.pngInfo(buf), dec = t.decodePNG(buf), dd = t.activeLayer().deep;
+  let max = 0; for (let i = 0; i < dd.data.length; i++) max = Math.max(max, Math.abs(dd.data[i] - dec.data[i]));
+  const b8 = await t.renderExport('image/png'), d8 = t.decodePNG(new Uint8Array(await b8.arrayBuffer())); let err = 0; for (let i = 0; i < dd.data.length; i += 4) err += Math.abs(d8.data[i] / 257 - dd.data[i] / 257);
+  return { depth: info.bitDepth, max, dither: err / (dd.data.length / 4) };
+});
+check(rt16.depth === 16 && rt16.max === 0, `PNG 16-bit export decodes back bit-exact (bit depth ${rt16.depth}, max diff ${rt16.max})`);
+check(rt16.dither < 0.6, `8-bit export of a 16-bit document is dithered (mean error ${rt16.dither.toFixed(3)} levels)`);
+// project v5 round trip
+const prj = await page.evaluate(async () => {
+  const t = window.tintwork, before = t.activeLayer().deep, data = t.serializeProject();
+  await t.openFile(new File([JSON.stringify(data)], 'deep.tintwork.json', { type: 'application/json' }), 'open');
+  const after = t.activeLayer().deep; let max = after ? 0 : 1e9; if (after) for (let i = 0; i < after.data.length; i++) max = Math.max(max, Math.abs(after.data[i] - before.data[i]));
+  return { v: data.version, depth: t.doc.depth, max };
+});
+check(prj.v === 5 && prj.depth === 16 && prj.max === 0, `project v5 keeps 16-bit layer data (max diff ${prj.max})`);
+// open a 16-bit PNG
+await page.setInputFiles('#fileInput', g16);
+await page.waitForFunction(() => window.tintwork.doc?.name === 'gradient16.png'); await idle();
+const op16 = await page.evaluate(() => { const t = window.tintwork, d = t.activeLayer().deep, s = new Set(); for (let x = 0; x < 1024; x++) s.add(d.data[(10 * 1024 + x) * 4]); return { depth: t.doc.depth, distinct: s.size }; });
+check(op16.depth === 16 && op16.distinct > 900, `opening a 16-bit PNG keeps 16 bits (${op16.distinct} distinct red values in a row vs ≤ 41 in 8-bit)`);
+// merge down / flatten / bake keep 16 bits
+const merged = await page.evaluate(async () => {
+  const t = window.tintwork, d = t.doc;
+  const top = t.createLayer('top', d.width, d.height, { opacity: 0.5, blend: 'multiply' }); const c = top.canvas.getContext('2d'); c.fillStyle = '#808080'; c.fillRect(0, 0, d.width, d.height);
+  d.layers.push(top); d.activeId = top.id; t.touch(top); t.commit('top');
+  t.mergeDown(); const l = t.activeLayer(); const s = new Set(); for (let x = 0; x < 1024; x++) s.add(l.deep.data[(10 * 1024 + x) * 4]);
+  return { layers: d.layers.length, distinct: s.size };
+});
+check(merged.layers === 1 && merged.distinct > 900, `merge down in a 16-bit document keeps 16-bit precision (${merged.distinct} distinct values)`);
+await page.screenshot({ path: path.join(shots, '4x-16bit-png-open.png') });
+
+// --- engine dialog + fallbacks ---------------------------------------------------------------------
+await menuCmd('engine'); await page.waitForTimeout(150);
+check(await page.locator('#modalTitle').textContent() === 'Rendering engine' && /Active: GPU/.test(await page.locator('#engInfo').textContent()), 'View ▸ Rendering engine… shows the active GPU, its limits and the memory budget');
+await page.screenshot({ path: path.join(shots, '4x-engine-dialog.png') });
+await page.check('input[name=engine][value=cpu]'); await page.click('#modalOk');
+const cpuMode = await page.evaluate(async () => { const t = window.tintwork; t.composite(); const info = document.querySelector('#docinfo').textContent; const img = new ImageData(64, 64); await t.ops.process('gaussianBlur', img, { radius: 4 }, { docW: 64, docH: 64, offX: 0, offY: 0 }); return { engine: !!t.engine, path: t.ops.lastOpPath(), info, pref: localStorage.getItem('tintwork.engine') }; });
+check(!cpuMode.engine && cpuMode.path === 'cpu' && /CPU/.test(cpuMode.info) && cpuMode.pref === 'cpu', `forcing the CPU engine uses the Canvas 2D / worker path (${cpuMode.info})`);
+// GPU memory budget exceeded → CPU composite with a notice
+const mem = await page.evaluate(async () => {
+  const t = window.tintwork; t.setEnginePref('gpu'); t.newDocument(2000, 1500, 'white', 'budget'); t.engine.setBudget(8);
+  const c = document.createElement('canvas'); t.composite(c); const px = c.getContext('2d').getImageData(5, 5, 1, 1).data;
+  const msg = document.querySelector('#toast')?.textContent || ''; t.engine.setBudget(1536); return { msg, px: [...px] };
+});
+check(/memory|budget/i.test(mem.msg) && mem.px[0] === 255, `over the GPU memory budget the canvas is composited on the CPU with a notice ("${mem.msg.slice(0, 80)}…")`);
+// a browser without WebGL2 → automatic CPU fallback
+const noGl = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+noGl.on('pageerror', (e) => errors.push(`pageerror (no WebGL2): ${e.message}`));
+await noGl.addInitScript(() => { const orig = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function (type, ...a) { return type === 'webgl2' ? null : orig.call(this, type, ...a); }; localStorage.setItem('tintwork.engine', 'gpu'); });
+await noGl.goto(url); await noGl.waitForFunction(() => !!window.tintwork);
+const ng = await noGl.evaluate(async () => {
+  const t = window.tintwork; t.newDocument(200, 100, 'white', 'nogl'); t.setDepth(16);
+  t.openAdjust(t.ADJ.levels, { outWhite: 200 }); await new Promise((r) => setTimeout(r, 80)); document.querySelector('#modalOk').click(); await t.idle();
+  return { engine: !!t.engine, reason: t.gfx.reason, toast: document.querySelector('#toast')?.textContent || '', px: t.compositePixel(10, 10), path: t.ops.lastOpPath() };
+});
+check(!ng.engine && /WebGL2/i.test(ng.reason) && ng.px[0] > 195 && ng.px[0] < 205 && ng.path === 'cpu', `without WebGL2 the app falls back to the CPU engine and still edits 16-bit (${ng.reason}; pixel ${ng.px[0]})`);
+await noGl.close();
+// leave the main page in automatic mode for later runs
+await page.evaluate(() => window.tintwork.setEnginePref('auto'));
+// blend-mode showcase screenshot on the GPU
+await page.evaluate(async () => {
+  const t = window.tintwork; t.setEnginePref('gpu'); t.newDocument(960, 540, 'white', 'GPU blend modes'); const d = t.doc, b = d.layers[0].canvas.getContext('2d');
+  const g = b.createLinearGradient(0, 0, 960, 540); g.addColorStop(0, '#1d2b53'); g.addColorStop(0.5, '#7e2553'); g.addColorStop(1, '#ffa300'); b.fillStyle = g; b.fillRect(0, 0, 960, 540); t.touch(d.layers[0]);
+  const names = ['multiply', 'screen', 'overlay', 'soft-light', 'difference', 'color', 'luminosity', 'color-dodge'];
+  names.forEach((bl, i) => { const l = t.createLayer(bl, 200, 200, { blend: bl, x: 30 + (i % 4) * 230, y: 40 + Math.floor(i / 4) * 250 }); const c = l.canvas.getContext('2d'); const r = c.createRadialGradient(100, 100, 10, 100, 100, 100); r.addColorStop(0, '#29adff'); r.addColorStop(1, 'rgba(0,228,54,0)'); c.fillStyle = r; c.fillRect(0, 0, 200, 200); d.layers.push(l); t.touch(l); });
+  t.commit('blend modes'); t.fitToScreen(); t.updateLayersPanel();
+});
+await page.waitForTimeout(200);
+await page.screenshot({ path: path.join(shots, '4x-gpu-blend-modes.png') });
+await page.evaluate(() => window.tintwork.setEnginePref('auto'));
+} // end v0.5 section
 await browser.close();
 server.close();
 if (errors.length) { console.error(`\n${errors.length} problem(s):\n` + errors.join('\n')); process.exit(1); }

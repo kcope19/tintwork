@@ -266,3 +266,7 @@ input[type=text], input[type=number], textarea { -webkit-user-select: text; user
   #optionsbar .xf-num { width: 56px; font-size: 16px; } /* 16px avoids iOS zoom-on-focus */
   .slot-row button { min-height: 38px; }
 }
+
+/* v0.5 rendering engine dialog */
+.dialog .radio-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+.dialog #engInfo { font-size: 12px; line-height: 1.5; word-break: break-word; }
