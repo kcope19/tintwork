@@ -121,6 +121,17 @@ export function deepRef(d) {
   return { id, encode };
 }
 export const isDeepId = (id) => id.startsWith('D-');
+/** Original camera RAW file of a re-developable layer (a Blob, stored as its bytes); ids start with 'R-'. */
+export function rawRef(blob) {
+  let id = ids.get(blob);
+  if (!id) { id = `R-${SESSION}-${++seq}`; ids.set(blob, id); }
+  const encode = () => {
+    if (!encoded.has(blob)) { const p = blob.arrayBuffer(); p.catch(() => encoded.delete(blob)); encoded.set(blob, p); }
+    return encoded.get(blob);
+  };
+  return { id, encode };
+}
+export const isRawId = (id) => id.startsWith('R-');
 /** Adopt decoded canvases under their stored ids so a recovered session does not re-encode them. */
 export function adoptImage(canvas, id) { ids.set(canvas, id); }
 /** PNG bytes (or a Blob from older records) -> ImageBitmap */

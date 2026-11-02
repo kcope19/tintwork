@@ -3,7 +3,7 @@ import { floodMask, similarMask, histogram, runOp, channelHistograms, colorRange
 import * as auto from './auto.js';
 import { LOOKS, lookToLayers, normalizeLook } from './looks.js';
 import { createCurvesEditor, identityCurves } from './curves-editor.js';
-import { readAutosave, writeAutosave, clearAutosave, markAutosaveClean, listAutosaves, readImages, imageRef, deepRef, isDeepId, adoptImage, decodeImage, MAX_SLOTS } from './autosave.js';
+import { readAutosave, writeAutosave, clearAutosave, markAutosaveClean, listAutosaves, readImages, imageRef, deepRef, isDeepId, rawRef, isRawId, adoptImage, decodeImage, MAX_SLOTS } from './autosave.js';
 import { makeSelection, shapeMask, rectMask, combine, invertSelection, selectionCanvas, selectionOutline, maskRegion, translateSelection } from './selection.js';
 import * as ops from './ops.js';
 import { ICONS } from './icons.js';
@@ -20,10 +20,10 @@ import { formatName, variantSize, uniqueNamer, zipFiles } from './batch.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
 import { isRawName, isPsdName, isPsdBytes, readPSDAsync, writePSDAsync, openRawSession, setDevelopEnv, RAW_EXTS, PSD_EXTS } from './codecs.js';
 import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEYS } from './psd.js';
-import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity } from './raw.js';
+import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -318,6 +318,7 @@ function snapshot() {
         kind: l.kind, adj: l.adj, text: l.text, // treated as immutable: edits replace the object
         parent: l.parent ?? null, clip: !!l.clip, styles: l.styles || null, collapsed: !!l.collapsed, look: l.look || null, // styles are immutable too
         ...(l.deep ? { deep: l.deep, deepRev: l.deepRev, deepOX: l.deepOX || 0, deepOY: l.deepOY || 0 } : {}), // 16-bit data is immutable too
+        raw: l.raw || null, // RAW source + develop settings (immutable: re-develop and crop replace the object)
         mask: l.mask ? { enabled: l.mask.enabled, rev: l.mask.rev, canvas: oldMask ? oldMask.canvas : cloneCanvas(l.mask.canvas) } : null,
         ...(l.kind === 'smart' ? { // live filters: the source canvas and the filter list are immutable, so they are shared
           source: l.source, filters: l.filters, editFMask: l.editFMask,
@@ -1109,7 +1110,8 @@ function editLayer(l = activeLayer()) {
   else if (isGroup(l)) openStylesDialog(l);
   else if (l.kind === 'text') openTextDialog(null, l);
   else if (l.kind === 'smart') openLiveFilterPanel(l);
-  else status('Only adjustment, text and live filter layers have settings to edit.');
+  else if (l.raw) redevelopRaw(l);
+  else status('Only adjustment, text, live filter and RAW layers have settings to edit.');
 }
 
 // --- live filter layers: the original pixels are kept and the filter stack re-runs on change -----
@@ -2961,7 +2963,7 @@ $('#layerList').addEventListener('contextmenu', (e) => {
     ['Duplicate layer', 'layerDuplicate'], ['Delete layer', 'layerDelete', d.layers.length < 2], ['Merge down', 'layerMergeDown', idx === 0], '-',
     [l.visible ? 'Hide layer' : 'Show layer', () => { l.visible = !l.visible; compDirty = true; requestRender(); commit(l.visible ? 'Show layer' : 'Hide layer'); }],
     ['Rename…', () => renameLayer(l)],
-    ...(l.kind ? [['Edit layer settings…', 'editLayer'], ['Convert to pixels', 'rasterizeLayer']] : [['Convert to live layer', 'convertSmart']]), '-',
+    ...(l.kind ? [['Edit layer settings…', 'editLayer'], ['Convert to pixels', 'rasterizeLayer']] : [...(l.raw ? [['Re-develop RAW…', 'redevelopRaw']] : []), ['Convert to live layer', 'convertSmart']]), '-',
     ...(l.mask ? [['Enable / disable mask', 'toggleMask'], ['Invert mask', 'invertMask'], ['Apply mask', 'applyMask'], ['Delete mask', 'deleteMask']]
       : [['Add layer mask', 'addMask'], ['Add mask from selection', 'addMaskFromSelection', !d.selection]]), '-',
     ['Select layer pixels', 'selectLayerPixels'], ['Move up', 'layerUp', idx === d.layers.length - 1], ['Move down', 'layerDown', idx === 0], ['Flatten image', 'flatten'],
@@ -3174,6 +3176,7 @@ const cmds = {
   paste: needDoc(() => pasteInternal()),
   layerNew: needDoc(() => addLayer(createLayer(`Layer ${nextLayerId}`, doc().width, doc().height), 'New layer')),
   layerDuplicate: needDoc(() => duplicateActive()),
+  redevelopRaw: needDoc(() => redevelopRaw()),
   layerDelete: needDoc(() => deleteActive()),
   layerUp: needDoc(() => layerStep(1)),
   layerDown: needDoc(() => layerStep(-1)),
@@ -3305,7 +3308,7 @@ const MENUS = [
     ['New adjustment layer: Brightness / contrast…', 'adjLayer_brightnessContrast'], ['New adjustment layer: Hue / saturation…', 'adjLayer_hueSaturation'],
     ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: White balance…', 'adjLayer_whiteBalance'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
     ['New adjustment layer: 3D LUT from .cube file…', 'lutImport'],
-    ['Edit layer settings…', 'editLayer'], ['Convert to live layer (editable filters)', 'convertSmart'], ['Convert text / live layer to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Duplicate to document…', 'layerToDoc'], ['Delete layer', 'layerDelete'], '-',
+    ['Edit layer settings…', 'editLayer'], ['Re-develop RAW…', 'redevelopRaw'], ['Convert to live layer (editable filters)', 'convertSmart'], ['Convert text / live layer to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Duplicate to document…', 'layerToDoc'], ['Delete layer', 'layerDelete'], '-',
     ['Move up', 'layerUp', 'Ctrl+]'], ['Move down', 'layerDown', 'Ctrl+['], ['Merge down / merge group', 'layerMergeDown', 'Ctrl+E'], '-',
     ['New group', 'groupNew'], ['Group layer', 'groupLayers', 'Ctrl+G'], ['Ungroup', 'ungroup', 'Ctrl+Shift+G'], ['Create / release clipping mask', 'clipToggle', 'Ctrl+Alt+G'], '-',
     ['Align left edges', 'alignLeft'], ['Align horizontal centers', 'alignHCenter'], ['Align right edges', 'alignRight'],
@@ -3711,7 +3714,10 @@ function cropTo(r, label = null) {
     if (!noPix) c.getContext('2d').drawImage(l.canvas, l.x - r.x, l.y - r.y);
     if (l.mask) { const m = makeCanvas(r.w, r.h); m.getContext('2d').drawImage(l.mask.canvas, l.x - r.x, l.y - r.y); l.mask.canvas = m; touchMask(l); }
     if (l.deep && l.kind !== 'adjust') { l.deepOX = (l.deepOX || 0) + l.x - r.x; l.deepOY = (l.deepOY || 0) + l.y - r.y; }
+    const sameRaw = l.raw && l.raw.rev === l.rev; // a crop keeps the layer re-developable: track the crop window instead
+    if (l.raw) l.raw = { ...l.raw, cx: l.raw.cx + r.x - l.x, cy: l.raw.cy + r.y - l.y, cw: r.w, ch: r.h };
     l.canvas = c; l.x = 0; l.y = 0; touch(l);
+    if (sameRaw) l.raw.rev = l.rev;
   }
   d.width = r.w; d.height = r.h; d.selection = null; state.crop = null;
   compDirty = true; fitToScreen(); buildOptionsBar(); commit(label ? `${label} (crop ${r.w}×${r.h})` : `Crop ${r.w}×${r.h}`);
@@ -4500,6 +4506,7 @@ async function openRAW(file, interactive = true, rawSettings = null) {
       return;
     }
     if (!interactive) { await developToDocument(file, sess, settings, timing, t0); return; }
+    status(`${file.name} decoded in ${(sess.decodeMs / 1000).toFixed(2)} s`);
     await rawDialog(file, sess, timing, t0);
   } finally { sess.close(); }
 }
@@ -4551,6 +4558,7 @@ async function developToDocument(file, sess, settings, timing, t0, { overlayFrom
     const l = createLayer('Background', r.width, r.height);
     ctxOf(l.canvas).putImageData(new ImageData(r.data8, r.width, r.height), 0, 0); touch(l);
     l.deep = createDeep(r.width, r.height, r.data16); l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0;
+    l.raw = rawSource(file, sess.info.format, settings, r.width, r.height, l.rev);
     state.doc = { width: r.width, height: r.height, layers: [l], activeId: l.id, selection: null, name: file.name, depth: 16, raw: { format: sess.info.format, settings: { ...settings } } };
     afterDocChange('Open RAW');
     if (remember) try { localStorage.setItem(RAW_LAST_KEY, JSON.stringify(settings)); } catch { /* private mode */ } // batch runs leave "last used" alone
@@ -4562,6 +4570,60 @@ async function developToDocument(file, sess, settings, timing, t0, { overlayFrom
     if (r.scaled) toast(`Developed at ${r.width}×${r.height} to stay within this device's memory.`, 6000);
     status(`Opened ${file.name} (${sess.info.format}, ${r.width}×${r.height}, 16 bits/channel) in ${(timing.total / 1000).toFixed(1)} s`);
   } finally { ov?.remove(); }
+}
+/**
+ * RAW source of a developed layer: the original file (a Blob, so it costs no memory for files from disk), the develop
+ * settings, and the crop window into the developed frame (cx, cy, cw × ch). `rev` is the layer revision the pixels
+ * match: when the layer is painted or transformed afterwards, re-developing asks before replacing those edits.
+ */
+function rawSource(file, format, settings, width, height, rev) {
+  return { file, name: file.name, size: file.size, type: file.type || '', format, settings: cleanRawSettings(settings), width, height, cx: 0, cy: 0, cw: width, ch: height, rev };
+}
+/** Layer ▸ Re-develop RAW… (or double-click a RAW layer): reopen the develop dialog with the layer's settings. */
+async function redevelopRaw(l = activeLayer()) {
+  if (!l?.raw) { status('This layer was not developed from a RAW file in Tintwork, so it has no RAW settings to re-open.'); return; }
+  const raw = l.raw, id = l.id, d = doc();
+  if (l.canvas.width !== raw.cw || l.canvas.height !== raw.ch) {
+    toast(`This layer was resized or rotated after developing, so it cannot be re-developed in place. Open ${raw.name} again to develop it as a new image.`, 7000); return;
+  }
+  if (l.rev !== raw.rev && !(await confirmAsync('This layer was edited after it was developed (painting, filters or other pixel changes). Re-developing replaces those edits with a fresh develop of the RAW file. Continue?', 'Re-develop'))) return;
+  const t0 = performance.now(); status(`Decoding ${raw.name}…`);
+  let sess;
+  try { sess = await openRawSession(new Uint8Array(await raw.file.arrayBuffer()), raw.settings); }
+  catch (err) { toast(`${raw.name} could not be read again (${err.message}).`, 7000); return; }
+  try {
+    if (!sess.decoded) { toast(`${raw.name} cannot be decoded here (${sess.reason}).`, 7000); return; }
+    const timing = { decode: sess.decodeMs, kind: 'raw-redevelop', format: sess.info.format };
+    status(`${raw.name} decoded in ${(sess.decodeMs / 1000).toFixed(2)} s`);
+    await rawDialog({ name: raw.name }, sess, timing, t0, {
+      initial: raw.settings, title: `Re-develop ${raw.name}`, okLabel: 'Apply',
+      onApply: async (settings) => {
+        if (doc() !== d) { toast('The document changed tabs; re-develop cancelled.'); return; }
+        await applyRedevelop(id, sess, settings, timing, t0);
+      },
+    });
+  } finally { sess.close(); }
+}
+async function applyRedevelop(id, sess, settings, timing, t0) {
+  const d = doc(), l = d.layers.find((x) => x.id === id); if (!l?.raw) return;
+  const raw = l.raw, maxPixels = Math.min(MAX_PIXELS, Math.floor((DEEP_LIMIT_MB * 1048576) / 2 / 8));
+  setBusy(1); status(`Re-developing ${raw.name}…`);
+  try {
+    const tDev = performance.now(), r = await sess.develop(settings, maxPixels, null);
+    if (r.width !== raw.width || r.height !== raw.height) throw new Error(`the develop came out at ${r.width}×${r.height} instead of ${raw.width}×${raw.height}`);
+    const c = makeCanvas(raw.cw, raw.ch);
+    c.getContext('2d').putImageData(new ImageData(r.data8, r.width, r.height), -raw.cx, -raw.cy); // the crop window
+    l.canvas = c; touch(l);
+    if (d.depth === 16) { l.deep = createDeep(r.width, r.height, r.data16); l.deepRev = l.rev; l.deepOX = -raw.cx; l.deepOY = -raw.cy; }
+    else { l.deep = null; }
+    l.raw = { ...raw, settings: cleanRawSettings(settings), rev: l.rev };
+    if (d.raw) d.raw = { ...d.raw, settings: { ...l.raw.settings } };
+    compDirty = true; requestRender(); commit('Re-develop RAW');
+    const now = performance.now();
+    lastImport = { ...timing, develop: Math.round(now - tDev), total: Math.round(now - t0), workers: r.workers, bands: r.bands, width: r.width, height: r.height, notes: [] };
+    status(`Re-developed ${raw.name} (${raw.cw}×${raw.ch}${raw.cw !== raw.width || raw.ch !== raw.height ? `, crop of ${raw.width}×${raw.height}` : ''}) in ${((now - tDev) / 1000).toFixed(1)} s`);
+  } catch (err) { reportError(`${raw.name} could not be re-developed`, err); }
+  finally { setBusy(-1); }
 }
 const TEMP_MIN = 2000, TEMP_MAX = 50000;
 const tempToPos = (T) => Math.round(((500 - 1e6 / Math.min(TEMP_MAX, Math.max(TEMP_MIN, T))) / 480) * 1000); // mired scale: even steps for the eye
@@ -4582,6 +4644,21 @@ function deleteRawPreset(name) {
   const list = rawPresets().filter((p) => p.name !== name);
   try { localStorage.setItem(RAW_PRESETS_KEY, JSON.stringify(list)); } catch { /* private mode */ }
 }
+/** Merge presets (from a file) into the saved list; same names (case-insensitive) are replaced. Returns the count. */
+function importRawPresets(list) {
+  const keep = rawPresets().filter((p) => !list.some((q) => q.name.toLowerCase() === p.name.toLowerCase()));
+  const all = [...keep, ...list.map((p) => ({ name: p.name, settings: cleanRawSettings(p.settings) }))].sort((a, b) => a.name.localeCompare(b.name));
+  localStorage.setItem(RAW_PRESETS_KEY, JSON.stringify(all));
+  return list.length;
+}
+function exportRawPresets(only = null) {
+  const list = only ? rawPresets().filter((p) => p.name === only) : rawPresets();
+  if (!list.length) { toast('There are no saved presets to export yet. Save one first.'); return false; }
+  const name = only ? `${only.replace(/[\\/:*?"<>|]+/g, '_')}.json` : 'tintwork-develop-presets.json';
+  download(new Blob([JSON.stringify(rawPresetFile(list), null, 2)], { type: 'application/json' }), name);
+  status(`Exported ${list.length} develop preset${list.length === 1 ? '' : 's'} to ${name}`);
+  return true;
+}
 const hasRawLast = () => { try { return !!localStorage.getItem(RAW_LAST_KEY); } catch { return false; } };
 /** Settings for a batch / preset choice: 'last', 'default' or 'preset:<name>'. */
 function rawSettingsFor(choice) {
@@ -4590,19 +4667,27 @@ function rawSettingsFor(choice) {
   return rawLastSettings();
 }
 const rawPresetOptions = (withNone) => `${withNone ? '<option value="">Choose…</option>' : ''}${hasRawLast() ? '<option value="last">Last used settings</option>' : ''}<option value="default">Default settings</option>${rawPresets().map((p) => `<option value="preset:${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('')}`;
-function rawDialog(file, sess, timing, t0) {
+/**
+ * RAW develop dialog. opt (re-develop): { initial: settings to start from (also the "before" view), title, okLabel,
+ * onApply(settings) } — without opt, Open develops the file into a new document.
+ */
+function rawDialog(file, sess, timing, t0, opt = {}) {
   return new Promise((resolve) => {
-    const info = sess.info, s = { ...RAW_DEFAULTS, temp: info.asShot.temp, tint: info.asShot.tint };
+    const info = sess.info, s = opt.initial ? { ...cleanRawSettings(opt.initial) } : { ...RAW_DEFAULTS, temp: info.asShot.temp, tint: info.asShot.tint };
+    const beforeSettings = opt.initial ? { ...s } : { ...RAW_DEFAULTS };
     const body = document.createElement('div'); body.className = 'raw-dev';
     const slider = (key, label, min, max, step, val, title = '') =>
       `<label class="field"${title ? ` title="${escapeHtml(title)}"` : ''}><span>${label}</span><input type="range" data-k="${key}" min="${min}" max="${max}" step="${step}" value="${val}" aria-label="${label}" /><output data-o="${key}">${fmtK(key, val)}</output></label>`;
     const fmtK = (k, v) => (k === 'exposure' ? `${v > 0 ? '+' : ''}${(+v).toFixed(2)}` : k === 'sharpRadius' ? (+v).toFixed(1) : v);
-    body.innerHTML = `<div class="raw-view"><div class="raw-canvas-wrap"><canvas id="rawCanvas" aria-label="Develop preview"></canvas><span class="raw-ba hidden" id="rawBaTag">Before</span></div>
-        <div class="raw-viewbar"><span class="raw-meta muted small">${escapeHtml(info.describe || info.format)}</span><span class="spacer"></span><button type="button" id="rawBefore" aria-pressed="false" title="Show the image with the default settings (\\ key)">Before / after</button></div></div>
+    const beforeWhat = opt.initial ? 'the settings it was developed with' : 'the default settings';
+    body.innerHTML = `<div class="raw-view"><div class="raw-canvas-wrap" id="rawWrap"><canvas id="rawCanvas" aria-label="Develop preview"></canvas><span class="raw-ba hidden" id="rawBaTag">Before</span><span class="raw-ba raw-ba-r hidden" id="rawAfterTag">After</span>
+          <div class="raw-split hidden" id="rawSplit" role="slider" tabindex="0" aria-label="Before / after divider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" title="Drag to compare before (left) and after (right)"><span class="raw-split-grip"></span></div></div>
+        <div class="raw-viewbar"><span class="raw-meta muted small">${escapeHtml(info.describe || info.format)}</span><span class="spacer"></span><button type="button" id="rawSplitBtn" aria-pressed="false" title="Split view: before on the left, after on the right; drag the divider (Y key)">Split</button><button type="button" id="rawBefore" aria-pressed="false" title="Show the image with ${beforeWhat} (\\ key)">Before / after</button></div></div>
       <div class="raw-controls">
         <div class="raw-sec">Presets</div>
         <label class="field two"><span>Apply</span><select id="rawPreset" aria-label="Apply develop preset">${rawPresetOptions(true)}</select></label>
         <div class="raw-preset-save"><input type="text" id="rawPresetName" placeholder="Preset name" aria-label="Preset name" maxlength="60" /><button type="button" id="rawPresetSave">Save preset</button><button type="button" id="rawPresetDel" title="Delete the chosen preset" disabled>Delete</button></div>
+        <div class="raw-preset-save"><button type="button" id="rawPresetExport" title="Save your presets to a .json file to back them up or use them on another computer">Export presets…</button><button type="button" id="rawPresetImport" title="Add presets from a .json file (presets with the same name are replaced)">Import presets…</button><input type="file" id="rawPresetFile" accept=".json,application/json" class="hidden" /></div>
         <div class="raw-sec">White balance</div>
         <label class="field two"><span>Preset</span><select id="rawWb"><option value="as-shot">As shot</option><option value="auto">Auto</option><option value="custom">Custom</option></select></label>
         <label class="field"><span>Temperature</span><input type="range" id="rawTempR" min="0" max="1000" step="1" value="${tempToPos(s.temp)}" aria-label="Temperature" /><input type="number" id="rawTemp" min="${TEMP_MIN}" max="${TEMP_MAX}" step="50" value="${s.temp}" aria-label="Temperature in kelvin" /></label>
@@ -4630,17 +4715,54 @@ function rawDialog(file, sess, timing, t0) {
         <label class="field two"><span>Color fringes</span><span><input type="checkbox" id="rawCaAuto" /> <span class="muted small">Remove chromatic aberration (automatic)</span> <span class="muted small" id="rawCaEst"></span></span></label>
         ${slider('caRed', 'Red / cyan', -100, 100, 1, s.caRed, 'Scales the red channel against green: removes red or cyan edges toward the corners')}
         ${slider('caBlue', 'Blue / yellow', -100, 100, 1, s.caBlue, 'Scales the blue channel against green: removes blue or yellow edges toward the corners')}
+        <div class="raw-sec">Defringe</div>
+        ${slider('fringePurple', 'Purple amount', 0, 100, 1, s.fringePurple, 'Removes purple or magenta fringes along high-contrast edges (axial chromatic aberration), anywhere in the frame')}
+        ${slider('fringePurpleLo', 'Purple hue from', 200, 340, 1, s.fringePurpleLo, 'Hue range treated as purple fringe, in degrees')}
+        ${slider('fringePurpleHi', 'Purple hue to', 200, 340, 1, s.fringePurpleHi, 'Hue range treated as purple fringe, in degrees')}
+        ${slider('fringeGreen', 'Green amount', 0, 100, 1, s.fringeGreen, 'Removes green fringes along high-contrast edges (often behind the focus plane)')}
+        ${slider('fringeGreenLo', 'Green hue from', 40, 190, 1, s.fringeGreenLo, 'Hue range treated as green fringe, in degrees')}
+        ${slider('fringeGreenHi', 'Green hue to', 40, 190, 1, s.fringeGreenHi, 'Hue range treated as green fringe, in degrees')}
         <p class="muted small" id="rawOut">Opens as ${info.width} × ${info.height} px, 16 bits/channel.${info.knownCamera ? '' : ' Camera colour data unknown: colours are approximate.'}${info.incomplete ? ' Some sensor data was missing and is shown black.' : ''}</p>
-        <div class="raw-buttons"><button type="button" id="rawReset">Reset</button>${info.jpeg ? `<button type="button" id="rawJpeg" title="Open the camera's own ${info.jpeg.width}×${info.jpeg.height} JPEG rendering instead (8-bit)">Use camera JPEG</button>` : ''}<span class="muted small" id="rawMs"></span></div>
+        <div class="raw-buttons"><button type="button" id="rawReset">Reset</button>${info.jpeg && !opt.onApply ? `<button type="button" id="rawJpeg" title="Open the camera's own ${info.jpeg.width}×${info.jpeg.height} JPEG rendering instead (8-bit)">Use camera JPEG</button>` : ''}<span class="muted small" id="rawMs"></span></div>
       </div>`;
     const cv = body.querySelector('#rawCanvas'), $q = (sel) => body.querySelector(sel);
-    let last = null, before = null, showBefore = false;
-    const paint = (p) => {
-      if (cv.width !== p.width || cv.height !== p.height) { cv.width = p.width; cv.height = p.height; }
-      cv.getContext('2d').putImageData(new ImageData(p.data, p.width, p.height), 0, 0);
+    // view: 'after' (current settings), 'before' (beforeSettings) or 'split' (before left of the divider, after right)
+    let last = null, before = null, view = 'after', splitF = 0.5, lastImg = null, beforeImg = null;
+    const imgOf = (p) => new ImageData(p.data, p.width, p.height);
+    const paintImg = (img) => {
+      if (cv.width !== img.width || cv.height !== img.height) { cv.width = img.width; cv.height = img.height; }
+      cv.getContext('2d').putImageData(img, 0, 0);
+    };
+    const paint = (p) => paintImg(imgOf(p));
+    const wrap = $q('#rawWrap'), divider = $q('#rawSplit');
+    const contentRect = () => { // the canvas uses object-fit: contain
+      const W = cv.clientWidth, H = cv.clientHeight, k = Math.min(W / (cv.width || 1), H / (cv.height || 1));
+      const w = cv.width * k, h = cv.height * k; return { x: cv.offsetLeft + (W - w) / 2, y: cv.offsetTop + (H - h) / 2, w, h };
+    };
+    const placeDivider = () => {
+      const on = view === 'split'; divider.classList.toggle('hidden', !on); $q('#rawAfterTag').classList.toggle('hidden', !on);
+      $q('#rawBaTag').classList.toggle('hidden', view === 'after');
+      if (!on) return;
+      const r = contentRect(); divider.style.left = `${r.x + r.w * splitF}px`; divider.style.top = `${r.y}px`; divider.style.height = `${r.h}px`;
+      divider.setAttribute('aria-valuenow', String(Math.round(splitF * 100)));
+    };
+    const compose = () => { // synchronous: used while dragging
+      if (view === 'after' || !beforeImg) { if (lastImg) paintImg(lastImg); }
+      else if (view === 'before') paintImg(beforeImg);
+      else if (lastImg) {
+        paintImg(lastImg);
+        if (beforeImg.width === lastImg.width && beforeImg.height === lastImg.height) {
+          const sx = Math.round(splitF * lastImg.width); if (sx > 0) cv.getContext('2d').putImageData(beforeImg, 0, 0, 0, 0, sx, lastImg.height);
+        }
+      }
+      placeDivider();
+    };
+    const render = async () => {
+      if (view !== 'after' && !beforeImg) { if (!before) before = sess.preview({ ...beforeSettings }); const b = await before; if (done) return; beforeImg = imgOf(b); }
+      compose();
     };
     const draw = (p) => {
-      last = p; if (!showBefore) paint(p);
+      last = p; lastImg = imgOf(p); render();
       if (s.wb !== 'custom') { s.temp = p.temp; s.tint = p.tint; $q('#rawTemp').value = p.temp; $q('#rawTempR').value = tempToPos(p.temp); $q('[data-k=tint]').value = p.tint; $q('[data-o=tint]').textContent = p.tint; }
       $q('#rawCaEst').textContent = s.caAuto && p.ca ? `(found red ${p.ca.red > 0 ? '+' : ''}${p.ca.red.toFixed(0)}, blue ${p.ca.blue > 0 ? '+' : ''}${p.ca.blue.toFixed(0)})` : '';
       $q('#rawMs').textContent = `preview ${p.ms} ms`;
@@ -4654,13 +4776,15 @@ function rawDialog(file, sess, timing, t0) {
       catch (err) { if (!done) $q('#rawMs').textContent = `Preview failed: ${err.message}`; }
       finally { busy = false; ui.idle = !again; }
     };
-    const setBefore = async (on) => {
-      showBefore = on; $q('#rawBefore').setAttribute('aria-pressed', String(on)); $q('#rawBefore').classList.toggle('on', on); $q('#rawBaTag').classList.toggle('hidden', !on);
-      if (on) { if (!before) before = sess.preview({ ...RAW_DEFAULTS }); const p = await before; if (showBefore && !done) paint(p); }
-      else if (last) paint(last);
-      ui.beforeShown = on;
+    const setView = async (v) => {
+      view = v;
+      for (const [id, on] of [['#rawBefore', v === 'before'], ['#rawSplitBtn', v === 'split']]) { $q(id).setAttribute('aria-pressed', String(on)); $q(id).classList.toggle('on', on); }
+      await render();
+      if (view === v) { ui.beforeShown = v === 'before'; ui.view = v; }
     };
-    const ui = rawUI = { settings: s, info, previews: 0, idle: true, body, refresh: () => { ui.idle = false; refresh(); }, beforeShown: false, setBefore, applyPreset: (v) => applyChoice(v) };
+    const setBefore = (on) => setView(on ? 'before' : 'after');
+    const setSplit = (f) => { splitF = Math.min(1, Math.max(0, f)); ui.split = splitF; compose(); };
+    const ui = rawUI = { settings: s, info, previews: 0, idle: true, body, refresh: () => { ui.idle = false; refresh(); }, beforeShown: false, view: 'after', split: 0.5, setBefore, setView, setSplit, applyPreset: (v) => applyChoice(v), redevelop: !!opt.onApply };
     const changed = () => { ui.idle = false; refresh(); };
     // tone curve editor (same editor as the Curves adjustment)
     let curveVals = null;
@@ -4692,7 +4816,7 @@ function rawDialog(file, sess, timing, t0) {
       else if (t.id === 'rawTempR') { s.temp = posToTemp(+t.value); $q('#rawTemp').value = s.temp; s.wb = 'custom'; $q('#rawWb').value = 'custom'; }
       else if (t.id === 'rawTemp') { s.temp = Math.min(TEMP_MAX, Math.max(TEMP_MIN, +t.value || 5500)); $q('#rawTempR').value = tempToPos(s.temp); s.wb = 'custom'; $q('#rawWb').value = 'custom'; }
       else return;
-      if (showBefore) setBefore(false);
+      if (view === 'before') setView('after');
       changed();
     });
     body.addEventListener('change', (e) => {
@@ -4701,8 +4825,34 @@ function rawDialog(file, sess, timing, t0) {
       else if (e.target.id === 'rawCaAuto') { s.caAuto = e.target.checked; changed(); }
       else if (e.target.id === 'rawPreset') applyChoice(e.target.value);
     });
-    $q('#rawBefore').onclick = () => setBefore(!showBefore);
-    body.addEventListener('keydown', (e) => { if (e.key === '\\' && !(e.target.tagName === 'INPUT' && /text|number/.test(e.target.type))) { e.preventDefault(); setBefore(!showBefore); } });
+    $q('#rawBefore').onclick = () => setView(view === 'before' ? 'after' : 'before');
+    $q('#rawSplitBtn').onclick = () => setView(view === 'split' ? 'after' : 'split');
+    body.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' && /text|number/.test(e.target.type)) return;
+      if (e.key === '\\') { e.preventDefault(); setView(view === 'before' ? 'after' : 'before'); }
+      else if (e.key === 'y' || e.key === 'Y') { e.preventDefault(); setView(view === 'split' ? 'after' : 'split'); }
+      else if (e.target === divider && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setSplit(splitF + (e.key === 'ArrowLeft' ? -0.02 : 0.02)); }
+    });
+    // drag the divider (or click anywhere on the image) in split view
+    let dragging = false;
+    const toFrac = (e) => { const r = contentRect(), b = wrap.getBoundingClientRect(); return (e.clientX - b.left - r.x) / (r.w || 1); };
+    wrap.addEventListener('pointerdown', (e) => { if (view !== 'split' || e.button !== 0) return; dragging = true; wrap.setPointerCapture(e.pointerId); setSplit(toFrac(e)); e.preventDefault(); });
+    wrap.addEventListener('pointermove', (e) => { if (dragging) setSplit(toFrac(e)); });
+    const endDrag = () => { dragging = false; };
+    wrap.addEventListener('pointerup', endDrag); wrap.addEventListener('pointercancel', endDrag);
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => placeDivider()) : null; ro?.observe(cv);
+    $q('#rawPresetExport').onclick = () => exportRawPresets();
+    $q('#rawPresetImport').onclick = () => $q('#rawPresetFile').click();
+    $q('#rawPresetFile').addEventListener('change', async (e) => {
+      const f = e.target.files?.[0]; e.target.value = ''; if (!f) return;
+      try {
+        if (f.size > 4 * 1048576) throw new Error('the file is too large for a preset file');
+        const list = parseRawPresetFile(await f.text()), n = importRawPresets(list);
+        $q('#rawPreset').innerHTML = rawPresetOptions(true);
+        status(`Imported ${n} develop preset${n === 1 ? '' : 's'} from ${f.name}: ${list.map((p) => p.name).join(', ')}`);
+        ui.imported = list.map((p) => p.name);
+      } catch (err) { toast(`${f.name} could not be imported: ${err.message}.`, 6000); }
+    });
     $q('#rawPresetSave').onclick = () => {
       const name = $q('#rawPresetName').value.trim();
       if (!name) { $q('#rawPresetName').focus(); toast('Type a name for the preset first.'); return; }
@@ -4719,7 +4869,7 @@ function rawDialog(file, sess, timing, t0) {
       Object.assign(s, RAW_DEFAULTS, { temp: info.asShot.temp, tint: info.asShot.tint }); if (!info.lens) s.lens = true;
       $q('#rawPreset').value = ''; sync(); changed();
     };
-    const finish = () => { if (!done) { done = true; rawUI = null; resolve(); } };
+    const finish = () => { ro?.disconnect(); if (!done) { done = true; rawUI = null; resolve(); } };
     $q('#rawJpeg')?.addEventListener('click', async () => {
       done = true; rawUI = null; closeModal();
       try { await openRawJpeg(file, sess, 'You chose the camera’s own rendering.', false); } catch (err) { reportError('The embedded JPEG could not be opened', err); }
@@ -4727,11 +4877,16 @@ function rawDialog(file, sess, timing, t0) {
     });
     draw(sess.firstPreview);
     showModal({
-      title: `Develop ${file.name}`, body, okLabel: 'Open',
+      title: opt.title || `Develop ${file.name}`, body, okLabel: opt.okLabel || 'Open',
       ok: () => {
+        if (opt.onApply) {
+          const chosen = cleanRawSettings(s); done = true; rawUI = null; closeModal();
+          (async () => { try { await opt.onApply(chosen); } finally { resolve(); } })();
+          return false;
+        }
         // close at once: the canvas area shows the preview, then half resolution, while the full develop runs
         const first = makeCanvas(cv.width, cv.height); first.getContext('2d').drawImage(cv, 0, 0);
-        if (showBefore && last) { first.getContext('2d').putImageData(new ImageData(last.data, last.width, last.height), 0, 0); }
+        if (view !== 'after' && last) { first.getContext('2d').putImageData(new ImageData(last.data, last.width, last.height), 0, 0); }
         done = true; rawUI = null; closeModal(); status(`Developing ${file.name}…`);
         (async () => {
           try { await developToDocument(file, sess, cleanRawSettings(s), timing, t0, { overlayFrom: first, remember: true }); }
@@ -4740,7 +4895,7 @@ function rawDialog(file, sess, timing, t0) {
         })();
         return false;
       },
-      onClose: () => { if (!done) status('Open cancelled.'); finish(); },
+      onClose: () => { if (!done) status(opt.onApply ? 'Re-develop cancelled.' : 'Open cancelled.'); finish(); },
     });
     $('#modal').classList.add('wide');
     const unwide = new MutationObserver(() => { if ($('#modal').classList.contains('hidden')) { $('#modal').classList.remove('wide'); unwide.disconnect(); } });
@@ -4749,10 +4904,14 @@ function rawDialog(file, sess, timing, t0) {
 }
 for (const id of ['#fileInput', '#cameraInput']) $(id).addEventListener('change', async (e) => { const fs = [...e.target.files]; e.target.value = ''; for (const f of fs) await openFile(f, fileMode); });
 
-function serializeProject() {
+/**
+ * Project JSON. rawData: Map(Blob → data URL) of RAW source files read beforehand (projectData() does that), so
+ * RAW layers stay re-developable after reopening; without it the develop settings are kept but not the file.
+ */
+function serializeProject(rawData = null) {
   const d = doc();
   return {
-    format: PROJECT_FORMAT, version: 6, app: APP, width: d.width, height: d.height, name: d.name, depth: d.depth === 16 ? 16 : 8,
+    format: PROJECT_FORMAT, version: 7, app: APP, width: d.width, height: d.height, name: d.name, depth: d.depth === 16 ? 16 : 8,
     activeIndex: activeIndex(),
     layers: d.layers.map((l) => ({
       name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, data: l.canvas.toDataURL('image/png'),
@@ -4765,6 +4924,9 @@ function serializeProject() {
       ...(l.styles ? { styles: l.styles } : {}), ...(isGroup(l) ? { collapsed: !!l.collapsed } : {}),
       ...(d.depth === 16 && !l.kind ? { deep: deepDataURL(deepOf(l)) } : {}), // v5: 16-bit pixels; `data` stays as the 8-bit fallback
       ...(l.kind === 'smart' ? { source: l.source.toDataURL('image/png'), filters: l.filters, fmask: l.fmask ? { enabled: l.fmask.enabled, data: l.fmask.canvas.toDataURL('image/png') } : null } : {}),
+      // v7: RAW source (original file as a data URL) + develop settings and crop window, for Layer ▸ Re-develop RAW
+      ...(l.raw ? { raw: { name: l.raw.name, type: l.raw.type, size: l.raw.size, format: l.raw.format, settings: l.raw.settings, width: l.raw.width, height: l.raw.height,
+        cx: l.raw.cx, cy: l.raw.cy, cw: l.raw.cw, ch: l.raw.ch, edited: l.raw.rev !== l.rev, data: rawData?.get(l.raw.file) || null } } : {}),
     })),
   };
 }
@@ -4778,7 +4940,14 @@ function deepFromDataURL(url) {
   for (let i = 0; i < b.length; i++) b[i] = bin.charCodeAt(i);
   const p = decodePNG(b); return createDeep(p.width, p.height, p.data);
 }
-const projectBlob = () => new Blob([JSON.stringify(serializeProject())], { type: 'application/json' });
+const blobDataURL = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
+/** serializeProject with the RAW source files embedded (read asynchronously first). */
+async function projectData() {
+  const m = new Map();
+  for (const l of doc().layers) if (l.raw?.file && !m.has(l.raw.file)) m.set(l.raw.file, await blobDataURL(l.raw.file));
+  return serializeProject(m);
+}
+const projectBlob = async () => new Blob([JSON.stringify(await projectData())], { type: 'application/json' });
 const baseName = () => (doc().name || 'project').replace(/\.json$/i, '').replace(/\.tintwork$/i, '').replace(/\.[^.]+$/, '');
 /**
  * File ▸ Save (Ctrl+S): write back to the project file this document came from or was last saved to.
@@ -4790,13 +4959,13 @@ async function saveProject() {
   if (fsaSupported && d.fileHandle && d.fileKind === 'project') return writeProjectTo(d.fileHandle);
   if (fsaSupported) return saveProjectAs();
   const name = baseName();
-  download(projectBlob(), `${name}.tintwork`);
+  download(await projectBlob(), `${name}.tintwork`);
   status(`Saved project ${name}.tintwork`);
   markSaved();
 }
 /** File ▸ Save as… (Ctrl+Shift+S). */
 async function saveProjectAs() {
-  if (!fsaSupported) { const name = baseName(); download(projectBlob(), `${name}.tintwork`); status(`Saved project ${name}.tintwork`); markSaved(); return; }
+  if (!fsaSupported) { const name = baseName(); download(await projectBlob(), `${name}.tintwork`); status(`Saved project ${name}.tintwork`); markSaved(); return; }
   let h;
   try { h = await pickSave(`${baseName()}.tintwork`); } catch (err) { status(`Save as: ${err.message}`); return; }
   if (!h) { status('Save cancelled.'); return; }
@@ -4805,7 +4974,7 @@ async function saveProjectAs() {
 async function writeProjectTo(h) {
   const d = doc(), entry = history.entries[history.index];
   try {
-    setBusy(1); await writeFile(h, projectBlob());
+    setBusy(1); await writeFile(h, await projectBlob());
     d.fileHandle = h; d.fileKind = 'project'; d.name = h.name;
     addRecent(h, 'project');
     status(`Saved ${h.name}`); markSaved(entry); updateDocInfo();
@@ -4867,6 +5036,7 @@ function scheduleAutosave() {
 }
 const AUTOSAVE_STEPS = 20; // undo steps kept in each autosave
 const AUTOSAVE_DEEP_PX = IS_IOS ? 4e6 : 8e6; // max 16-bit pixels autosaved (current step only)
+const AUTOSAVE_RAW_BYTES = 200 * 1048576; // RAW source files larger than this are not autosaved (re-develop needs the project file)
 const newSlot = () => `doc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 /**
  * Autosave record v2: the last AUTOSAVE_STEPS history entries with every canvas stored once
@@ -4875,6 +5045,7 @@ const newSlot = () => `doc-${Date.now().toString(36)}-${Math.random().toString(3
 function encodeHistory(d, dirty, hist = history) {
   const images = new Map(), ref = (c) => { const r = imageRef(c); images.set(r.id, r.encode); return r.id; };
   const dref = (dd) => { const r = deepRef(dd); images.set(r.id, r.encode); return r.id; };
+  const rref = (b) => { const r = rawRef(b); images.set(r.id, r.encode); return r.id; };
   const n = hist.entries.length;
   // 16-bit data is autosaved for the current step only, and only up to a size cap (it is 8 bytes/pixel)
   const curSnap = hist.entries[hist.index].snap;
@@ -4894,6 +5065,8 @@ function encodeHistory(d, dirty, hist = history) {
           kind: l.kind, adj: l.adj, text: l.text, canvas: ref(l.canvas),
           parent: l.parent ?? null, clip: !!l.clip, styles: l.styles || null, collapsed: !!l.collapsed, look: l.look || null,
           ...(deepOk && sn === curSnap && l.deep ? { deep: dref(l.deep), deepRev: l.deepRev, deepOX: l.deepOX || 0, deepOY: l.deepOY || 0 } : {}),
+          // RAW source file: stored once (same Blob in every step), up to AUTOSAVE_RAW_BYTES
+          ...(l.raw ? { raw: { ...l.raw, file: l.raw.file.size <= AUTOSAVE_RAW_BYTES ? rref(l.raw.file) : null } } : {}),
           mask: l.mask ? { enabled: l.mask.enabled, rev: l.mask.rev, canvas: ref(l.mask.canvas) } : null,
           ...(l.kind === 'smart' ? { source: ref(l.source), filters: l.filters, editFMask: l.editFMask,
             fmask: l.fmask ? { enabled: l.fmask.enabled, rev: l.fmask.rev, canvas: ref(l.fmask.canvas) } : null } : {}),
@@ -4937,6 +5110,7 @@ async function restoreAutosave(r) {
   const bufs = await readImages(r), canv = new Map();
   for (const [id, buf] of bufs) {
     if (isDeepId(id)) { const p = decodePNG(buf), dd = createDeep(p.width, p.height, p.data); adoptImage(dd, id); canv.set(id, dd); continue; }
+    if (isRawId(id)) { const b = new Blob([buf]); adoptImage(b, id); canv.set(id, b); continue; }
     const img = await decodeImage(buf), c = makeCanvas(img.width, img.height);
     c.getContext('2d').drawImage(img, 0, 0); img.close?.();
     adoptImage(c, id); canv.set(id, c); // re-saving this session reuses the stored bytes
@@ -4962,6 +5136,7 @@ async function restoreAutosave(r) {
         maxId = Math.max(maxId, L.id); maxRev = Math.max(maxRev, L.rev, L.mask?.rev || 0, L.fmask?.rev || 0);
         const l = { ...L, canvas: get(L.canvas), mask: L.mask ? { ...L.mask, canvas: get(L.mask.canvas) } : null, styles: normalizeStyles(L.styles) };
         if (L.deep) l.deep = get(L.deep); else delete l.deep;
+        if (L.raw?.file && canv.has(L.raw.file)) l.raw = { ...L.raw, file: canv.get(L.raw.file) }; else l.raw = null;
         if (L.kind === 'smart') Object.assign(l, { source: get(L.source), fmask: L.fmask ? { ...L.fmask, canvas: get(L.fmask.canvas) } : null });
         return l;
       }),
@@ -5079,6 +5254,7 @@ async function loadProject(data, filename) {
       const dd = deepFromDataURL(L.deep);
       if (dd.width === l.canvas.width && dd.height === l.canvas.height) setDeep(l, dd);
     }
+    if (L.raw?.data && !l.kind) l.rawPending = L.raw; // attached below, once the layer revisions are final
     layers.push(l);
   }
   if (!layers.length) throw new Error('Project has no layers');
@@ -5087,6 +5263,15 @@ async function loadProject(data, filename) {
   const ai = Math.min(layers.length - 1, Math.max(0, data.activeIndex ?? layers.length - 1));
   state.doc = { width: data.width, height: data.height, layers, activeId: layers[ai].id, selection: null, name: filename || data.name || 'Untitled', depth: data.depth === 16 ? 16 : 8 };
   normalizeTree(state.doc);
+  for (const l of layers) if (l.rawPending) {
+    const R = l.rawPending; delete l.rawPending;
+    try {
+      const bin = atob(R.data.slice(R.data.indexOf(',') + 1)), b = new Uint8Array(bin.length);
+      for (let i = 0; i < b.length; i++) b[i] = bin.charCodeAt(i);
+      const file = new File([b], R.name || 'camera.raw', { type: R.type || '' });
+      l.raw = { ...rawSource(file, R.format, R.settings, R.width, R.height, R.edited ? -1 : l.rev), cx: +R.cx || 0, cy: +R.cy || 0, cw: +R.cw || l.canvas.width, ch: +R.ch || l.canvas.height };
+    } catch (err) { console.warn('RAW source in the project could not be read', err); }
+  }
   afterDocChange('Open project');
   status(`Opened project ${filename} (${layers.length} layers)`);
 }
@@ -5468,13 +5653,15 @@ function updateLayersPanel() {
       tx.beginPath(); tx.arc(20, 15, 9, 0, Math.PI * 2); tx.stroke(); tx.beginPath(); tx.arc(20, 15, 9, Math.PI / 2, Math.PI * 1.5); tx.fill();
     } else if (l.kind === 'smart') { // live-filter badge
       tx.fillStyle = '#7a5cffdd'; tx.fillRect(26, 16, 14, 14); tx.fillStyle = '#fff'; tx.font = '700 12px sans-serif'; tx.textAlign = 'center'; tx.textBaseline = 'middle'; tx.fillText('≈', 33, 23);
+    } else if (l.raw) { // re-developable RAW badge
+      tx.fillStyle = '#1d7a4ddd'; tx.fillRect(22, 18, 18, 12); tx.fillStyle = '#fff'; tx.font = '700 8px sans-serif'; tx.textAlign = 'center'; tx.textBaseline = 'middle'; tx.fillText('RAW', 31, 24.5);
     } else if (l.kind === 'text') {
       tx.fillStyle = '#000a'; tx.fillRect(26, 16, 14, 14); tx.fillStyle = '#fff'; tx.font = '700 12px sans-serif'; tx.textAlign = 'center'; tx.textBaseline = 'middle'; tx.fillText('T', 33, 23.5);
     }
     th.className = 'thumb' + (l.id === d.activeId && l.mask && !editingMask(l) ? ' target' : '');
-    th.title = isGroup(l) ? `Group (${childrenOf(d, l.id).length} item${childrenOf(d, l.id).length === 1 ? '' : 's'}) — double-click for layer style` : l.kind === 'adjust' ? `${ADJ_LAYER[l.adj.type]} — double-click to edit` : l.kind === 'text' ? 'Text — double-click to edit' : l.kind === 'smart' ? 'Live filter layer — double-click to manage filters' : 'Layer pixels';
+    th.title = isGroup(l) ? `Group (${childrenOf(d, l.id).length} item${childrenOf(d, l.id).length === 1 ? '' : 's'}) — double-click for layer style` : l.kind === 'adjust' ? `${ADJ_LAYER[l.adj.type]} — double-click to edit` : l.kind === 'text' ? 'Text — double-click to edit' : l.kind === 'smart' ? 'Live filter layer — double-click to manage filters' : l.raw ? `Developed from ${l.raw.name} — double-click to re-develop` : 'Layer pixels';
     th.addEventListener('click', (e) => { e.stopPropagation(); if (state.xf) applyTransform(); d.activeId = l.id; l.editFMask = false; if (l.kind !== 'adjust') setMaskTarget(l, false); else updateLayersPanel(); buildOptionsBar(); requestRender(); });
-    if (l.kind) th.addEventListener('dblclick', (e) => { e.stopPropagation(); d.activeId = l.id; editLayer(l); });
+    if (l.kind || l.raw) th.addEventListener('dblclick', (e) => { e.stopPropagation(); d.activeId = l.id; editLayer(l); });
     let mth = null;
     if (l.mask) {
       mth = makeCanvas(40, 30); const mx = mth.getContext('2d');
@@ -6365,7 +6552,7 @@ function openLayerToDocDialog() {
 }
 
 window.tintwork = {
-  setDevelopEnv, get lastDecoder() { return lastDecoder; },
+  setDevelopEnv, get lastDecoder() { return lastDecoder; }, redevelopRaw, exportRawPresets, importRawPresets, parseRawPresetFile, projectData, loadProject, cropTo,
   // v1.1
   openPSD, openRAW, documentFromPSD, documentToPSD, flatPSD, get rawUI() { return rawUI; }, get lastImport() { return lastImport; }, get lastExportNotes() { return lastExportNotes; },
   readPSDAsync, writePSDAsync, openRawSession, isRawName, isPsdName, RAW_DEFAULTS, PSD_TYPE, DEEP_LIMIT_MB,

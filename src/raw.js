@@ -10,11 +10,14 @@ export const DEFAULT_SETTINGS = Object.freeze({
   sharpen: 25, sharpRadius: 1, sharpDetail: 25, sharpMask: 0,
   nrLuma: 0, nrColor: 25, lens: true, vignette: 0,
   caAuto: false, caRed: 0, caBlue: 0, // lateral chromatic aberration: automatic estimate + manual red/cyan, blue/yellow
+  // axial (longitudinal) CA / purple fringing: desaturate purple and green fringes on high-contrast edges, by hue range
+  fringePurple: 0, fringePurpleLo: 260, fringePurpleHi: 320, fringeGreen: 0, fringeGreenLo: 80, fringeGreenHi: 150,
 });
 export const RANGES = {
   temp: [2000, 50000], tint: [-150, 150], exposure: [-5, 5], highlights: [0, 100], shadows: [-100, 100], contrast: [-100, 100],
   vibrance: [-100, 100], saturation: [-100, 100], sharpen: [0, 150], sharpRadius: [0.5, 3], sharpDetail: [0, 100], sharpMask: [0, 100],
   nrLuma: [0, 100], nrColor: [0, 100], vignette: [-100, 100], caRed: [-100, 100], caBlue: [-100, 100],
+  fringePurple: [0, 100], fringePurpleLo: [200, 340], fringePurpleHi: [200, 340], fringeGreen: [0, 100], fringeGreenLo: [40, 190], fringeGreenHi: [40, 190],
 };
 /** Lateral CA slider ±100 = ±0.4 % radial scale of the red or blue channel against green. */
 export const CA_UNIT = 0.004;
@@ -28,6 +31,31 @@ export function cleanSettings(s) {
     else if (typeof DEFAULT_SETTINGS[k] === 'boolean') out[k] = !!v;
     else if (Number.isFinite(+v)) { const r = RANGES[k]; out[k] = r ? Math.min(r[1], Math.max(r[0], +v)) : +v; }
   }
+  for (const c of ['Purple', 'Green']) if (out[`fringe${c}Lo`] > out[`fringe${c}Hi`]) [out[`fringe${c}Lo`], out[`fringe${c}Hi`]] = [out[`fringe${c}Hi`], out[`fringe${c}Lo`]];
+  return out;
+}
+/** Develop preset files (.json): { format: 'tintwork-raw-presets', version: 1, presets: [{ name, settings }] }. */
+export const PRESET_FILE_FORMAT = 'tintwork-raw-presets';
+export const presetFile = (list) => ({ format: PRESET_FILE_FORMAT, version: 1, presets: list.map((p) => ({ name: String(p.name), settings: cleanSettings(p.settings) })) });
+/**
+ * Presets from a file: the preset-file object above, a bare array of { name, settings }, or one { name, settings }.
+ * Names are trimmed (max 60 characters) and settings go through cleanSettings. Throws when nothing valid is found.
+ */
+export function parsePresetFile(obj) {
+  if (typeof obj === 'string') { try { obj = JSON.parse(obj); } catch { throw new Error('This file is not valid JSON'); } }
+  let arr;
+  if (obj && typeof obj === 'object' && obj.format === PRESET_FILE_FORMAT) { if (!Array.isArray(obj.presets)) throw new Error('The preset file has no preset list'); arr = obj.presets; }
+  else if (Array.isArray(obj)) arr = obj;
+  else if (obj && typeof obj === 'object' && typeof obj.name === 'string' && obj.settings && typeof obj.settings === 'object') arr = [obj];
+  else throw new Error('This file does not contain develop presets');
+  const out = [], seen = new Set();
+  for (const p of arr) {
+    if (!p || typeof p.name !== 'string' || !p.name.trim() || !p.settings || typeof p.settings !== 'object' || Array.isArray(p.settings)) continue;
+    const name = p.name.trim().slice(0, 60), key = name.toLowerCase();
+    if (seen.has(key)) out.splice(out.findIndex((q) => q.name.toLowerCase() === key), 1);
+    seen.add(key); out.push({ name, settings: cleanSettings(p.settings) });
+  }
+  if (!out.length) throw new Error('The file has no valid develop presets');
   return out;
 }
 const isStraight = (p) => !p || (p.length === 2 && p[0][0] === 0 && p[0][1] === 0 && p[1][0] === 255 && p[1][1] === 255);
@@ -358,6 +386,7 @@ export const BAND_HALO = 48;
  */
 export const BAND_BYTES_PER_PX = 32;
 export const DEV_BUDGET = 1 / 8; // share of navigator.deviceMemory for band buffers in flight
+export const MAX_HALO_OVERHEAD = 0.25;
 export const WORKERS_PER_GB = 1.5; // pool size limit from device memory (each idle worker costs a few MB)
 /** Develop worker pool size: one per spare core (max 8), fewer on small-memory devices (deviceMemory in GB, 0 = unknown). */
 export function poolSize(cores, deviceMemory = 0) {
@@ -367,10 +396,12 @@ export function poolSize(cores, deviceMemory = 0) {
 /** { workers, bands, inFlightMB, budgetMB } for a develop of width × height output pixels. cap: test override (0 = one thread). */
 export function planWorkers({ width, height, pool, deviceMemory = 0, cap = null, bits = 16 }) {
   let workers = cap == null ? pool : Math.min(pool, cap);
+  if (deviceMemory > 0 && workers > 0) workers = Math.min(workers, Math.max(1, Math.floor(deviceMemory * WORKERS_PER_GB)));
   const perPx = bits === 16 ? BAND_BYTES_PER_PX : BAND_BYTES_PER_PX / 2;
   const budget = (deviceMemory > 0 ? deviceMemory : 8) * 2 ** 30 * DEV_BUDGET, MB = 2 ** 20;
   if (workers < 1) return { workers: 0, bands: 1, inFlightMB: Math.round((width * height * perPx) / MB), budgetMB: Math.round(budget / MB) };
-  const maxBands = Math.max(workers, Math.floor(height / (BAND_HALO * 2))); // bands at least as tall as both halos
+  // more bands = less memory in flight, but every band also develops 2 × halo extra rows: at most +25 % rows
+  const maxBands = Math.max(workers, Math.floor((height * MAX_HALO_OVERHEAD) / (BAND_HALO * 2)));
   const inFlight = (w, b) => w * (Math.ceil(height / b) + 2 * BAND_HALO) * width * perPx;
   let bands = workers;
   while (bands < maxBands && inFlight(workers, bands) > budget) bands++;
@@ -392,10 +423,58 @@ export function developRows(src, opts) {
   const t0 = now();
   denoise(px, w, hh, set.nrLuma, set.nrColor, opts.nrScale ?? scale);
   const t1 = now();
+  const t1b = now();
+  defringe(px, w, hh, set, scale);
+  const t1c = now();
   sharpen(px, w, hh, set, scale);
-  const t2 = now();
+  const t2 = now() - (t1c - t1b);
   const cut = (arr) => (h0 === a && h1 === b ? arr : arr.slice((a - h0) * w * 4, (b - h0) * w * 4));
-  return { width: w, height: b - a, rows: [a, b], fullHeight: OH, data: cut(px), bits, ms: { nr: t1 - t0, sharpen: t2 - t1 } };
+  return { width: w, height: b - a, rows: [a, b], fullHeight: OH, data: cut(px), bits, ms: { nr: t1 - t0, sharpen: t2 - t1, defringe: t1c - t1b } };
+}
+
+/** Soft hue window: 1 inside [lo, hi] degrees, fading to 0 over `f` degrees outside. */
+const hueWeight = (h, lo, hi, f) => (h >= lo && h <= hi ? 1 : h < lo ? Math.max(0, 1 - (lo - h) / f) : Math.max(0, 1 - (h - hi) / f));
+/**
+ * Defringe (axial chromatic aberration): pixels whose hue lies in the purple or green range are pulled toward
+ * neutral grey (their own luma), weighted by the amount and by local contrast, so fringes along high-contrast edges
+ * go while purple or green subjects in flat areas keep their colour. Works in place on RGBA (8- or 16-bit).
+ * Edge strength = luma max − min over a (2r+1)² window, r = 3 px at full resolution (scaled for previews).
+ */
+export function defringe(px, w, h, set, scale = 1) {
+  const ap = (set.fringePurple || 0) / 100, ag = (set.fringeGreen || 0) / 100;
+  if (!(ap > 0 || ag > 0) || w < 3 || h < 3) return;
+  const max = px instanceof Uint16Array ? 65535 : 255, inv = 1 / max, n = w * h, r = Math.max(1, Math.round(3 * scale));
+  const pLo = set.fringePurpleLo ?? 260, pHi = set.fringePurpleHi ?? 320, gLo = set.fringeGreenLo ?? 80, gHi = set.fringeGreenHi ?? 150;
+  const Y = new Float32Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) Y[i] = (0.2126 * px[j] + 0.7152 * px[j + 1] + 0.0722 * px[j + 2]) * inv;
+  // separable running max / min (horizontal then vertical)
+  const mx = new Float32Array(n), mn = new Float32Array(n), tx = new Float32Array(n), tn = new Float32Array(n);
+  for (let y = 0; y < h; y++) {
+    const o = y * w;
+    for (let x = 0; x < w; x++) {
+      let a = -1, b = 2; const x0 = Math.max(0, x - r), x1 = Math.min(w - 1, x + r);
+      for (let k = x0; k <= x1; k++) { const v = Y[o + k]; if (v > a) a = v; if (v < b) b = v; }
+      tx[o + x] = a; tn[o + x] = b;
+    }
+  }
+  for (let y = 0; y < h; y++) { // row-major so the vertical pass stays cache friendly
+    const y0 = Math.max(0, y - r), y1 = Math.min(h - 1, y + r), o = y * w;
+    mx.set(tx.subarray(y0 * w, y0 * w + w), o); mn.set(tn.subarray(y0 * w, y0 * w + w), o);
+    for (let k = y0 + 1; k <= y1; k++) {
+      const q = k * w;
+      for (let x = 0; x < w; x++) { const a = tx[q + x], b = tn[q + x]; if (a > mx[o + x]) mx[o + x] = a; if (b < mn[o + x]) mn[o + x] = b; }
+    }
+  }
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    const edge = smooth(0.08, 0.3, mx[i] - mn[i]); if (edge <= 0) continue;
+    const R = px[j], G = px[j + 1], B = px[j + 2], hi = Math.max(R, G, B), lo = Math.min(R, G, B), c = hi - lo;
+    if (c <= max * 0.01) continue;
+    let hue = hi === R ? ((G - B) / c) % 6 : hi === G ? (B - R) / c + 2 : (R - G) / c + 4; hue *= 60; if (hue < 0) hue += 360;
+    const wgt = Math.min(1, ap * hueWeight(hue, pLo, pHi, 15) + ag * hueWeight(hue, gLo, gHi, 15)) * edge;
+    if (wgt <= 0) continue;
+    const l = Y[i] * max, k = 1 - wgt;
+    px[j] = Math.round(l + (R - l) * k); px[j + 1] = Math.round(l + (G - l) * k); px[j + 2] = Math.round(l + (B - l) * k);
+  }
 }
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
