@@ -10,8 +10,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json',
+  '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8',
 };
-const ALLOW = [/^\/$/, /^\/index\.html$/, /^\/manifest\.webmanifest$/, /^\/sw\.js$/, /^\/src\/[\w.-]+\.(js|css|svg)$/, /^\/icons\/[\w.-]+\.png$/];
+const ALLOW = [/^\/$/, /^\/index\.html$/, /^\/manifest\.webmanifest$/, /^\/sw\.js$/, /^\/src\/[\w.-]+\.(js|css|svg)$/, /^\/icons\/[\w.-]+\.png$/, /^\/fonts\/([\w-]+\/)?[\w.-]+\.(woff2|css|txt|md)$/];
 
 export function createStaticServer() {
   return http.createServer((req, res) => {

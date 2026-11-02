@@ -329,6 +329,111 @@ async function runDevice({ tag, browserType, device, realTouch, stubShare }) {
   const recovered = await T(() => ({ n: window.tintwork.doc.layers.length, p: window.tintwork.compositePixel(100, 250), kinds: window.tintwork.doc.layers.map((l) => l.kind || 'pixels').join(',') }));
   check(recovered.n === preCrash.n && recovered.p.every((v, i) => Math.abs(v - preCrash.p[i]) <= 1), `autosave survives a reload and recovers (${recovered.kinds})`);
 
+  // --- v0.4 on touch: two-finger free transform, live filters, color range tap, fonts, recovery slots ----
+  const shot4 = (name) => page.screenshot({ path: path.join(shots, `m-v4-${tag}-${name}.png`) });
+  const idle4 = () => T(() => window.tintwork.idle());
+  await T(async () => { const t = window.tintwork; await t.autosaveNow(); await t.clearAutosave(); });
+  await T(() => {
+    const t = window.tintwork; t.newDocument(400, 400, 'white', 'touch-v04'); t.run('layerNew');
+    const l = t.activeLayer(), x = l.canvas.getContext('2d');
+    x.fillStyle = '#ff0000'; x.fillRect(150, 150, 100, 100); x.fillStyle = '#0000ff'; x.fillRect(150, 150, 100, 20); // blue strip marks the top edge
+    t.touch(l); t.commit('Red square'); t.setTool('move'); t.fitToScreen();
+  });
+  await page.waitForTimeout(400);
+  await page.locator('#optionsbar [data-cmd="freeTransform"]').tap();
+  check(await T(() => { const x = window.tintwork.xf; return !!x && Math.round(x.cx) === 200 && Math.round(x.cy) === 200; }) && await page.locator('#optionsbar [data-cmd="xfApply"]').isVisible(), 'Transform button starts a free transform (Apply/Cancel shown in the bar)');
+  const fc = await d2s(200, 200);
+  // fingers start left/right of the centre, end above/below it, 1.5× further apart: scale 1.5, rotate 90° clockwise
+  await twoFinger({ x: fc.x - 40, y: fc.y }, { x: fc.x + 40, y: fc.y }, { x: fc.x, y: fc.y - 60 }, { x: fc.x, y: fc.y + 60 }, 12);
+  const pinch = await T(() => { const x = window.tintwork.xf; return x && { sx: x.sx, sy: x.sy, rot: x.rot * 180 / Math.PI, cx: x.cx, cy: x.cy, zoom: window.tintwork.zoom }; });
+  check(pinch && Math.abs(pinch.sx - 1.5) < 0.05 && Math.abs(pinch.sy - 1.5) < 0.05 && Math.abs(pinch.rot - 90) < 2 && Math.abs(pinch.cx - 200) < 3 && Math.abs(pinch.cy - 200) < 3,
+    `two-finger pinch/rotate scales and rotates the layer, not the view (${pinch && `${pinch.sx.toFixed(2)}×, ${pinch.rot.toFixed(1)}°`})`);
+  await shot4('transform');
+  const hT = await T(() => window.tintwork.history.entries.length);
+  await page.locator('#optionsbar [data-cmd="xfApply"]').tap();
+  await idle4();
+  const tx = { blue: await px(265, 200), red: await px(150, 200), redTop: await px(200, 135), out: await px(115, 200), hist: await T(() => [window.tintwork.history.entries.length, window.tintwork.history.entries.at(-1).label, !!window.tintwork.xf]) };
+  check(tx.blue[2] > 240 && tx.blue[0] < 15 && tx.red[0] > 240 && tx.red[2] < 15 && tx.redTop[0] > 240 && tx.out[1] > 240,
+    `Apply bakes the transform: square 150 px wide, top edge now on the right (pixels ${tx.blue.slice(0, 3)} / ${tx.red.slice(0, 3)} / ${tx.out.slice(0, 3)})`);
+  check(tx.hist[0] === hT + 1 && tx.hist[1] === 'Free transform' && !tx.hist[2], 'transform is one undo step');
+  // live (non-destructive) filter
+  await T(() => window.tintwork.run('convertSmart'));
+  await T(() => window.tintwork.run('gaussianBlur'));
+  await page.waitForSelector('#modal:not(.hidden) [data-key="radius"]');
+  check(await T(() => document.querySelector('#modalTitle').textContent.startsWith('Live')), 'filters on a live layer open the live filter dialog');
+  await page.locator('#modalBody input[data-key="radius"]').fill('10'); await page.locator('#modalBody input[data-key="radius"]').dispatchEvent('input');
+  await page.locator('#modalOk').tap(); await idle4();
+  const blurred = await px(127, 200);
+  check(blurred[1] > 30 && await T(() => window.tintwork.activeLayer().kind === 'smart' && window.tintwork.activeLayer().filters.length === 1), `live blur renders on touch (edge ${blurred.slice(0, 3)})`);
+  await page.locator('#mobilebar [data-sheet="layers"]').tap(); await page.waitForTimeout(250);
+  check(await page.locator('#layerList li.filter-row').count() === 1, 'layers sheet lists the live filter');
+  await page.locator('#layerList li.filter-row .eye').tap(); await idle4();
+  const hidden = await px(127, 200);
+  check(hidden[0] > 240 && hidden[1] < 15, `tapping the filter eye hides it (edge ${hidden.slice(0, 3)})`);
+  await shot4('live-filter');
+  await page.locator('#mobilebar [data-sheet="layers"]').tap(); await page.waitForTimeout(250);
+  // color range: tap the canvas to sample
+  await T(() => { const t = window.tintwork; t.setTool('select'); t.openColorRangeDialog(); });
+  await page.waitForSelector('#crPreview');
+  const sp = await d2s(262, 200);
+  const covered = await T(([x, y]) => !document.querySelector('#view').contains(document.elementFromPoint(x, y)), [sp.x, sp.y]);
+  await page.waitForTimeout(400);
+  await page.touchscreen.tap(sp.x, sp.y); await page.waitForTimeout(100);
+  check(!covered && await page.locator('#crColor').inputValue() === '#0000ff', `tapping the canvas samples a color while the dialog is open (${await page.locator('#crColor').inputValue()})`);
+  await shot4('color-range');
+  await page.locator('#modalOk').tap(); await idle4();
+  const crm = await T(() => { const s = window.tintwork.doc.selection; return s && [s.mask[200 * s.W + 262], s.mask[200 * s.W + 180], s.mask[50 * s.W + 50]]; });
+  check(crm && crm[0] === 255 && crm[1] === 0 && crm[2] === 0, `color range selects the sampled blue only (${crm})`);
+  await T(() => window.tintwork.run('deselect'));
+  await page.locator('#mobilebar [data-sheet="layers"]').tap(); await page.waitForTimeout(250);
+  await page.locator('#layerList li.filter-row .eye').tap(); await idle4();
+  check((await px(127, 200))[1] > 30, 'tapping again re-applies the filter');
+  await page.locator('#mobilebar [data-sheet="layers"]').tap(); await page.waitForTimeout(250);
+  // bundled fonts
+  const fonts = await T(async () => {
+    const t = window.tintwork, names = Object.keys(t.BUNDLED_FONTS);
+    await Promise.all(names.map((f) => t.loadFont({ font: f, size: 40, bold: false, italic: false })));
+    return names.filter((f) => t.fontReady({ font: f, size: 40, bold: false, italic: false }));
+  });
+  check(fonts.length === 5, `bundled OFL fonts load on the phone (${fonts.join(', ')})`);
+  await T(() => { const t = window.tintwork; t.setTool('text'); t.setFg('#202020'); });
+  const ft = await d2s(40, 40);
+  await page.waitForTimeout(400);
+  await page.touchscreen.tap(ft.x, ft.y);
+  await page.waitForSelector('#modal:not(.hidden) #tText');
+  await page.locator('#tText').fill('Pacifico'); await page.locator('#tText').dispatchEvent('input');
+  await page.selectOption('#tFont', 'Pacifico');
+  await page.locator('#modalOk').tap(); await page.waitForTimeout(300);
+  const ink = await T(() => { const l = window.tintwork.activeLayer(), d = l.canvas.getContext('2d').getImageData(0, 0, l.canvas.width, l.canvas.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 128) n++; return { kind: l.kind, font: l.text?.font, n }; });
+  check(ink.kind === 'text' && ink.font === 'Pacifico' && ink.n > 500, `text layer renders in a bundled font (${ink.font}, ${ink.n} ink px)`);
+  // recovery slots with bounded history
+  await T(async () => {
+    const t = window.tintwork; await t.autosaveNow(); await t.clearAutosave();
+    t.newDocument(200, 120, 'white', 'phone-a');
+    const a = t.doc.layers[0]; a.canvas.getContext('2d').fillStyle = '#00aa00'; a.canvas.getContext('2d').fillRect(0, 0, 100, 120); t.touch(a); t.commit('Green');
+    await t.autosaveNow();
+    t.newDocument(200, 120, 'white', 'phone-b');
+    const b = t.doc.layers[0], x = b.canvas.getContext('2d');
+    for (let i = 0; i < 25; i++) { x.fillStyle = `rgb(${i * 10},0,${255 - i * 10})`; x.fillRect(i * 8, 0, 8, 120); t.touch(b); t.commit(`Stripe ${i + 1}`); }
+    await t.autosaveNow();
+  });
+  const stripe = await px(23 * 8 + 4, 60);
+  await page.reload();
+  await page.waitForSelector('#modal:not(.hidden) li.slot-row', { timeout: 5000 });
+  const slotRows = await page.locator('#modalBody li.slot-row').count();
+  check(slotRows === 2 && (await page.locator('#modalBody').textContent()).includes('20 undo steps'), `recovery sheet lists both unsaved documents with their history (${slotRows} slots)`);
+  await shot4('recovery');
+  await page.locator('#modalBody li.slot-row', { hasText: 'phone-b' }).locator('[data-recover]').tap();
+  await page.waitForFunction(() => window.tintwork.doc?.name === 'phone-b');
+  const rb = await T(() => { const t = window.tintwork; return { n: t.history.entries.length, label: t.history.entries[t.history.index].label, p: t.compositePixel(23 * 8 + 4, 60) }; });
+  check(rb.n === 20 && rb.label === 'Stripe 25' && rb.p.every((v, i) => Math.abs(v - stripe[i]) <= 1), `recovered phone document keeps 20 undo steps (${rb.label}, ${rb.n})`);
+  await page.locator('#mobilebar [data-sheet="history"]').tap().catch(() => {});
+  await T(() => { window.tintwork.undo(); window.tintwork.undo(); });
+  const rolled = await px(23 * 8 + 4, 60);
+  check(rolled[0] > 250 && rolled[1] > 250 && rolled[2] > 250, `undo after recovery rolls pixels back (${rolled.slice(0, 3)})`);
+  await T(async () => { await window.tintwork.clearAutosave(); });
+  await page.reload(); await page.waitForFunction(() => !!window.tintwork);
+
   // --- service worker / offline ------------------------------------------------------------
   const swOk = await T(() => Promise.race([navigator.serviceWorker?.ready.then(() => true), new Promise((r) => setTimeout(() => r(false), 6000))]));
   if (swOk) {

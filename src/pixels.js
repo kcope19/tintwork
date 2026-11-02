@@ -470,3 +470,103 @@ export function channelHistograms(img) {
   }
   return { l, r, g, b };
 }
+
+// --- Color range & refine edge (v0.4) -------------------------------------------------
+
+/** Hue centres (degrees) of the colour-family presets of the Color Range dialog. */
+export const HUE_PRESETS = { reds: 0, yellows: 60, greens: 120, cyans: 180, blues: 240, magentas: 300 };
+const smooth01 = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+
+/**
+ * Build a 0..255 selection mask from the colours of an image.
+ * mode: 'sampled' (distance to `color`, softened by `fuzziness`), a hue family from HUE_PRESETS,
+ * or a tonal band: 'highlights' | 'midtones' | 'shadows'. Transparent pixels are never selected.
+ */
+export function colorRangeMask(img, { mode = 'sampled', color = [255, 255, 255], fuzziness = 40 } = {}) {
+  const d = img.data, n = img.width * img.height, m = new Uint8Array(n);
+  const f = Math.max(1, +fuzziness || 0), hueC = HUE_PRESETS[mode];
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    const r = d[j], g = d[j + 1], b = d[j + 2], a = d[j + 3];
+    if (!a) continue;
+    let w;
+    if (mode === 'sampled') {
+      const dr = r - color[0], dg = g - color[1], db = b - color[2];
+      const dist = Math.sqrt((dr * dr + dg * dg + db * db) / 3);
+      w = dist <= f * 0.5 ? 1 : dist >= f ? 0 : (f - dist) / (f * 0.5);
+    } else if (hueC !== undefined) {
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b), c = mx - mn;
+      if (c === 0) continue;
+      let h = mx === r ? ((g - b) / c) % 6 : mx === g ? (b - r) / c + 2 : (r - g) / c + 4;
+      h *= 60; if (h < 0) h += 360;
+      let dh = Math.abs(h - hueC); if (dh > 180) dh = 360 - dh;
+      w = (1 - smooth01(15, 45, dh)) * Math.min(1, (c / 255) * 4);
+    } else {
+      const L = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (mode === 'highlights') w = smooth01(150, 200, L);
+      else if (mode === 'shadows') w = 1 - smooth01(55, 105, L);
+      else w = Math.max(0, Math.min(1, 1 - (Math.abs(L - 128) - 40) / 40));
+    }
+    m[i] = Math.round(w * a);
+  }
+  return m;
+}
+
+// Felzenszwalb & Huttenlocher 1-D squared distance transform (lower envelope of parabolas).
+function edt1d(f, n, d, v, z) {
+  let k = 0; v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+  for (let q = 1; q < n; q++) {
+    let p = v[k], s = ((f[q] + q * q) - (f[p] + p * p)) / (2 * q - 2 * p);
+    while (s <= z[k]) { k--; p = v[k]; s = ((f[q] + q * q) - (f[p] + p * p)) / (2 * q - 2 * p); }
+    k++; v[k] = q; z[k] = s; z[k + 1] = Infinity;
+  }
+  k = 0;
+  for (let q = 0; q < n; q++) { while (z[k + 1] < q) k++; const p = v[k]; d[q] = (q - p) * (q - p) + f[p]; }
+}
+
+/** Exact Euclidean distance (in pixels) from every pixel to the nearest pixel where `inside` is true. */
+export function distanceTo(inside, W, H) {
+  const INF = 1e12, g = new Float64Array(W * H), n = Math.max(W, H);
+  const f = new Float64Array(n), d = new Float64Array(n), v = new Int32Array(n), z = new Float64Array(n + 1);
+  for (let i = 0; i < g.length; i++) g[i] = inside[i] ? 0 : INF;
+  for (let x = 0; x < W; x++) {
+    for (let y = 0; y < H; y++) f[y] = g[y * W + x];
+    edt1d(f, H, d, v, z);
+    for (let y = 0; y < H; y++) g[y * W + x] = d[y];
+  }
+  for (let y = 0; y < H; y++) {
+    const o = y * W;
+    for (let x = 0; x < W; x++) f[x] = g[o + x];
+    edt1d(f, W, d, v, z);
+    for (let x = 0; x < W; x++) g[o + x] = Math.sqrt(d[x]);
+  }
+  return g;
+}
+
+/** Move a mask edge outwards (shift > 0) or inwards (shift < 0) by `shift` pixels, with a 1px soft edge. */
+export function shiftMaskEdge(mask, W, H, shift) {
+  const n = W * H, out = new Uint8Array(n);
+  if (!shift) { out.set(mask); return out; }
+  if (shift > 0) {
+    const on = new Uint8Array(n); for (let i = 0; i < n; i++) on[i] = mask[i] >= 128;
+    const dist = distanceTo(on, W, H);
+    for (let i = 0; i < n; i++) out[i] = on[i] ? Math.max(mask[i], 255) : Math.round(Math.min(1, Math.max(0, shift + 1 - dist[i])) * 255);
+  } else {
+    const R = -shift, off = new Uint8Array(n); for (let i = 0; i < n; i++) off[i] = mask[i] < 128;
+    const dist = distanceTo(off, W, H);
+    for (let i = 0; i < n; i++) out[i] = off[i] ? 0 : Math.round(Math.min(1, Math.max(0, dist[i] - R)) * 255);
+  }
+  return out;
+}
+
+/** Refine-edge pipeline: smooth (blur + re-threshold), then shift edge (expand/contract), then feather. */
+export function refineMask(mask, W, H, { smooth = 0, shift = 0, feather = 0 } = {}) {
+  let m = mask;
+  if (smooth > 0) {
+    m = blurMask(m, W, H, smooth);
+    for (let i = 0; i < m.length; i++) m[i] = Math.max(0, Math.min(255, Math.round((m[i] - 128) * 4 + 128)));
+  }
+  if (shift) m = shiftMaskEdge(m, W, H, Math.round(shift));
+  if (feather > 0) m = blurMask(m, W, H, feather);
+  if (m === mask) m = new Uint8Array(mask);
+  return m;
+}

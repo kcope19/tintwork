@@ -2,12 +2,15 @@
 // Network-first for app files (so updates show up immediately when online), falling
 // back to the cache when offline. All paths are relative to this file, so the app
 // can live in any sub-folder of any static host.
-const CACHE = 'tintwork-shell-v0.3.0';
+const CACHE = 'tintwork-shell-v0.4.0';
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
   './src/main.js', './src/pixels.js', './src/selection.js', './src/ops.js', './src/worker.js', './src/icons.js',
   './src/curves-editor.js', './src/autosave.js',
   './src/styles.css', './src/logo.svg',
+  './fonts/fonts.css', './fonts/inter/inter-latin-400-normal.woff2', './fonts/inter/inter-latin-700-normal.woff2',
+  './fonts/lora/lora-latin-400-normal.woff2', './fonts/lora/lora-latin-700-normal.woff2', './fonts/bebas-neue/bebas-neue-latin-400-normal.woff2',
+  './fonts/pacifico/pacifico-latin-400-normal.woff2', './fonts/jetbrains-mono/jetbrains-mono-latin-400-normal.woff2', './fonts/jetbrains-mono/jetbrains-mono-latin-700-normal.woff2',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
 ];
 

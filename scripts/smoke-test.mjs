@@ -12,7 +12,7 @@ const assets = path.join(root, 'test-assets');
 fs.mkdirSync(shots, { recursive: true });
 fs.mkdirSync(assets, { recursive: true });
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2', '.txt': 'text/plain' };
 const server = http.createServer((req, res) => {
   const p = path.join(root, decodeURIComponent(new URL(req.url, 'http://x').pathname));
   const file = fs.existsSync(p) && fs.statSync(p).isDirectory() ? path.join(p, 'index.html') : p;
@@ -637,6 +637,8 @@ check(await page.evaluate(() => { const l = window.tintwork.doc.layers[0]; retur
 // ============================================================================
 // v0.3: autosave to IndexedDB + crash recovery
 // ============================================================================
+// start from an empty autosave store (earlier documents of this run each have their own slot)
+await page.evaluate(async () => { await window.tintwork.autosaveNow(); await window.tintwork.clearAutosave(); });
 await page.evaluate(async () => {
   const t = window.tintwork; t.newDocument(320, 200, 'white', 'autosave-test');
   const l = t.doc.layers[0], x = l.canvas.getContext('2d'); x.fillStyle = 'rgb(10,200,30)'; x.fillRect(20, 20, 100, 60); t.touch(l); t.commit('Green box');
@@ -650,8 +652,8 @@ await page.locator('#tText').fill('Saved?'); await page.locator('#tText').dispat
 const beforeCrash = await page.evaluate(() => { const t = window.tintwork; return { n: t.doc.layers.length, kinds: t.doc.layers.map((l) => l.kind || 'pixels'), px: t.compositePixel(50, 50), px2: t.compositePixel(220, 120) }; });
 await page.waitForTimeout(1800); // debounced autosave
 await page.evaluate(() => window.tintwork.autosaveNow());
-const stored = await page.evaluate(async () => { const r = await window.tintwork.readAutosave(); return r && { dirty: r.dirty, n: r.layers.length, blob: r.layers[0].png instanceof ArrayBuffer, name: r.name }; });
-check(stored && stored.dirty && stored.n === beforeCrash.n && stored.blob && stored.name === 'autosave-test', 'document autosaved to IndexedDB (PNG bytes per layer)');
+const stored = await page.evaluate(async () => { const r = await window.tintwork.readAutosave(); return r && { dirty: r.dirty, n: r.layerCount, v: r.version, steps: r.history.entries.length, ids: r.imageIds.length, name: r.name }; });
+check(stored && stored.dirty && stored.v === 2 && stored.n === beforeCrash.n && stored.steps >= 5 && stored.ids > 0 && stored.name === 'autosave-test', `document autosaved to IndexedDB with its undo history (${stored?.steps} steps, ${stored?.ids} images)`);
 // simulate a crash: reload without saving
 await page.reload();
 await page.waitForSelector('#modal:not(.hidden)', { timeout: 5000 });
@@ -683,10 +685,318 @@ await page.reload();
 await page.waitForSelector('#modal:not(.hidden)');
 await page.locator('#modalCancel').click();
 await page.waitForTimeout(200);
-check(await page.evaluate(async () => !(await window.tintwork.readAutosave())), 'Discard deletes the autosaved copy');
+check(await page.evaluate(async () => !(await window.tintwork.listAutosaves()).some((r) => r.name === 'discard-me')), 'Discard deletes the autosaved copy');
 await page.reload(); await page.waitForTimeout(600);
 check(await page.locator('#modal').evaluate((m) => m.classList.contains('hidden')), 'no prompt after discarding');
 
+{ // v0.4 section (own scope)
+// =====================================================================================
+// v0.4: adjustment blend modes, live filters, free transform, recovery slots,
+//       color range, refine edge, bundled open-licensed fonts
+// =====================================================================================
+const px = (x, y) => page.evaluate(([x, y]) => window.tintwork.compositePixel(x, y), [x, y]);
+await page.evaluate(() => { window.tintwork.closeModal(); window.tintwork.setTool('move'); });
+
+// --- (1) blend modes on adjustment layers, live and merged down -----------------------
+await page.evaluate(() => {
+  const t = window.tintwork; t.newDocument(300, 200, 'white', 'blend-test');
+  const l = t.doc.layers[0], x = l.canvas.getContext('2d'); x.fillStyle = 'rgb(200,100,50)'; x.fillRect(0, 0, 300, 200); t.touch(l); t.commit('Fill');
+  t.newAdjustmentLayer('invert'); t.closeModal();
+});
+await page.selectOption('#blendMode', 'multiply');
+await idle();
+const multExpected = [Math.round(200 * 55 / 255), Math.round(100 * 155 / 255), Math.round(50 * 205 / 255), 255];
+const liveBlend = await px(100, 100);
+check(near(liveBlend, multExpected, 2), `invert adjustment layer in Multiply mode composites as multiply (${liveBlend} ≈ ${multExpected})`);
+await page.locator('#layerOpacity').fill('50'); await page.locator('#layerOpacity').dispatchEvent('change');
+const halfExpected = [0, 1, 2].map((i) => Math.round(([200, 100, 50][i] + multExpected[i]) / 2));
+const liveHalf = await px(100, 100);
+check(near(liveHalf, [...halfExpected, 255], 2), `blend mode respects layer opacity (${liveHalf})`);
+await page.screenshot({ path: path.join(shots, '3x-adjust-blend.png') });
+await page.locator('#layerOpacity').fill('100'); await page.locator('#layerOpacity').dispatchEvent('change');
+await page.keyboard.press('Control+e'); await idle();
+const merged = await page.evaluate(() => ({ n: window.tintwork.doc.layers.length, kind: window.tintwork.doc.layers[0].kind || 'pixels', p: window.tintwork.compositePixel(100, 100) }));
+check(merged.n === 1 && merged.kind === 'pixels' && near(merged.p, multExpected, 2), `merge down bakes the adjustment with its blend mode (${merged.p})`);
+// screen + a masked area: only the revealed half changes
+await page.evaluate(() => {
+  const t = window.tintwork, d = t.doc;
+  t.setSelection(t.makeSelection(d.width, d.height, t.rectMask(d.width, d.height, { x: 0, y: 0, w: 150, h: 200 })), 'Left half');
+  t.newAdjustmentLayer('invert'); t.closeModal(); t.activeLayer().blend = 'screen'; t.touch(t.activeLayer()); t.commit('Screen');
+  t.run('deselect'); t.mergeDown();
+});
+const screenL = await px(50, 100), screenR = await px(250, 100);
+const scr = (a, b) => Math.round(255 - ((255 - a) * (255 - b)) / 255);
+const screenExp = multExpected.slice(0, 3).map((v) => scr(v, 255 - v));
+check(near(screenL, [...screenExp, 255], 2) && near(screenR, multExpected, 2), `masked Screen adjustment merges only inside its mask (${screenL} / ${screenR})`);
+
+// --- (2) live (non-destructive) filters ------------------------------------------------
+await page.evaluate(() => {
+  const t = window.tintwork; t.newDocument(300, 200, 'white', 'live-filters');
+  const l = t.doc.layers[0], x = l.canvas.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 150, 200); t.touch(l); t.commit('Half black');
+  t.fitToScreen();
+});
+{ const m = page.locator('.menu', { has: page.locator('> button', { hasText: 'Filter' }) }); await m.locator('> button').click(); await m.locator('.menu-items [data-cmd="convertSmart"]').click(); }
+check(await page.evaluate(() => window.tintwork.activeLayer().kind === 'smart'), 'Filter ▸ Convert to live layer makes a live filter layer');
+await menuCmd('gaussianBlur');
+await page.waitForSelector('#modal:not(.hidden)');
+check((await page.locator('#modalTitle').textContent()).startsWith('Live'), 'filters on a live layer open the live filter dialog');
+await page.locator('#modalBody input[data-key="radius"]').fill('6'); await page.locator('#modalBody input[data-key="radius"]').dispatchEvent('input');
+await page.locator('#modalOk').click(); await idle(); await page.waitForTimeout(100);
+const blurred = await page.evaluate(() => { const t = window.tintwork, l = t.activeLayer(); return { edge: t.compositePixel(150, 100), src: [...l.source.getContext('2d').getImageData(149, 100, 1, 1).data], n: l.filters.length }; });
+check(blurred.n === 1 && blurred.edge[0] > 60 && blurred.edge[0] < 200 && blurred.src[0] === 0, `live blur renders (edge ${blurred.edge[0]}) while the original pixels stay untouched`);
+check(await page.locator('#layerList li.filter-row').count() === 1, 'Layers panel lists the filter under the layer');
+// toggle off / on from the panel
+await page.locator('#layerList li.filter-row .eye').click(); await idle();
+check((await px(148, 100))[0] === 0, 'hiding the filter shows the original pixels');
+await page.locator('#layerList li.filter-row .eye').click(); await idle();
+check((await px(148, 100))[0] > 20, 'showing it again re-applies the blur');
+// re-edit: stronger radius
+await page.locator('#layerList li.filter-row .mini').first().click();
+await page.waitForSelector('#modal:not(.hidden)');
+const r0 = (await px(140, 100))[0];
+await page.locator('#modalBody input[data-key="radius"]').fill('20'); await page.locator('#modalBody input[data-key="radius"]').dispatchEvent('input');
+await page.locator('#modalOk').click(); await idle(); await page.waitForTimeout(100);
+const r1 = (await px(140, 100))[0];
+check(r1 > r0 && await page.evaluate(() => window.tintwork.activeLayer().filters[0].params.radius === 20), `re-editing the filter updates the result (${r0} → ${r1})`);
+// stack a second filter (vignette) via the live panel, then reorder and delete it
+await page.evaluate(() => window.tintwork.editLayer());
+await page.waitForSelector('.live-panel');
+await page.locator('[data-live-add="vignette"]').click();
+await page.waitForSelector('#modal:not(.hidden)');
+await page.locator('#modalOk').click(); await idle(); await page.waitForTimeout(100);
+const stack = await page.evaluate(() => window.tintwork.activeLayer().filters.map((f) => f.type).join(','));
+const corner = await px(298, 2), white = await px(290, 100);
+check(stack === 'gaussianBlur,vignette' && corner[0] < 250, `filters stack (${stack}); vignette darkens corners (${corner[0]})`);
+// filter mask from a selection: filters only on the right half
+await page.evaluate(() => { const t = window.tintwork, d = t.doc; t.setSelection(t.makeSelection(d.width, d.height, t.rectMask(d.width, d.height, { x: 150, y: 0, w: 150, h: 200 })), 'Right'); t.editLayer(); });
+await page.waitForSelector('.live-panel');
+await page.locator('[data-live="maskSel"]').click(); await idle(); await page.waitForTimeout(100);
+await page.locator('#modalOk').click();
+await page.evaluate(() => window.tintwork.run('deselect'));
+const masked = { left: await px(140, 100), right: await px(160, 100) };
+check(masked.left[0] === 0 && masked.right[0] < 250 && await page.locator('#layerList li.fmask-row').count() === 1, `filter mask limits the filters (left ${masked.left[0]}, right ${masked.right[0]})`);
+await page.screenshot({ path: path.join(shots, '3x-smart-filters.png') });
+// painting the filter mask black hides the filters there
+await page.locator('#layerList li.fmask-row canvas').click();
+await page.evaluate(() => { const t = window.tintwork; t.setFg('#000000'); t.state.opts.brushSize = 60; t.state.opts.brushHardness = 100; t.state.opts.brushOpacity = 100; t.setTool('brush'); });
+await clickDoc(200, 100); await idle();
+const painted = await px(200, 100);
+check(painted[0] === 255 && await page.evaluate(() => window.tintwork.activeLayer().kind === 'smart'), `painting the filter mask hides the filters without converting the layer (${painted[0]})`);
+const fmAt = () => page.evaluate(() => { const l = window.tintwork.activeLayer(); return l.fmask.canvas.getContext('2d').getImageData(200 - l.x, 100 - l.y, 1, 1).data[0]; });
+const fmPainted = await fmAt();
+await page.evaluate(() => window.tintwork.undo());
+const fmUndone = await fmAt();
+check(fmPainted < 20 && fmUndone > 235, `undo restores the filter mask (mask value ${fmPainted} → ${fmUndone})`);
+// undo back past the filter mask & vignette, then redo
+const hist = await page.evaluate(() => { const t = window.tintwork; t.undo(); t.undo(); return t.activeLayer().filters.length; });
+check(hist === 2 && await page.evaluate(() => !window.tintwork.activeLayer().fmask), 'undo walks back through live-filter edits');
+await page.evaluate(() => { const t = window.tintwork; t.redo(); t.redo(); });
+// project round-trip keeps the layer live
+const reloaded = await page.evaluate(async () => {
+  const t = window.tintwork, data = t.serializeProject(), before = t.compositePixel(160, 100);
+  await t.openFile(new File([JSON.stringify(data)], 'live.tintwork.json', { type: 'application/json' }), 'open');
+  const l = t.doc.layers[0];
+  return { v: data.version, kind: l.kind, filters: l.filters?.length, fmask: !!l.fmask, before, after: t.compositePixel(160, 100) };
+});
+check(reloaded.v === 4 && reloaded.kind === 'smart' && reloaded.filters === 2 && reloaded.fmask && near(reloaded.before, reloaded.after, 1), 'project files (v4) keep the layer live: original pixels, filter stack and filter mask');
+await page.evaluate(() => { const t = window.tintwork; t.setTool('move'); t.run('rasterizeLayer'); });
+check(await page.evaluate(() => !window.tintwork.activeLayer().kind && window.tintwork.history.entries.at(-1).label === 'Convert live layer to pixels'), 'Layer ▸ Convert to pixels bakes a live layer');
+
+// --- (3) free transform ----------------------------------------------------------------
+await page.evaluate(() => {
+  const t = window.tintwork; t.newDocument(400, 300, 'white', 'transform'); t.run('layerNew');
+  const l = t.activeLayer(), x = l.canvas.getContext('2d'); x.fillStyle = '#ff0000'; x.fillRect(100, 100, 100, 100); t.touch(l); t.commit('Red square');
+  t.fitToScreen(); t.setTool('move');
+});
+await page.locator('#viewport').focus();
+await page.keyboard.press('Control+t');
+const xf0 = await page.evaluate(() => { const x = window.tintwork.xf; return x && { w: x.w, h: x.h, cx: x.cx, cy: x.cy }; });
+check(xf0 && xf0.w === 100 && xf0.h === 100 && xf0.cx === 150 && xf0.cy === 150, 'Ctrl+T starts a free transform around the layer content');
+check(await page.locator('#optionsbar [data-xf="rot"]').count() === 1, 'options bar shows W / H / angle / skew fields while transforming');
+// drag the bottom-right handle with Shift (keeps aspect)
+{
+  const a = await docToScreen(200, 200), b = await docToScreen(250, 230);
+  await page.mouse.move(a.x, a.y); await page.keyboard.down('Shift'); await page.mouse.down();
+  await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 3 }); await page.mouse.move(b.x, b.y, { steps: 3 });
+  await page.mouse.up(); await page.keyboard.up('Shift');
+}
+const xf1 = await page.evaluate(() => { const x = window.tintwork.xf; return { sx: x.sx, sy: x.sy, cx: x.cx, cy: x.cy }; });
+check(Math.abs(xf1.sx - 1.5) < 0.03 && Math.abs(xf1.sy - xf1.sx) < 1e-9 && Math.abs(xf1.cx - 175) < 2, `corner handle scales from the opposite corner; Shift keeps aspect (${xf1.sx.toFixed(3)} × ${xf1.sy.toFixed(3)})`);
+await page.screenshot({ path: path.join(shots, '3x-free-transform.png') });
+await page.keyboard.press('Enter');
+const scaled = { in: await px(240, 240), out: await px(95, 95), tl: await px(103, 103), hist: await page.evaluate(() => window.tintwork.history.entries.at(-1).label) };
+check(near(scaled.in, [255, 0, 0, 255], 2) && near(scaled.out, [255, 255, 255, 255], 2) && near(scaled.tl, [255, 0, 0, 255], 2) && scaled.hist === 'Free transform', 'Enter applies the scale (pixels checked) as one history step');
+// rotate 45° via the numeric field
+await page.keyboard.press('Control+t');
+await page.locator('#optionsbar [data-xf="rot"]').fill('45'); await page.locator('#optionsbar [data-xf="rot"]').dispatchEvent('change');
+await page.locator('#optionsbar [data-cmd="xfApply"]').click();
+const rot = { corner: await px(106, 106), top: await px(175, 78), centre: await px(175, 175) };
+check(near(rot.corner, [255, 255, 255, 255], 3) && rot.top[0] > 200 && rot.top[1] < 60 && near(rot.centre, [255, 0, 0, 255], 2), 'rotation by 45° moves the corners (pixel checks)');
+// rotate by dragging outside the box with Shift (15° snapping), then cancel with Esc
+await page.keyboard.press('Control+t');
+{
+  const xfs = await page.evaluate(() => { const x = window.tintwork.xf; return { cx: x.cx, cy: x.cy, w: x.w }; });
+  const a = await docToScreen(xfs.cx + xfs.w / 2 + 30, xfs.cy), b = await docToScreen(xfs.cx, xfs.cy + xfs.w / 2 + 31);
+  await page.mouse.move(a.x, a.y); await page.keyboard.down('Shift'); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 6 }); await page.mouse.up(); await page.keyboard.up('Shift');
+}
+const deg = await page.evaluate(() => Math.round(window.tintwork.xf.rot * 180 / Math.PI));
+check(deg === 90, `dragging outside rotates, Shift snaps to 15° steps (${deg}°)`);
+await page.keyboard.press('Escape');
+check(await page.evaluate(() => !window.tintwork.xf) && near(await px(175, 78), rot.top, 2), 'Esc cancels the transform and restores the pixels');
+// skew with Ctrl on an edge handle
+await page.keyboard.press('Control+z'); // back to the square (undo the rotation)
+await page.keyboard.press('Control+t');
+{
+  const a = await docToScreen(175, 100), b = await docToScreen(225, 100);
+  await page.mouse.move(a.x, a.y); await page.keyboard.down('Control'); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up(); await page.keyboard.up('Control');
+}
+const kx = await page.evaluate(() => window.tintwork.xf.kx);
+await page.keyboard.press('Enter');
+const sk = { topRight: await px(270, 105), bottomLeft: await px(105, 245), mid: await px(175, 175) };
+check(Math.abs(kx + 50 / 75) < 0.03 && near(sk.topRight, [255, 0, 0, 255], 3) && near(sk.bottomLeft, [255, 0, 0, 255], 3), `Ctrl+edge handle skews (kx ${kx.toFixed(3)}; pixels follow)`);
+check(await page.evaluate(() => { const t = window.tintwork; t.undo(); return !t.xf && t.history.entries[t.history.index].label === 'Free transform'; }), 'undo removes the skew');
+// transform a selection: the selected pixels move/scale and the selection follows
+await page.evaluate(() => { const t = window.tintwork, d = t.doc; t.setSelection(t.makeSelection(d.width, d.height, t.rectMask(d.width, d.height, { x: 100, y: 100, w: 75, h: 150 })), 'Left part'); });
+await page.keyboard.press('Control+t');
+{
+  const a = await docToScreen(137, 175), b = await docToScreen(37, 175);
+  await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up();
+}
+await page.keyboard.press('Enter');
+const selXf = await page.evaluate(() => { const t = window.tintwork, s = t.doc.selection; return { s: s && [s.x, s.y, s.w, s.h], moved: t.compositePixel(20, 175), hole: t.compositePixel(120, 175), rest: t.compositePixel(240, 175), label: t.history.entries[t.history.index].label }; });
+check(selXf.label === 'Transform selection' && selXf.s && Math.abs(selXf.s[0] - 0) <= 1 && near(selXf.moved, [255, 0, 0, 255], 2) && near(selXf.hole, [255, 255, 255, 255], 2) && near(selXf.rest, [255, 0, 0, 255], 2),
+  `transforming a selection moves only the selected pixels; the selection follows (${selXf.s})`);
+await page.evaluate(() => window.tintwork.run('deselect'));
+
+// --- (4) autosave with bounded undo history in several recovery slots ---------------------
+await page.evaluate(async () => { const t = window.tintwork; await t.autosaveNow(); await t.clearAutosave(); });
+await page.evaluate(async () => {
+  const t = window.tintwork;
+  t.newDocument(200, 120, 'white', 'slot-a');
+  const a = t.doc.layers[0]; a.canvas.getContext('2d').fillStyle = '#00aa00'; a.canvas.getContext('2d').fillRect(0, 0, 100, 120); t.touch(a); t.commit('Green');
+  await t.autosaveNow();
+  t.newDocument(200, 120, 'white', 'slot-b');
+  const b = t.doc.layers[0], x = b.canvas.getContext('2d');
+  for (let i = 0; i < 25; i++) { x.fillStyle = `rgb(${i * 10},0,${255 - i * 10})`; x.fillRect(i * 8, 0, 8, 120); t.touch(b); t.commit(`Stripe ${i + 1}`); }
+  await t.autosaveNow();
+});
+const slots = await page.evaluate(async () => (await window.tintwork.listAutosaves()).map((r) => ({ name: r.name, steps: r.steps, dirty: r.dirty })));
+check(slots.length === 2 && slots[0].name === 'slot-b' && slots[0].steps === 20 && slots[1].name === 'slot-a', `each document gets its own slot; history bounded to the last 20 steps (${JSON.stringify(slots)})`);
+const stripe24 = await px(23 * 8 + 4, 60);
+await page.reload();
+await page.waitForSelector('#modal:not(.hidden)');
+const rows = await page.locator('#modalBody li.slot-row').count();
+check(rows === 2 && (await page.locator('#modalBody').textContent()).includes('20 undo steps'), `recovery prompt lists both unsaved documents (${rows} slots)`);
+await page.screenshot({ path: path.join(shots, '3x-recovery-slots.png') });
+await page.locator('#modalBody li.slot-row', { hasText: 'slot-b' }).locator('[data-recover]').click();
+await page.waitForFunction(() => window.tintwork.doc?.name === 'slot-b');
+const recB = await page.evaluate(() => { const t = window.tintwork; return { n: t.history.entries.length, label: t.history.entries[t.history.index].label, p: t.compositePixel(23 * 8 + 4, 60) }; });
+check(recB.n === 20 && recB.label === 'Stripe 25' && near(recB.p, stripe24, 1), `recovered document keeps 20 undo steps (${recB.label})`);
+await page.evaluate(() => { window.tintwork.undo(); window.tintwork.undo(); });
+check(near(await px(23 * 8 + 4, 60), [255, 255, 255, 255], 1) && await page.evaluate(() => window.tintwork.history.entries[window.tintwork.history.index].label === 'Stripe 23'), 'undo works after recovery (pixels roll back)');
+await page.evaluate(() => window.tintwork.run('recoverAutosave'));
+await page.waitForSelector('#modalBody li.slot-row');
+await page.locator('#modalBody li.slot-row', { hasText: 'slot-a' }).locator('[data-recover]').click();
+await page.waitForFunction(() => window.tintwork.doc?.name === 'slot-a');
+check(near(await px(50, 60), [0, 170, 0, 255], 1) && await page.evaluate(() => window.tintwork.history.entries.length === 2), 'File ▸ Recover autosave restores another slot with its history');
+// old slots are evicted beyond the limit
+const evicted = await page.evaluate(async () => {
+  const t = window.tintwork;
+  for (let i = 0; i < 6; i++) { t.newDocument(50, 50, 'white', `many-${i}`); await t.autosaveNow(); }
+  return (await t.listAutosaves()).map((r) => r.name);
+});
+check(evicted.length === 5 && !evicted.includes('slot-a') && evicted[0] === 'many-5', `only the ${evicted.length} newest slots are kept`);
+await page.evaluate(async () => { await window.tintwork.clearAutosave(); });
+
+// --- (5) select by color range ----------------------------------------------------------
+await page.evaluate(() => {
+  const t = window.tintwork; t.newDocument(300, 150, 'white', 'color-range');
+  const l = t.doc.layers[0], x = l.canvas.getContext('2d');
+  x.fillStyle = '#e02020'; x.fillRect(0, 0, 100, 150); x.fillStyle = '#2040e0'; x.fillRect(100, 0, 100, 150); x.fillStyle = '#20c040'; x.fillRect(200, 0, 100, 75);
+  x.fillStyle = '#b81818'; x.fillRect(20, 20, 30, 30); // a darker red patch
+  t.touch(l); t.commit('Swatches'); t.fitToScreen(); t.setTool('select');
+});
+await page.locator('#optionsbar [data-cmd="colorRange"]').click();
+await page.waitForSelector('#crPreview');
+await clickDoc(80, 100); // passive dialog: clicking the canvas samples
+check(await page.locator('#crColor').inputValue() === '#e02020', 'clicking the canvas samples the color');
+await page.locator('#crFuzz').fill('60'); await page.locator('#crFuzz').dispatchEvent('input');
+await page.screenshot({ path: path.join(shots, '3x-color-range.png') });
+await page.locator('#modalOk').click(); await idle();
+const cr = await page.evaluate(() => { const s = window.tintwork.doc.selection, at = (x, y) => s.mask[y * s.W + x]; return { red: at(80, 100), patch: at(30, 30), blue: at(150, 100), green: at(250, 30), white: at(250, 120) }; });
+check(cr.red === 255 && cr.patch > 0 && cr.blue === 0 && cr.green === 0 && cr.white === 0, `color range selects the sampled reds only (${JSON.stringify(cr)})`);
+await page.evaluate(() => window.tintwork.run('deselect'));
+await page.evaluate(() => window.tintwork.openColorRangeDialog());
+await page.selectOption('#crMode', 'blues'); await page.locator('#modalOk').click(); await idle();
+const crB = await page.evaluate(() => { const s = window.tintwork.doc.selection; return s && [s.x, s.y, s.w, s.h]; });
+check(JSON.stringify(crB) === '[100,0,100,150]', `hue preset "Blues" selects the blue block (${crB})`);
+await page.evaluate(() => window.tintwork.run('deselect'));
+await page.evaluate(() => window.tintwork.openColorRangeDialog());
+await page.selectOption('#crMode', 'highlights'); await page.locator('#modalOk').click(); await idle();
+const crH = await page.evaluate(() => { const s = window.tintwork.doc.selection, at = (x, y) => s.mask[y * s.W + x]; return { white: at(250, 120), blue: at(150, 50) }; });
+check(crH.white === 255 && crH.blue === 0, 'tonal range "Highlights" selects the white area');
+
+// --- (6) refine edge: shift edge, smooth, feather ----------------------------------------
+await page.evaluate(() => { const t = window.tintwork, d = t.doc; t.setSelection(t.makeSelection(d.width, d.height, t.rectMask(d.width, d.height, { x: 100, y: 40, w: 100, h: 70 })), 'Rect'); });
+await page.keyboard.press('Control+Alt+r');
+await page.waitForSelector('#modal:not(.hidden)');
+const setRange = async (key, v) => { const i = page.locator(`#modalBody input[data-key="${key}"]`); await i.fill(String(v)); await i.dispatchEvent('input'); };
+await setRange('shift', 10); await idle(); await page.waitForTimeout(150);
+const prevSel = await page.evaluate(() => { const s = window.tintwork.doc.selection; return [s.x, s.y, s.w, s.h]; });
+check(JSON.stringify(prevSel) === '[90,30,120,90]', `refine edge previews live: shift +10 px expands (${prevSel})`);
+await setRange('feather', 4); await idle(); await page.waitForTimeout(150);
+await page.screenshot({ path: path.join(shots, '3x-refine-edge.png') });
+await page.locator('#modalOk').click(); await idle();
+const ref = await page.evaluate(() => { const t = window.tintwork, s = t.doc.selection, at = (x, y) => s.mask[y * s.W + x]; return { inside: at(150, 75), edge: at(90, 75), outside: at(80, 75), label: t.history.entries[t.history.index].label, steps: t.history.entries.filter((e) => e.label === 'Refine edge').length }; });
+check(ref.inside === 255 && ref.edge > 40 && ref.edge < 215 && ref.outside < 10 && ref.label === 'Refine edge' && ref.steps === 1, `OK applies expand + feather as one step (edge ${ref.edge})`);
+await page.keyboard.press('Control+z');
+await page.evaluate(() => window.tintwork.openRefineDialog());
+await page.waitForSelector('#modal:not(.hidden)');
+await setRange('shift', -15); await setRange('feather', 0); await setRange('smooth', 0); await idle();
+await page.locator('#modalOk').click(); await idle();
+const contracted = await page.evaluate(() => { const s = window.tintwork.doc.selection; return [s.x, s.y, s.w, s.h]; });
+check(JSON.stringify(contracted) === '[115,55,70,40]', `negative shift contracts the selection (${contracted})`);
+// smoothing rounds a jagged selection
+await page.evaluate(() => {
+  const t = window.tintwork, d = t.doc, m = new Uint8Array(d.width * d.height);
+  for (let y = 30; y < 120; y++) for (let x = 60; x < 240; x++) if (((x >> 2) + (y >> 2)) % 2 === 0 || (x > 90 && x < 210 && y > 50 && y < 100)) m[y * d.width + x] = 255;
+  t.setSelection(t.makeSelection(d.width, d.height, m), 'Jagged');
+});
+const jag = await page.evaluate(() => { const s = window.tintwork.doc.selection; let e = 0; for (let y = 1; y < s.H; y++) for (let x = 1; x < s.W; x++) { const i = y * s.W + x; if ((s.mask[i] >= 128) !== (s.mask[i - 1] >= 128)) e++; } return e; });
+await page.evaluate(() => window.tintwork.openRefineDialog());
+await page.waitForSelector('#modal:not(.hidden)');
+await setRange('shift', 0); await setRange('smooth', 6); await idle();
+await page.locator('#modalOk').click(); await idle();
+const jag2 = await page.evaluate(() => { const s = window.tintwork.doc.selection; let e = 0; for (let y = 1; y < s.H; y++) for (let x = 1; x < s.W; x++) { const i = y * s.W + x; if ((s.mask[i] >= 128) !== (s.mask[i - 1] >= 128)) e++; } return e; });
+check(jag2 < jag / 3, `smooth removes jagged edges (${jag} → ${jag2} edge transitions)`);
+await page.evaluate(() => { const t = window.tintwork; t.run('deselect'); t.state.opts.refineSmooth = 0; t.state.opts.refineShift = 0; t.state.opts.refineFeather = 0; });
+
+// --- (7) bundled open-licensed fonts --------------------------------------------------------
+const fontFiles = await page.evaluate(async () => {
+  const get = async (u) => { const r = await fetch(u); return r.ok ? (await r.arrayBuffer()).byteLength : 0; };
+  return { css: await get('fonts/fonts.css'), woff: await get('fonts/bebas-neue/bebas-neue-latin-400-normal.woff2'), lic: await get('fonts/pacifico/OFL.txt') };
+});
+check(fontFiles.css > 0 && fontFiles.woff > 1000 && fontFiles.lic > 1000, 'fonts, font CSS and OFL license files are served locally');
+await page.evaluate(async () => { const t = window.tintwork; t.newDocument(900, 420, 'white', 'fonts'); t.fitToScreen(); await Promise.all(Object.keys(t.BUNDLED_FONTS).map((f) => t.loadFont({ font: f, size: 40 }))); });
+check(await page.evaluate(() => Object.keys(window.tintwork.BUNDLED_FONTS).every((f) => document.fonts.check(`40px "${f}"`))), 'all five bundled fonts load (Inter, Lora, Bebas Neue, Pacifico, JetBrains Mono)');
+const fontsUsed = ['Inter', 'Lora', 'Bebas Neue', 'Pacifico', 'JetBrains Mono'];
+for (let i = 0; i < fontsUsed.length; i++) {
+  await page.keyboard.press('t'); await clickDoc(30, 20 + i * 78);
+  await page.locator('#tText').fill(`${fontsUsed[i]} — Tintwork 0.4`);
+  await page.selectOption('#tFont', fontsUsed[i]);
+  await page.locator('#tSize').fill('48'); await page.locator('#tSize').dispatchEvent('input');
+  await page.locator('#modalOk').click();
+}
+await idle(); await page.waitForTimeout(200);
+const widths = await page.evaluate(() => window.tintwork.doc.layers.filter((l) => l.kind === 'text').map((l) => ({ f: l.text.font, w: l.canvas.width })));
+const fallbackW = await page.evaluate(() => { const c = document.createElement('canvas').getContext('2d'); c.font = '48px sans-serif'; return Math.round(c.measureText('Bebas Neue — Tintwork 0.4').width); });
+const bebas = widths.find((w) => w.f === 'Bebas Neue'), mono = widths.find((w) => w.f === 'JetBrains Mono');
+check(widths.length === 5 && bebas.w < fallbackW && mono.w > bebas.w, `text renders with the bundled fonts (Bebas Neue ${bebas.w}px wide vs ${fallbackW}px fallback)`);
+const inkInk = await page.evaluate(() => { const l = window.tintwork.doc.layers.find((q) => q.text?.font === 'Pacifico'), a = l.canvas.getContext('2d').getImageData(0, 0, l.canvas.width, l.canvas.height).data; let n = 0; for (let i = 3; i < a.length; i += 4) if (a[i] > 128) n++; return n; });
+check(inkInk > 1500, `Pacifico text layer has rendered glyph pixels (${inkInk})`);
+await page.screenshot({ path: path.join(shots, '3x-fonts.png') });
+
+} // end v0.4 section
 await browser.close();
 server.close();
 if (errors.length) { console.error(`\n${errors.length} problem(s):\n` + errors.join('\n')); process.exit(1); }

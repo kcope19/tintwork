@@ -1,0 +1,10 @@
+/* Open-licensed fonts bundled with Tintwork (SIL Open Font License 1.1, see each folder's OFL.txt).
+   Latin subsets taken from the Fontsource npm packages (https://fontsource.org). */
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 400; font-display: swap; src: url('./inter/inter-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 700; font-display: swap; src: url('./inter/inter-latin-700-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Lora'; font-style: normal; font-weight: 400; font-display: swap; src: url('./lora/lora-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Lora'; font-style: normal; font-weight: 700; font-display: swap; src: url('./lora/lora-latin-700-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Bebas Neue'; font-style: normal; font-weight: 400; font-display: swap; src: url('./bebas-neue/bebas-neue-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Pacifico'; font-style: normal; font-weight: 400; font-display: swap; src: url('./pacifico/pacifico-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('./jetbrains-mono/jetbrains-mono-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 700; font-display: swap; src: url('./jetbrains-mono/jetbrains-mono-latin-700-normal.woff2') format('woff2'); }

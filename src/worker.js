@@ -1,5 +1,5 @@
 // Background worker for heavy pixel work so the UI stays responsive.
-import { runOp, blendMasked, blurMask, healRegion, spotHeal } from './pixels.js';
+import { runOp, blendMasked, blurMask, healRegion, spotHeal, colorRangeMask, refineMask } from './pixels.js';
 
 self.onmessage = (e) => {
   const { id, kind } = e.data;
@@ -7,6 +7,18 @@ self.onmessage = (e) => {
     if (kind === 'blurMask') {
       const { mask, W, H, radius } = e.data;
       const out = blurMask(new Uint8Array(mask), W, H, radius);
+      self.postMessage({ id, mask: out.buffer }, [out.buffer]);
+      return;
+    }
+    if (kind === 'colorRange') {
+      const { buffer, width, height, params } = e.data;
+      const out = colorRangeMask(new ImageData(new Uint8ClampedArray(buffer), width, height), params);
+      self.postMessage({ id, mask: out.buffer }, [out.buffer]);
+      return;
+    }
+    if (kind === 'refineMask') {
+      const { mask, W, H, params } = e.data;
+      const out = refineMask(new Uint8Array(mask), W, H, params);
       self.postMessage({ id, mask: out.buffer }, [out.buffer]);
       return;
     }

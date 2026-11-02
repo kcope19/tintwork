@@ -1,6 +1,6 @@
 // Client for the pixel worker, with a same-thread fallback (e.g. when module
 // workers are unavailable). All calls return Promises.
-import { runOp, blendMasked, blurMask, healRegion, spotHeal } from './pixels.js';
+import { runOp, blendMasked, blurMask, healRegion, spotHeal, colorRangeMask, refineMask } from './pixels.js';
 
 let worker = null;
 let workerReady = false;
@@ -76,4 +76,20 @@ export async function spot(img, cover) {
   const res = await post({ kind: 'spotHeal', img: a.buffer, cover: c.buffer, w, h }, [a.buffer, c.buffer],
     () => { const r = spotHeal(img.data, cover, w, h); return { data: r.data.buffer, offset: r.offset }; });
   return { img: new ImageData(new Uint8ClampedArray(res.data), w, h), offset: res.offset };
+}
+
+/** Color range: 0..255 selection mask from an ImageData (see pixels.colorRangeMask). */
+export async function colorRange(img, params) {
+  const { width, height } = img, data = new Uint8ClampedArray(img.data);
+  const res = await post({ kind: 'colorRange', buffer: data.buffer, width, height, params }, [data.buffer],
+    () => ({ mask: colorRangeMask(img, params).buffer }));
+  return new Uint8Array(res.mask);
+}
+
+/** Refine edge: smooth / shift edge / feather a 0..255 selection mask (see pixels.refineMask). */
+export async function refine(mask, W, H, params) {
+  const copy = new Uint8Array(mask);
+  const res = await post({ kind: 'refineMask', mask: copy.buffer, W, H, params }, [copy.buffer],
+    () => ({ mask: refineMask(mask, W, H, params).buffer }));
+  return new Uint8Array(res.mask);
 }

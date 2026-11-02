@@ -9,6 +9,23 @@ any third-party branding, assets or proprietary code.
 
 ![Workspace](screenshots/04-layer-blend-brush.png)
 
+## What's new in v0.4
+
+- **Blend modes on adjustment layers**: an adjustment layer's blend mode (Multiply, Screen, Overlay, …) is honored together with its opacity and mask, both live and when it is merged down.
+- **Live (non-destructive) filters**: Layer ▸ Convert to live layer (also in the Filter menu) keeps the original pixels. Gaussian blur, sharpen, noise and vignette then stack on top of them:
+  - Every filter in the stack can be shown or hidden, re-edited (✎ or double-click in the Layers panel), reordered or deleted from the live filter panel (✎ on the layer).
+  - A filter mask limits where the filters apply. You can make it from the selection, paint it (click its thumbnail), invert it or disable it (Shift+click).
+  - The stack is saved in project files (format v4), undo restores it, and Layer ▸ Convert to pixels bakes it.
+- **Free transform** (Edit ▸ Free transform, Ctrl+T, or Transform in the Move tool's bar), for layers and for selected pixels:
+  - Corner and edge handles scale, Shift keeps the aspect ratio, dragging outside the box rotates (Shift snaps to 15°), and Ctrl+drag on a handle skews.
+  - The options bar has numeric W/H %, angle and skew fields. Enter or Apply commits as one undo step; Esc or Cancel restores.
+  - On a phone, two fingers scale, rotate and move the piece instead of the view.
+  - Live layers transform their original pixels, so their filters re-render.
+- **Autosave with history and recovery slots**: each document autosaves with its last 20 undo steps, and the 5 newest unsaved documents are kept. After a crash or reload the recovery prompt lists each one with its step count. Recovered documents can be undone straight away.
+- **Select ▸ Color range…**: sampled color (click the canvas while the dialog is open) with fuzziness, hue presets (reds … magentas) and highlights/midtones/shadows. It has a live mask preview and combines with the selection mode.
+- **Select ▸ Refine edge…** (Ctrl+Alt+R): smooth, feather and contract/expand, with a live preview of the selection.
+- **Bundled open-licensed fonts** for text: Inter, Lora, Bebas Neue, Pacifico and JetBrains Mono (SIL OFL 1.1, Latin-subset WOFF2). They are served locally from `fonts/` with their licenses (see `fonts/README.md`) and cached for offline use.
+
 ## What's new in v0.3
 
 - **Adjustment layers** (Layer ▸ New adjustment layer, or the ✦ button in the Layers panel): brightness/contrast, hue/saturation, exposure, levels, curves, invert and grayscale. They work non-destructively: each one re-renders the layers below it, and nothing is baked in. To change the settings, double-click the layer thumbnail or press ✎. Every adjustment layer has a mask. If a selection is active when you create one, the mask is made from that selection. Merge down bakes the adjustment into pixels.
@@ -129,6 +146,17 @@ v0.3 adds pixel checks for:
 - Ellipse modes, moving and duplicating selected pixels, and cancel.
 - Autosave write, reload, recover and discard.
 
+v0.4 adds pixel checks for:
+- Adjustment-layer blend modes, including opacity, merge down and masks.
+- Live filters: add, hide, re-edit, stack, filter mask from selection and by painting, undo/redo, project round-trip and convert to pixels.
+- Free transform: scale with Shift, numeric rotate, drag-rotate with snap, cancel, skew, undo and selection transform.
+- Recovery slots with a bounded 20-step history, eviction beyond 5 slots and undo after recovery.
+- Color range: sampling, presets and tonal ranges.
+- Refine edge: expand, contract, feather and smooth.
+- Bundled fonts: serving, loading and glyph rendering.
+
+The mobile test (screenshots `m-v4-*`) adds a two-finger pinch/rotate transform, a live blur toggled from the layers sheet, a color-range tap sample, a bundled-font text layer, and recovery of one of two slots with its 20-step history.
+
 The mobile test covers on both devices:
 - Touch drawing, pinch zoom, the modifier chips and the sheets.
 - Adding a curves layer and dragging its curve by touch.
@@ -173,7 +201,8 @@ src/selection.js      mask-based selections (combine modes, invert, outline path
 src/worker.js         Web Worker that runs pixel operations off the main thread
 src/ops.js            promise client for the worker with a main-thread fallback
 src/curves-editor.js  interactive curves point editor (canvas)
-src/autosave.js       IndexedDB autosave / recovery
+src/autosave.js       IndexedDB autosave / recovery (slots, bounded history)
+fonts/                bundled OFL web fonts + licenses
 src/icons.js          original SVG icons
 src/styles.css        dark theme
 scripts/smoke-test.mjs  Playwright end-to-end test and screenshot generator
@@ -187,26 +216,26 @@ test-assets/          generated test image (export outputs are git-ignored)
 
 ## Known limitations
 
-- Adjustment layers apply with Normal blending at their opacity, and their blend mode is ignored. Merge down bakes them in with Normal blending.
-- On documents over 2.5 MP, adjustment layers are computed in the worker, so the previous result shows briefly after each edit.
-- Recovery restores the document but not its undo history.
-- Text layers use system fonts only and have no per-character styling, paragraph boxes or text on a path. Transforms and filters rasterize a text layer.
-- Floating selections can be moved and duplicated, but there is no free transform (scale or rotate) for them. There is no color-range selection.
+- On documents over 2.5 MP, adjustment layers and live filters are computed in the worker, so the previous result shows briefly after each edit.
+- Live filters cover Gaussian blur, sharpen, noise and vignette only, and there is one filter mask per layer. Transforming a selection on a live layer converts it to pixels. Text layers are rasterized when converted.
+- Free transform has no perspective or warp. Resampling is bilinear (canvas smoothing), so repeated transforms of a pixel layer soften it; live layers keep their original pixels, but those originals are resampled too.
+- Color range uses one sample color (no add/subtract eyedroppers or localized clusters), and its preview is downscaled. Refine edge has no hair/edge detection or color decontamination.
+- Autosave keeps the last 20 undo steps per document and 5 documents. iOS Safari may evict website storage after several days without use, so autosave is not a backup; save a project file.
+- Bundled fonts are Latin-subset only, with 400/700 weights (Bebas Neue and Pacifico 400 only). There is no per-character styling, paragraph boxes or text on a path, and transforms and filters rasterize a text layer.
 - Masks are pixel-only (there are no vector masks or clipping masks). Of the adjustments, only Gaussian blur and invert apply to a mask.
 - The clone stamp samples the active layer only, as it was when the stroke started. There is no "sample all layers" option for clone or heal.
-- Filters (blur, sharpen, noise, vignette) are still destructive; there are no smart filters.
 - History stores full layer snapshots (shared when unchanged), so very large images with many steps use a lot of memory.
 - Reading and writing pixels (`getImageData`/`putImageData`) still happens on the main thread, which costs roughly 0.1 s per step on a 12 MP image. Brush strokes, the magic wand and selection outlines are computed on the main thread too.
 - Masks and selections are full document-size 8-bit arrays, so very large documents use more memory.
 - 8-bit sRGB only; no RAW, 16-bit, color management or CMYK.
 - Brush has no pressure sensitivity, spacing or texture settings yet.
-- Single document at a time; only one autosave slot.
+- Single open document at a time (tabs are not implemented).
 
 ## Roadmap
 
 1. ~~Layer masks~~ (done in v0.2). Next: clipping masks and vector masks.
-2. ~~Lasso, polygonal lasso, magic wand, add/subtract/intersect, feather~~ (done in v0.2). ~~Ellipse, select-and-move pixels~~ (v0.3). Next: select by color range, free transform of selections, a quick-mask editing mode, and saved selections.
-3. **Non-destructive editing**: ~~adjustment layers, editable text layers~~ (v0.3). Next: smart filters, clipping masks.
+2. ~~Lasso, polygonal lasso, magic wand, add/subtract/intersect, feather~~ (done in v0.2). ~~Ellipse, select-and-move pixels~~ (v0.3). ~~Color range, refine edge, free transform of selections~~ (v0.4). Next: a quick-mask editing mode, and saved selections.
+3. **Non-destructive editing**: ~~adjustment layers, editable text layers~~ (v0.3), ~~live filters, adjustment blend modes~~ (v0.4). Next: clipping masks, more live filters.
 4. **Retouching**: ~~clone stamp~~ (done in v0.2), ~~healing brush, spot healing~~ (v0.3), dodge/burn, smudge.
 5. **History snapshots**: named snapshots, a history brush, and IndexedDB-backed history so large documents don't run out of memory.
 6. ~~**Curves** with a point editor~~ (v0.3). Next: per-channel levels/curves, color balance, vibrance, white balance, LUT import (.cube).
@@ -214,8 +243,8 @@ test-assets/          generated test image (export outputs are git-ignored)
 8. **RAW support** via a WASM decoder (e.g. LibRaw compiled to WASM), EXIF reading and orientation, 16-bit pipeline.
 9. **Plugin system**: a sandboxed filter/tool API (worker-based, ImageData in/out), a manifest format and a plugin manager.
 10. **Packaging**: installable PWA with offline cache and file handling, and desktop builds (Tauri or Electron) with native open/save dialogs.
-11. Multiple documents (tabs), ~~autosave and recovery~~ (v0.3), pen pressure, custom brushes, guides, rulers and snapping.
+11. Multiple documents (tabs), ~~autosave and recovery~~ (v0.3), ~~recovery slots with history~~ (v0.4), pen pressure, custom brushes, guides, rulers and snapping.
 
 ## License
 
-MIT, original code. The name "Tintwork" is a working title for this project.
+MIT, original code. Bundled fonts in `fonts/` are under the SIL Open Font License 1.1 (see each `OFL.txt`). The name "Tintwork" is a working title for this project.

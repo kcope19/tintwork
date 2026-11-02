@@ -1,13 +1,13 @@
 // Tintwork — an original, browser-based layered image editor (Canvas 2D).
-import { floodMask, similarMask, histogram, runOp, channelHistograms } from './pixels.js';
+import { floodMask, similarMask, histogram, runOp, channelHistograms, colorRangeMask, HUE_PRESETS } from './pixels.js';
 import { createCurvesEditor, identityCurves } from './curves-editor.js';
-import { readAutosave, writeAutosave, clearAutosave, markAutosaveClean, buildRecord, decodeImage } from './autosave.js';
+import { readAutosave, writeAutosave, clearAutosave, markAutosaveClean, listAutosaves, readImages, imageRef, adoptImage, decodeImage, MAX_SLOTS } from './autosave.js';
 import { makeSelection, shapeMask, rectMask, combine, invertSelection, selectionCanvas, selectionOutline, maskRegion, translateSelection } from './selection.js';
 import * as ops from './ops.js';
 import { ICONS } from './icons.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -33,10 +33,13 @@ const state = {
     selMode: 'new', wandTolerance: 32, wandContiguous: true, wandSampleAll: false, featherRadius: 8,
     cloneSize: 40, cloneHardness: 60, cloneOpacity: 100, cloneAligned: true,
     healSize: 40, healHardness: 80, healOpacity: 100, spotSize: 30, spotHardness: 80, spotOpacity: 100,
+    xfKeepAspect: false, xfSkew: false,
+    crMode: 'sampled', crColor: null, crFuzziness: 40, refineSmooth: 0, refineShift: 0, refineFeather: 0,
   },
   selPreview: null,   // in-progress rectangle / lasso outline
   poly: null,         // in-progress polygonal lasso { pts, mode }
   cloneSrc: null, cloneOffset: null,
+  xf: null,           // free-transform session (see startTransform)
   busy: 0,
 };
 let nextLayerId = 1;
@@ -89,17 +92,26 @@ function createLayer(name, w, h, opts = {}) {
 function touch(layer) { layer.rev = ++globalRev; compDirty = true; }
 /** Canvas that defines a layer's geometry (adjustment layers are just a mask). */
 const geomCanvas = (l) => (l.kind === 'adjust' ? l.mask.canvas : l.canvas);
-/** Turn a live text layer into plain pixels (before painting, filters or transforms). */
+/** Turn a live text or live-filter layer into plain pixels (before painting, destructive filters…). */
 function rasterize(l, why) {
-  if (l?.kind !== 'text') return;
-  delete l.kind; delete l.text; l.name = l.name.replace(/^Text: /, '') + ' (pixels)';
-  if (why) toast(`Text layer converted to pixels for ${why}.`);
+  if (l?.kind === 'text') {
+    delete l.kind; delete l.text; l.name = l.name.replace(/^Text: /, '') + ' (pixels)';
+    if (why) toast(`Text layer converted to pixels for ${why}.`);
+  } else if (l?.kind === 'smart') {
+    delete l.kind; delete l.source; delete l.filters; delete l.fmask; delete l.editFMask; smartCache.delete(l.id);
+    if (why) toast(`Live layer converted to pixels for ${why} (its filters are now baked in).`);
+  }
 }
 function touchMask(layer) { if (layer.mask) layer.mask.rev = ++globalRev; compDirty = true; }
 /** Canvas currently being edited on a layer: its mask (when targeted) or its pixels. */
-const editingMask = (l = activeLayer()) => !!(l && l.mask && (l.editMask || l.kind === 'adjust'));
-const targetCanvas = (l = activeLayer()) => (editingMask(l) ? l.mask.canvas : l.canvas);
-function touchTarget(l) { if (editingMask(l)) touchMask(l); else touch(l); }
+/** Live-filter layers can target their filter mask (white = filters show). */
+const editingFMask = (l = activeLayer()) => !!(l && l.kind === 'smart' && l.fmask && l.editFMask);
+const editingMask = (l = activeLayer()) => !!(l && (editingFMask(l) || (l.mask && (l.editMask || l.kind === 'adjust'))));
+const targetCanvas = (l = activeLayer()) => (editingFMask(l) ? l.fmask.canvas : editingMask(l) ? l.mask.canvas : l.canvas);
+function touchTarget(l) {
+  if (editingFMask(l)) { l.fmask.rev = ++globalRev; composeSmart(l, filteredSync(l)); }
+  else if (editingMask(l)) touchMask(l); else touch(l);
+}
 /** Mask canvas: white with alpha = how much of the layer shows (255 = fully revealed). */
 function makeMaskCanvas(w, h, reveal = true) {
   const c = makeCanvas(w, h);
@@ -163,6 +175,17 @@ function ensureCoversDoc(layer) {
     mx.drawImage(layer.mask.canvas, layer.x - x0, layer.y - y0);
     layer.mask.canvas = m; touchMask(layer);
   }
+  if (layer.kind === 'smart') { // grow the original pixels and the filter mask, then re-run the filters
+    const grow = (src, reveal) => {
+      const n = reveal ? makeMaskCanvas(x1 - x0, y1 - y0) : makeCanvas(x1 - x0, y1 - y0), nx = n.getContext('2d');
+      if (reveal) nx.clearRect(layer.x - x0, layer.y - y0, src.width, src.height);
+      nx.drawImage(src, layer.x - x0, layer.y - y0); return n;
+    };
+    layer.source = grow(layer.source, false);
+    if (layer.fmask) { layer.fmask.canvas = grow(layer.fmask.canvas, true); layer.fmask.rev = ++globalRev; }
+    layer.x = x0; layer.y = y0; composeSmart(layer, filteredSync(layer));
+    return;
+  }
   layer.canvas = c; layer.x = x0; layer.y = y0; touch(layer);
 }
 
@@ -190,6 +213,7 @@ function documentFromImage(img, name) {
 }
 function afterDocChange(label) {
   history.entries = []; history.index = -1;
+  state.doc.slot ||= newSlot(); state.xf = null;
   state.crop = null; state.poly = null; state.selPreview = null; state.cloneSrc = null; state.cloneOffset = null;
   compDirty = true;
   commit(label);
@@ -210,17 +234,23 @@ function snapshot() {
     layers: d.layers.map((l) => {
       const old = prev?.layers.find((p) => p.id === l.id && p.rev === l.rev);
       const oldMask = l.mask && prev?.layers.find((p) => p.id === l.id && p.mask && p.mask.rev === l.mask.rev)?.mask;
+      const oldF = l.fmask && prev?.layers.find((p) => p.id === l.id && p.fmask && p.fmask.rev === l.fmask.rev)?.fmask;
       return {
         id: l.id, name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend,
         x: l.x, y: l.y, rev: l.rev, canvas: old ? old.canvas : cloneCanvas(l.canvas), editMask: l.editMask,
         kind: l.kind, adj: l.adj, text: l.text, // treated as immutable: edits replace the object
         mask: l.mask ? { enabled: l.mask.enabled, rev: l.mask.rev, canvas: oldMask ? oldMask.canvas : cloneCanvas(l.mask.canvas) } : null,
+        ...(l.kind === 'smart' ? { // live filters: the source canvas and the filter list are immutable, so they are shared
+          source: l.source, filters: l.filters, editFMask: l.editFMask,
+          fmask: l.fmask ? { enabled: l.fmask.enabled, rev: l.fmask.rev, canvas: oldF ? oldF.canvas : cloneCanvas(l.fmask.canvas) } : null,
+        } : {}),
       };
     }),
   };
 }
 function commit(label) {
   if (!doc()) return;
+  if (state.xf) applyTransform(); // e.g. a Layers-panel change while transforming: finish the transform first
   history.entries.length = history.index + 1;
   history.entries.push({ label, snap: snapshot() });
   if (history.entries.length > history.limit) history.entries.shift();
@@ -237,14 +267,14 @@ function restore(i) {
   state.doc.width = s.width; state.doc.height = s.height;
   state.doc.activeId = s.activeId;
   state.doc.selection = s.selection;
-  state.doc.layers = s.layers.map((l) => ({ ...l, canvas: cloneCanvas(l.canvas), mask: cloneMask(l.mask) }));
-  state.poly = null; state.selPreview = null;
+  state.doc.layers = s.layers.map((l) => ({ ...l, canvas: cloneCanvas(l.canvas), mask: cloneMask(l.mask), ...(l.kind === 'smart' ? { fmask: cloneMask(l.fmask) } : {}) }));
+  state.poly = null; state.selPreview = null; state.xf = null;
   history.index = i;
   state.crop = null;
   compDirty = true;
   updateAll();
 }
-function undo() { if (history.index > 0) { restore(history.index - 1); status(`Undo: ${history.entries[history.index + 1].label}`); } }
+function undo() { if (state.xf) { cancelTransform(); return; } if (history.index > 0) { restore(history.index - 1); status(`Undo: ${history.entries[history.index + 1].label}`); } }
 function redo() { if (history.index < history.entries.length - 1) { restore(history.index + 1); status(`Redo: ${history.entries[history.index].label}`); } }
 
 // ---------------------------------------------------------------------------
@@ -387,12 +417,191 @@ function editLayer(l = activeLayer()) {
   if (!l) return;
   if (l.kind === 'adjust') openAdjustmentLayerDialog(l);
   else if (l.kind === 'text') openTextDialog(null, l);
-  else status('Only adjustment and text layers have settings to edit.');
+  else if (l.kind === 'smart') openLiveFilterPanel(l);
+  else status('Only adjustment, text and live filter layers have settings to edit.');
+}
+
+// --- live filter layers: the original pixels are kept and the filter stack re-runs on change -----
+// l.source   original pixels (immutable canvas, shared with history)
+// l.filters  [{ type, params, enabled }] applied bottom (index 0) to top; replaced, never mutated
+// l.fmask    optional filter mask { canvas, enabled, rev }: white = filtered, black = original
+// l.canvas   the rendered result, recomputed by composeSmart()
+const SMART_FILTERS = ['gaussianBlur', 'sharpen', 'noise', 'vignette'];
+const canvasIds = new WeakMap(); let canvasSeq = 0;
+const canvasId = (c) => { let i = canvasIds.get(c); if (!i) { i = ++canvasSeq; canvasIds.set(c, i); } return i; };
+const smartCache = new Map(); // layer id -> a few recent filter results [{ key, canvas }]
+const smartKey = (l, filters) => `${canvasId(l.source)}|${JSON.stringify(filters.filter((f) => f.enabled).map((f) => [f.type, f.params]))}`;
+const filterInfo = (l) => ({ docW: l.source.width, docH: l.source.height, offX: 0, offY: 0 }); // vignette etc. are layer-relative
+const filterParams = (f) => ({ ...f.params, ...(ADJ[f.type].extra || {}) });
+function smartCacheGet(l, key) { return smartCache.get(l.id)?.find((e) => e.key === key)?.canvas || null; }
+function smartCachePut(l, key, canvas) {
+  const list = (smartCache.get(l.id) || []).filter((e) => e.key !== key); list.unshift({ key, canvas });
+  list.length = Math.min(list.length, 4); smartCache.set(l.id, list); return canvas;
+}
+function filteredSync(l, filters = l.filters) {
+  if (!filters.some((f) => f.enabled)) return l.source;
+  const key = smartKey(l, filters), hit = smartCacheGet(l, key); if (hit) return hit;
+  const src = l.source, img = ctxOf(src).getImageData(0, 0, src.width, src.height);
+  for (const f of filters) if (f.enabled) runOp(f.type, img, filterParams(f), filterInfo(l));
+  return smartCachePut(l, key, putInto(null, img));
+}
+async function filteredAsync(l, filters = l.filters) {
+  if (!filters.some((f) => f.enabled)) return l.source;
+  const key = smartKey(l, filters), hit = smartCacheGet(l, key); if (hit) return hit;
+  const src = l.source; let img = ctxOf(src).getImageData(0, 0, src.width, src.height);
+  for (const f of filters) if (f.enabled) img = await ops.process(f.type, img, filterParams(f), filterInfo(l));
+  return smartCachePut(l, key, putInto(null, img));
+}
+let smartScratch = null;
+/** l.canvas = source × (1 − fmask) + filtered × fmask (exact on premultiplied pixels). */
+function composeSmart(l, filtered) {
+  const src = l.source, w = src.width, h = src.height;
+  let c = l.canvas; if (c.width !== w || c.height !== h) c = makeCanvas(w, h);
+  const x = c.getContext('2d'); x.save(); x.globalAlpha = 1; x.globalCompositeOperation = 'copy';
+  const fm = l.fmask && l.fmask.enabled && filtered !== src ? l.fmask.canvas : null;
+  if (!fm) x.drawImage(filtered, 0, 0);
+  else {
+    x.drawImage(src, 0, 0);
+    x.globalCompositeOperation = 'destination-out'; x.drawImage(fm, 0, 0);
+    if (!smartScratch || smartScratch.width !== w || smartScratch.height !== h) smartScratch = makeCanvas(w, h);
+    const t = smartScratch.getContext('2d'); t.save(); t.globalCompositeOperation = 'copy'; t.drawImage(filtered, 0, 0);
+    t.globalCompositeOperation = 'destination-in'; t.drawImage(fm, 0, 0); t.restore();
+    x.globalCompositeOperation = 'lighter'; x.drawImage(smartScratch, 0, 0);
+  }
+  x.restore(); l.canvas = c; touch(l);
+}
+const renderSmartSync = (l) => composeSmart(l, filteredSync(l));
+/** Apply a geometry change (rotate, scale, crop…) to the original pixels and filter mask, then re-render. */
+function smartGeom(l, fn) {
+  l.source = fn(l.source);
+  if (l.fmask) { l.fmask.canvas = fn(l.fmask.canvas); l.fmask.rev = ++globalRev; }
+  renderSmartSync(l);
+}
+/** Re-render after a filter-stack change (worker for big layers) and optionally record a history step. */
+async function updateSmart(l, label) {
+  const big = l.source.width * l.source.height > ADJ_SYNC_PIXELS && ops.workerStatus().available;
+  if (big) {
+    setBusy(1);
+    try { const fc = await filteredAsync(l); composeSmart(l, fc); }
+    catch (err) { status(`Live filter failed: ${err.message}`); }
+    finally { setBusy(-1); }
+  } else composeSmart(l, filteredSync(l));
+  requestRender();
+  if (label) { commit(label); status(label); } else updateLayersPanel();
+}
+function setSmartFilters(l, filters, label) { l.filters = filters; return updateSmart(l, label); }
+function convertToSmart(l = activeLayer()) {
+  if (!l) return null;
+  if (l.kind === 'adjust') { status('Adjustment layers cannot hold live filters.'); return null; }
+  if (l.kind === 'smart') { status('This is already a live filter layer.'); return l; }
+  if (l.kind === 'text') rasterize(l);
+  ensureCoversDoc(l); // filters need transparent room around tight layers (e.g. after a transform) to spread into
+  Object.assign(l, { kind: 'smart', source: cloneCanvas(l.canvas), filters: [], fmask: null, editFMask: false });
+  touch(l); requestRender(); commit('Convert to live layer');
+  toast('Live layer: filters added from the Filter menu stay editable (✎ in Layers).');
+  return l;
+}
+function addFilterMask(l, fromSelection) {
+  const sel = fromSelection ? doc().selection : null;
+  const m = makeMaskCanvas(l.source.width, l.source.height, !sel);
+  if (sel) m.getContext('2d').drawImage(selectionCanvas(sel), -l.x, -l.y);
+  l.fmask = { canvas: m, enabled: true, rev: ++globalRev };
+}
+function invertFilterMask(l) {
+  const f = l.fmask, m = makeMaskCanvas(f.canvas.width, f.canvas.height), x = m.getContext('2d');
+  x.globalCompositeOperation = 'destination-out'; x.drawImage(f.canvas, 0, 0);
+  f.canvas = m; f.rev = ++globalRev; renderSmartSync(l); requestRender(); commit('Invert filter mask');
+}
+function filterSummary(f) {
+  return ADJ[f.type].params.filter((q) => q.type !== 'checkbox').map((q) => `${q.label} ${f.params[q.key]}${q.unit || ''}`).join(', ');
+}
+/** Add (index = null) or edit one live filter with a live preview; Cancel restores the stack. */
+function openSmartFilterDialog(l, index = null, type = null) {
+  const before = l.filters, fmaskBefore = l.fmask, shown = cloneCanvas(l.canvas);
+  const f0 = index != null ? before[index] : { type, params: Object.fromEntries(ADJ[type].params.map((q) => [q.key, q.value])), enabled: true };
+  const def = ADJ[f0.type], values = { ...f0.params };
+  if (index == null && !l.fmask && doc().selection) addFilterMask(l, true); // a selection limits the new filter
+  const build = () => { const f = { type: f0.type, params: { ...values }, enabled: true }; return index != null ? before.map((g, j) => (j === index ? f : g)) : [...before, f]; };
+  let closed = false, running = false, dirty = false;
+  const pump = async () => {
+    running = true;
+    while (dirty && !closed) {
+      dirty = false; const filters = build(); setBusy(1);
+      try { const fc = await filteredAsync(l, filters); if (!closed) { composeSmart(l, fc); requestRender(); } }
+      catch (err) { status(err.message); } finally { setBusy(-1); }
+    }
+    running = false;
+  };
+  const preview = () => { dirty = true; if (!running) pump(); };
+  const body = document.createElement('div');
+  body.innerHTML = `<p class="muted live-note">Live filter: stays editable. Toggle, reorder or edit it later from the Layers panel.</p>`;
+  for (const q of def.params) body.append(paramField({ ...q, value: values[q.key] }, values, preview, q.value));
+  showModal({
+    title: `${index != null ? 'Edit live' : 'Live'} ${def.title.toLowerCase()}`, body, passive: true, okLabel: index != null ? 'Done' : 'Add filter',
+    ok: () => { closed = true; l.filters = build(); updateSmart(l, `${index != null ? 'Edit' : 'Add'} live filter: ${def.title}`); },
+    cancel: () => { closed = true; l.filters = before; l.fmask = fmaskBefore; l.canvas = shown; touch(l); requestRender(); },
+  });
+  preview();
+}
+/** The live-filter panel: list, toggle, edit, reorder and delete filters; manage the filter mask. */
+function openLiveFilterPanel(l) {
+  const body = document.createElement('div'); body.className = 'live-panel';
+  const draw = () => {
+    const rows = l.filters.map((f, i) => `<div class="live-row" data-i="${i}"><label><input type="checkbox" data-live="toggle" ${f.enabled ? 'checked' : ''}/> ${ADJ[f.type].title}</label>` +
+      `<span class="muted">${escapeHtml(filterSummary(f))}</span><span class="live-btns"><button type="button" data-live="edit">Edit</button>` +
+      `<button type="button" data-live="up" title="Move up (applied later)" ${i === l.filters.length - 1 ? 'disabled' : ''}>▲</button>` +
+      `<button type="button" data-live="down" title="Move down (applied earlier)" ${i === 0 ? 'disabled' : ''}>▼</button>` +
+      `<button type="button" data-live="delete" title="Remove filter">✕</button></span></div>`).reverse().join('');
+    body.innerHTML = `<p class="muted">Filters run from the bottom up on the layer's original pixels.</p>${rows || '<p class="muted">No filters yet.</p>'}` +
+      `<h4>Add filter</h4><div class="choice-list live-add">${SMART_FILTERS.map((t) => `<button type="button" data-live-add="${t}">${ADJ[t].title}</button>`).join('')}</div>` +
+      `<h4>Filter mask</h4><div class="live-mask">${l.fmask
+        ? `<label><input type="checkbox" data-live="maskEnabled" ${l.fmask.enabled ? 'checked' : ''}/> Enabled</label> <button type="button" data-live="maskPaint">Paint mask</button> <button type="button" data-live="maskInvert">Invert</button> <button type="button" data-live="maskDelete">Delete</button>`
+        : `<button type="button" data-live="maskAdd">Add (show all)</button> <button type="button" data-live="maskSel" ${doc().selection ? '' : 'disabled'}>From selection</button>`}</div>`;
+  };
+  const act = async (what, i) => {
+    const fs = l.filters;
+    if (what === 'toggle') await setSmartFilters(l, fs.map((f, j) => (j === i ? { ...f, enabled: !f.enabled } : f)), `${fs[i].enabled ? 'Hide' : 'Show'} live filter`);
+    else if (what === 'edit') { closeModal(); openSmartFilterDialog(l, i); return; }
+    else if (what === 'up' || what === 'down') {
+      const j = what === 'up' ? i + 1 : i - 1; if (j < 0 || j >= fs.length) return;
+      const n = fs.slice(); [n[i], n[j]] = [n[j], n[i]]; await setSmartFilters(l, n, 'Reorder live filters');
+    } else if (what === 'delete') await setSmartFilters(l, fs.filter((_, j) => j !== i), 'Delete live filter');
+    else if (what === 'maskEnabled') { l.fmask.enabled = !l.fmask.enabled; l.fmask.rev = ++globalRev; await updateSmart(l, l.fmask.enabled ? 'Enable filter mask' : 'Disable filter mask'); }
+    else if (what === 'maskPaint') { l.editFMask = true; l.editMask = false; closeModal(); setTool('brush'); updateLayersPanel(); status('Painting the filter mask: black hides the filters, white shows them.'); return; }
+    else if (what === 'maskInvert') invertFilterMask(l);
+    else if (what === 'maskDelete') { l.fmask = null; l.editFMask = false; await updateSmart(l, 'Delete filter mask'); }
+    else if (what === 'maskAdd' || what === 'maskSel') { addFilterMask(l, what === 'maskSel'); await updateSmart(l, 'Add filter mask'); }
+    draw();
+  };
+  body.addEventListener('click', (e) => {
+    const add = e.target.closest('[data-live-add]'); if (add) { closeModal(); openSmartFilterDialog(l, null, add.dataset.liveAdd); return; }
+    const b = e.target.closest('button[data-live]'); if (!b) return;
+    act(b.dataset.live, +(b.closest('[data-i]')?.dataset.i ?? -1));
+  });
+  body.addEventListener('change', (e) => {
+    const c = e.target.closest('input[data-live]'); if (!c) return;
+    act(c.dataset.live, +(c.closest('[data-i]')?.dataset.i ?? -1));
+  });
+  draw();
+  showModal({ title: `Live filters: ${l.name}`, body, hideCancel: true, okLabel: 'Done', passive: true });
+}
+/** Filter menu: on a live layer the filter is added to its stack; otherwise it is applied to pixels. */
+function filterCmd(type) {
+  const l = activeLayer();
+  if (l && l.kind === 'smart' && !editingMask(l)) openSmartFilterDialog(l, null, type);
+  else openAdjust(ADJ[type]);
 }
 
 // --- text layers: kept as editable text and re-rendered on change ----------------------
-const TEXT_FONTS = ['system-ui', 'sans-serif', 'serif', 'monospace', 'Georgia', 'Verdana', 'Courier New', 'cursive'];
-function textFont(t) { return `${t.italic ? 'italic ' : ''}${t.bold ? '700 ' : ''}${t.size}px ${t.font}`; }
+// Bundled open-licensed fonts (SIL OFL 1.1, see fonts/README.md) with a generic fallback each.
+const BUNDLED_FONTS = { Inter: 'sans-serif', Lora: 'serif', 'Bebas Neue': 'sans-serif', Pacifico: 'cursive', 'JetBrains Mono': 'monospace' };
+const GENERIC_FONTS = new Set(['system-ui', 'sans-serif', 'serif', 'monospace', 'cursive']);
+const TEXT_FONTS = [...Object.keys(BUNDLED_FONTS), 'system-ui', 'sans-serif', 'serif', 'monospace', 'Georgia', 'Verdana', 'Courier New', 'cursive'];
+const fontFamilyCSS = (f) => (GENERIC_FONTS.has(f) ? f : `"${f}"`) + (BUNDLED_FONTS[f] ? `, ${BUNDLED_FONTS[f]}` : '');
+function textFont(t) { return `${t.italic ? 'italic ' : ''}${t.bold ? '700 ' : ''}${t.size}px ${fontFamilyCSS(t.font)}`; }
+/** Bundled fonts download on first use: true when `t` can be drawn with its real font now. */
+const fontReady = (t) => !BUNDLED_FONTS[t.font] || !document.fonts || document.fonts.check(textFont(t));
+const loadFont = (t) => (document.fonts ? document.fonts.load(textFont(t)).catch(() => []) : Promise.resolve([]));
 /** Draw `l.text` into a canvas sized to the text, keeping its anchor point fixed. */
 function renderTextLayer(l) {
   const t = l.text, lines = t.text.split('\n'), lh = Math.round(t.size * 1.2);
@@ -451,7 +660,7 @@ function render() {
   const toS = (x, y) => [px + x * z, py + y * z];
 
   const al = activeLayer();
-  if (state.tool === 'move' && al) {
+  if (state.tool === 'move' && al && !state.xf) {
     const [x, y] = toS(al.x, al.y);
     vctx.save(); vctx.strokeStyle = '#7a5cff'; vctx.setLineDash([4, 3]);
     vctx.strokeRect(x + .5, y + .5, al.canvas.width * z, al.canvas.height * z); vctx.restore();
@@ -464,7 +673,7 @@ function render() {
     vctx.restore();
   };
   if (drag?.float) { const f = drag.float, p = new Path2D(); p.addPath(selectionOutline(f.sel), new DOMMatrix().translate(f.dx, f.dy)); ants(p); }
-  else if (d.selection) ants(selectionOutline(d.selection));
+  else if (d.selection && !state.xf) ants(selectionOutline(d.selection));
   if (state.selPreview) {
     const sp = state.selPreview, path = new Path2D();
     if (sp.ellipse) { const e = sp.ellipse; path.ellipse(e.x + e.w / 2, e.y + e.h / 2, e.w / 2, e.h / 2, 0, 0, Math.PI * 2); }
@@ -500,7 +709,8 @@ function render() {
     }
     vctx.restore();
   }
-  if (state.hover && PAINT_TOOLS.includes(state.tool)) {
+  if (state.xf) drawTransformBox(toS);
+  if (state.hover && PAINT_TOOLS.includes(state.tool) && !state.xf) {
     const size = state.opts[`${state.tool}Size`];
     const [x, y] = toS(state.hover.x, state.hover.y);
     const r = Math.max(1, (size / 2) * z);
@@ -568,6 +778,7 @@ const TOOLS = [
 ];
 
 function setTool(id) {
+  if (state.xf && id !== state.tool) applyTransform();
   if (state.tool === 'crop' && id !== 'crop') state.crop = null;
   if (state.tool === 'polylasso' && id !== 'polylasso') state.poly = null;
   state.tool = id;
@@ -732,6 +943,254 @@ const toolHandlers = {
   zoom: { down(p, e) { const r = view.getBoundingClientRect(); zoomAt(e.altKey ? 1 / 1.5 : 1.5, e.clientX - r.left, e.clientY - r.top); } },
 };
 
+// --- Free transform (Ctrl+T): scale, rotate and skew a layer or the selected pixels -------------
+// The piece's local box (0..w, 0..h) maps to the document through M = T(c) · R(rot) · Skew(kx, ky) · S(sx, sy) · T(−w/2, −h/2).
+function xfFrame(x) { // R · Sk as a 2×2 matrix
+  const c = Math.cos(x.rot), s = Math.sin(x.rot);
+  return { a: c - s * x.ky, b: s + c * x.ky, c: c * x.kx - s, d: s * x.kx + c };
+}
+function xfMatrix(x) {
+  const F = xfFrame(x), a = F.a * x.sx, b = F.b * x.sx, c = F.c * x.sy, d = F.d * x.sy;
+  return { a, b, c, d, e: x.cx - (a * x.w / 2 + c * x.h / 2), f: x.cy - (b * x.w / 2 + d * x.h / 2) };
+}
+const applyM = (m, x, y) => ({ x: m.a * x + m.c * y + (m.e || 0), y: m.b * x + m.d * y + (m.f || 0) });
+function invertM(m) {
+  const det = m.a * m.d - m.b * m.c || 1e-9, e = m.e || 0, f = m.f || 0;
+  return { a: m.d / det, b: -m.b / det, c: -m.c / det, d: m.a / det, e: (m.c * f - m.d * e) / det, f: (m.b * e - m.a * f) / det };
+}
+const XF_KEYS = ['cx', 'cy', 'sx', 'sy', 'rot', 'kx', 'ky'];
+const xfParams = (x) => Object.fromEntries(XF_KEYS.map((k) => [k, x[k]]));
+function startTransform() {
+  const d = doc(), l = activeLayer();
+  if (!l || state.xf) return;
+  if (l.kind === 'adjust') { status('Adjustment layers have no pixels to transform (transform the layers below instead).'); return; }
+  if (state.crop) { state.crop = null; }
+  const sel = d.selection;
+  if (l.kind === 'text') rasterize(l, 'the transform');
+  if (sel && !editingMask(l)) rasterize(l, 'transforming selected pixels');
+  const x = { layer: l, sel, onMask: false, base: null, bx: 0, by: 0, maskBase: null, rx: 0, ry: 0, rot: 0, sx: 1, sy: 1, kx: 0, ky: 0 };
+  if (sel) {
+    ensureCoversDoc(l);
+    const cv = targetCanvas(l);
+    const piece = makeCanvas(sel.w, sel.h), px = piece.getContext('2d');
+    px.drawImage(cv, l.x - sel.x, l.y - sel.y);
+    px.globalCompositeOperation = 'destination-in'; px.drawImage(selectionCanvas(sel), -sel.x, -sel.y);
+    const base = cloneCanvas(cv), bc = base.getContext('2d');
+    bc.globalCompositeOperation = 'destination-out'; bc.drawImage(selectionCanvas(sel), -l.x, -l.y);
+    Object.assign(x, { piece, base, bx: l.x, by: l.y, w: sel.w, h: sel.h, cx: sel.x + sel.w / 2, cy: sel.y + sel.h / 2, onMask: editingMask(l) });
+    if (!x.onMask && l.mask) x.maskBase = cloneCanvas(l.mask.canvas);
+  } else {
+    // the box hugs the layer's visible pixels (masks need the whole canvas so nothing is cut off)
+    const hasMasks = l.mask || (l.kind === 'smart' && l.fmask);
+    const t = hasMasks ? { x: 0, y: 0, w: l.canvas.width, h: l.canvas.height } : alphaBounds(l.kind === 'smart' ? l.source : l.canvas);
+    if (!t) { status('This layer is empty: nothing to transform.'); return; }
+    const crop = (c) => { const k = makeCanvas(t.w, t.h); k.getContext('2d').drawImage(c, -t.x, -t.y); return k; };
+    Object.assign(x, {
+      trim: t, piece: crop(l.canvas), w: t.w, h: t.h, cx: l.x + t.x + t.w / 2, cy: l.y + t.y + t.h / 2,
+      maskPiece: l.mask ? cloneCanvas(l.mask.canvas) : null, fmaskPiece: l.kind === 'smart' && l.fmask ? cloneCanvas(l.fmask.canvas) : null,
+      sourcePiece: l.kind === 'smart' ? crop(l.source) : null,
+    });
+  }
+  x.start = xfParams(x);
+  state.xf = x; drag = null;
+  previewTransform(); buildOptionsBar(); requestRender();
+  status('Free transform: drag the handles; Enter applies, Esc cancels.');
+}
+/** Draw `src` (local box) transformed by M into a new canvas whose origin is (ox, oy) in the document. */
+function drawTransformed(src, M, ox, oy, w, h, under = null, ux = 0, uy = 0) {
+  const c = makeCanvas(w, h), x = c.getContext('2d');
+  if (under) x.drawImage(under, ux - ox, uy - oy);
+  x.save(); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
+  x.setTransform(M.a, M.b, M.c, M.d, M.e - ox, M.f - oy); x.drawImage(src, 0, 0); x.restore();
+  return c;
+}
+function xfBounds(x, M) {
+  const d = doc(), pts = [[0, 0], [x.w, 0], [x.w, x.h], [0, x.h]].map(([u, v]) => applyM(M, u, v));
+  let x0 = Math.floor(Math.min(...pts.map((p) => p.x))), y0 = Math.floor(Math.min(...pts.map((p) => p.y)));
+  let x1 = Math.ceil(Math.max(...pts.map((p) => p.x))), y1 = Math.ceil(Math.max(...pts.map((p) => p.y)));
+  // never allocate far beyond the document (memory on phones)
+  x0 = Math.max(x0, -d.width); y0 = Math.max(y0, -d.height); x1 = Math.min(x1, 2 * d.width); y1 = Math.min(y1, 2 * d.height);
+  return { x0, y0, x1: Math.max(x1, x0 + 1), y1: Math.max(y1, y0 + 1) };
+}
+/** Re-render the transformed piece into the layer (pixels, mask or filter mask). */
+function previewTransform() {
+  const x = state.xf; if (!x) return;
+  const l = x.layer, M = xfMatrix(x);
+  if (x.base && x.onMask) { // selected part of a (filter) mask: the mask keeps its size
+    const out = drawTransformed(x.piece, M, x.bx, x.by, x.base.width, x.base.height, x.base, x.bx, x.by);
+    if (editingFMask(l)) { l.fmask.canvas = out; touchTarget(l); } else { l.mask.canvas = out; touchMask(l); }
+    compDirty = true; return;
+  }
+  let { x0, y0, x1, y1 } = xfBounds(x, M);
+  if (x.base) { x0 = Math.min(x0, x.bx); y0 = Math.min(y0, x.by); x1 = Math.max(x1, x.bx + x.base.width); y1 = Math.max(y1, x.by + x.base.height); }
+  const w = x1 - x0, h = y1 - y0;
+  l.canvas = drawTransformed(x.piece, M, x0, y0, w, h, x.base, x.bx, x.by);
+  if (x.base && x.maskBase) { // keep the layer mask where it was; new area is revealed
+    const m = makeMaskCanvas(w, h), mx = m.getContext('2d');
+    mx.clearRect(x.bx - x0, x.by - y0, x.maskBase.width, x.maskBase.height); mx.drawImage(x.maskBase, x.bx - x0, x.by - y0);
+    l.mask.canvas = m; touchMask(l);
+  }
+  if (!x.base) {
+    if (x.maskPiece) { l.mask.canvas = drawTransformed(x.maskPiece, M, x0, y0, w, h); touchMask(l); }
+    if (x.fmaskPiece) { l.fmask.canvas = drawTransformed(x.fmaskPiece, M, x0, y0, w, h); l.fmask.rev = ++globalRev; }
+  }
+  l.x = x0; l.y = y0; touch(l); compDirty = true;
+}
+/** Bounding box of the non-transparent pixels of a canvas, or null when it is empty. */
+function alphaBounds(c) {
+  const w = c.width, h = c.height, a = ctxOf(c).getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0, i = y * w * 4 + 3; x < w; x++, i += 4) if (a[i]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; y1 = y; }
+  return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+function xfIsIdentity(x) { return XF_KEYS.every((k) => Math.abs(x[k] - x.start[k]) < 1e-6); }
+function applyTransform() {
+  const x = state.xf; if (!x) return;
+  if (xfIsIdentity(x)) { cancelTransform(true); return; }
+  state.xf = null; drag = null;
+  const l = x.layer, M = xfMatrix(x), d = doc();
+  if (x.sel) { // the selection follows the pixels
+    const sc = makeCanvas(d.width, d.height), c = sc.getContext('2d');
+    c.save(); c.imageSmoothingEnabled = true; c.setTransform(M.a, M.b, M.c, M.d, M.e, M.f);
+    c.drawImage(selectionCanvas(x.sel), x.sel.x, x.sel.y, x.w, x.h, 0, 0, x.w, x.h); c.restore();
+    const a = ctxOf(sc).getImageData(0, 0, d.width, d.height).data, m = new Uint8Array(d.width * d.height);
+    for (let i = 0; i < m.length; i++) m[i] = a[i * 4 + 3];
+    d.selection = makeSelection(d.width, d.height, m);
+  } else if (l.kind === 'smart') { // live layers: transform the original pixels and re-run the filters
+    l.source = drawTransformed(x.sourcePiece, M, l.x, l.y, l.canvas.width, l.canvas.height);
+    renderSmartSync(l);
+  }
+  compDirty = true; requestRender();
+  commit(x.sel ? 'Transform selection' : 'Free transform');
+  buildOptionsBar(); updateLayersPanel();
+  const deg = Math.round((x.rot * 180) / Math.PI * 10) / 10;
+  status(`Transformed: ${Math.round(x.sx * 100)}% × ${Math.round(x.sy * 100)}%, ${deg}°`);
+}
+function cancelTransform(quiet = false) {
+  if (!state.xf) return;
+  state.xf = null; drag = null;
+  restore(history.index); // the transform never touched history: put the last state back
+  buildOptionsBar(); requestRender();
+  if (!quiet) status('Transform cancelled');
+}
+function xfRotHandle(x, M) {
+  const top = applyM(M, x.w / 2, 0);
+  let dx = top.x - x.cx, dy = top.y - x.cy; const len = Math.hypot(dx, dy);
+  if (len < 1e-6) { dx = Math.sin(x.rot); dy = -Math.cos(x.rot); } else { dx /= len; dy /= len; }
+  const off = (IS_TOUCH ? 34 : 24) / state.zoom;
+  return { x: top.x + dx * off, y: top.y + dy * off, top };
+}
+const XF_HANDLES = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]];
+const xfHandlePoints = (x, M) => XF_HANDLES.map(([u, v]) => ({ u, v, ...applyM(M, ((u + 1) / 2) * x.w, ((v + 1) / 2) * x.h) }));
+function drawTransformBox(toS) {
+  const x = state.xf, M = xfMatrix(x);
+  const quad = [[0, 0], [x.w, 0], [x.w, x.h], [0, x.h]].map(([u, v]) => { const p = applyM(M, u, v); return toS(p.x, p.y); });
+  const rh = xfRotHandle(x, M), [rx, ry] = toS(rh.x, rh.y), [tx, ty] = toS(rh.top.x, rh.top.y);
+  vctx.save();
+  vctx.beginPath(); quad.forEach(([a, b], i) => (i ? vctx.lineTo(a, b) : vctx.moveTo(a, b))); vctx.closePath();
+  vctx.moveTo(tx, ty); vctx.lineTo(rx, ry);
+  vctx.lineWidth = 3; vctx.strokeStyle = '#000a'; vctx.stroke(); vctx.lineWidth = 1; vctx.strokeStyle = '#fff'; vctx.stroke();
+  const hs = IS_TOUCH ? 7 : 4.5;
+  for (const h of xfHandlePoints(x, M)) {
+    const [hx, hy] = toS(h.x, h.y);
+    vctx.fillStyle = '#fff'; vctx.strokeStyle = '#1b1c20'; vctx.lineWidth = 1.5;
+    vctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2); vctx.strokeRect(hx - hs, hy - hs, hs * 2, hs * 2);
+  }
+  vctx.beginPath(); vctx.arc(rx, ry, hs + 1, 0, Math.PI * 2); vctx.fillStyle = '#7a5cff'; vctx.fill(); vctx.strokeStyle = '#fff'; vctx.stroke();
+  const [ccx, ccy] = toS(x.cx, x.cy); // centre mark
+  vctx.beginPath(); vctx.moveTo(ccx - 5, ccy); vctx.lineTo(ccx + 5, ccy); vctx.moveTo(ccx, ccy - 5); vctx.lineTo(ccx, ccy + 5);
+  vctx.strokeStyle = '#fff'; vctx.lineWidth = 1; vctx.stroke();
+  vctx.restore();
+}
+function xfHit(p, e) {
+  const x = state.xf, M = xfMatrix(x), tol = (e.pointerType === 'touch' ? 22 : 9) / state.zoom;
+  const rh = xfRotHandle(x, M);
+  if (Math.hypot(p.x - rh.x, p.y - rh.y) <= tol) return { kind: 'rotate' };
+  let best = null, bd = tol;
+  for (const h of xfHandlePoints(x, M)) { const dd = Math.hypot(p.x - h.x, p.y - h.y); if (dd <= bd) { bd = dd; best = h; } }
+  if (best) {
+    const edge = (best.u === 0) !== (best.v === 0);
+    return { kind: edge && (e.ctrlKey || e.metaKey || state.opts.xfSkew) ? 'skew' : 'scale', u: best.u, v: best.v };
+  }
+  const q = applyM(invertM(M), p.x, p.y);
+  return q.x >= 0 && q.y >= 0 && q.x <= x.w && q.y <= x.h ? { kind: 'move' } : { kind: 'rotate' };
+}
+function xfDrag(p, e) {
+  const x = state.xf, g = drag.hit, s0 = drag.s0;
+  Object.assign(x, s0);
+  if (g.kind === 'move') {
+    let dx = p.x - drag.start.x, dy = p.y - drag.start.y;
+    if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+    x.cx = s0.cx + dx; x.cy = s0.cy + dy;
+  } else if (g.kind === 'rotate') {
+    const a0 = Math.atan2(drag.start.y - s0.cy, drag.start.x - s0.cx), a1 = Math.atan2(p.y - s0.cy, p.x - s0.cx);
+    let r = s0.rot + a1 - a0;
+    if (e.shiftKey) r = Math.round(r / (Math.PI / 12)) * (Math.PI / 12);
+    x.rot = r;
+  } else if (g.kind === 'scale') {
+    const F = xfFrame(x), Fi = invertM(F), fromCentre = e.altKey;
+    // anchor: the opposite handle (or the centre with Alt), in the document
+    const al = fromCentre ? { x: 0, y: 0 } : { x: (-g.u * s0.sx * x.w) / 2, y: (-g.v * s0.sy * x.h) / 2 };
+    const anchor = { x: s0.cx + F.a * al.x + F.c * al.y, y: s0.cy + F.b * al.x + F.d * al.y };
+    const q = applyM(Fi, p.x - anchor.x, p.y - anchor.y), span = fromCentre ? 0.5 : 1;
+    let sx = g.u ? q.x / (g.u * x.w * span) : s0.sx, sy = g.v ? q.y / (g.v * x.h * span) : s0.sy;
+    if (e.shiftKey || state.opts.xfKeepAspect) {
+      if (g.u && g.v) { const kx = sx / s0.sx, ky = sy / s0.sy, k = Math.abs(kx) > Math.abs(ky) ? kx : ky; sx = s0.sx * k; sy = s0.sy * k; }
+      else if (g.u) sy = s0.sy * (sx / s0.sx); else sx = s0.sx * (sy / s0.sy);
+    }
+    const clampS = (v) => (Math.abs(v) < 0.01 ? 0.01 * (Math.sign(v) || 1) : v);
+    x.sx = clampS(sx); x.sy = clampS(sy);
+    if (!fromCentre) {
+      const cl = { x: (g.u * x.sx * x.w) / 2, y: (g.v * x.sy * x.h) / 2 };
+      x.cx = anchor.x + F.a * cl.x + F.c * cl.y; x.cy = anchor.y + F.b * cl.x + F.d * cl.y;
+    }
+  } else if (g.kind === 'skew') {
+    const c = Math.cos(s0.rot), s = Math.sin(s0.rot), dx = p.x - drag.start.x, dy = p.y - drag.start.y;
+    const lx = c * dx + s * dy, ly = -s * dx + c * dy; // pointer movement in the unrotated frame
+    if (g.v) x.kx = s0.kx + lx / ((g.v * s0.sy * x.h) / 2);
+    else x.ky = s0.ky + ly / ((g.u * s0.sx * x.w) / 2);
+    x.kx = Math.max(-5, Math.min(5, x.kx)); x.ky = Math.max(-5, Math.min(5, x.ky));
+  }
+}
+const xfHandler = {
+  down(p, e) {
+    const hit = xfHit(p, e);
+    if (e.detail >= 2 && hit.kind === 'move') { applyTransform(); return; } // double-click / double-tap inside applies
+    drag = { xf: true, hit, start: p, s0: xfParams(state.xf) };
+  },
+  move(p, e) { if (!drag?.xf) return; xfDrag(p, e); previewTransform(); updateXfFields(); requestRender(); },
+  up() { drag = null; updateXfFields(); },
+};
+const samplerHandler = { down: (p) => colorRangeSampler?.(p.x, p.y) };
+const handler = () => (colorRangeSampler ? samplerHandler : state.xf ? xfHandler : toolHandlers[state.tool]);
+function setXfField(k, v) {
+  const x = state.xf; if (!x || !Number.isFinite(v)) return;
+  if (k === 'sx' || k === 'sy') {
+    let sv = v / 100; if (Math.abs(sv) < 0.01) sv = 0.01 * (Math.sign(sv) || 1);
+    if (state.opts.xfKeepAspect) { const r = sv / x[k]; x.sx *= r; x.sy *= r; } else x[k] = sv;
+  } else if (k === 'rot') x.rot = (v * Math.PI) / 180;
+  else x[k] = Math.tan((Math.max(-80, Math.min(80, v)) * Math.PI) / 180);
+  previewTransform(); updateXfFields(); requestRender();
+}
+const xfFieldValues = (x) => ({
+  sx: Math.round(x.sx * 1000) / 10, sy: Math.round(x.sy * 1000) / 10, rot: Math.round((x.rot * 1800) / Math.PI) / 10,
+  kx: Math.round((Math.atan(x.kx) * 1800) / Math.PI) / 10, ky: Math.round((Math.atan(x.ky) * 1800) / Math.PI) / 10,
+});
+function updateXfFields() {
+  if (!state.xf) return; const v = xfFieldValues(state.xf);
+  document.querySelectorAll('#optionsbar [data-xf]').forEach((i) => { if (document.activeElement !== i) i.value = v[i.dataset.xf]; });
+}
+function xfBarParts() {
+  const v = xfFieldValues(state.xf), o = state.opts;
+  const num = (k, label, unit) => `<label>${label} <input type="number" class="xf-num" data-xf="${k}" step="${k === 'sx' || k === 'sy' ? 1 : 0.5}" value="${v[k]}" />${unit}</label>`;
+  return [`<span class="tool-title">${state.xf.sel ? 'Transform selection' : 'Free transform'}</span>`,
+    num('sx', 'W', '%'), num('sy', 'H', '%'), num('rot', 'Angle', '°'), num('kx', 'Skew H', '°'), num('ky', 'V', '°'),
+    `<label><input type="checkbox" data-opt="xfKeepAspect" ${o.xfKeepAspect ? 'checked' : ''}/> Keep aspect</label>`,
+    `<label><input type="checkbox" data-opt="xfSkew" ${o.xfSkew ? 'checked' : ''}/> Skew edges</label>`,
+    `<button data-cmd="xfApply" class="primary">Apply</button>`, `<button data-cmd="xfCancel">Cancel</button>`,
+    `<span class="muted">${IS_TOUCH ? 'Drag handles · pinch/rotate with two fingers · ⇧ keeps aspect' : 'Shift keeps aspect · Alt from centre · drag outside to rotate · Ctrl+edge skews · Enter / Esc'}</span>`];
+}
+
 function clampPt(p) {
   return { x: Math.max(0, Math.min(doc().width, Math.round(p.x))), y: Math.max(0, Math.min(doc().height, Math.round(p.y))) };
 }
@@ -823,7 +1282,7 @@ function paintTool(kind) {
       if (!drag?.stroke) return;
       lastPaintPoint = drag.last;
       if (drag.heal) { finishHeal(drag); return; }
-      if (drag.onMask) touchMask(drag.layer); else touch(drag.layer);
+      touchTarget(drag.layer);
       commit(drag.onMask ? (erase ? 'Erase mask' : 'Paint mask') : LABEL[kind]);
       updateLayersPanel();
     },
@@ -939,7 +1398,7 @@ function fillAt(p) {
     for (let ch = onMask ? 3 : 0; ch < 4; ch++) d[j + ch] = d[j + ch] + (fill[ch] - d[j + ch]) * k;
   }
   c.putImageData(img, 0, 0);
-  if (onMask) touchMask(layer); else touch(layer);
+  touchTarget(layer);
   requestRender(); commit(onMask ? 'Fill mask' : 'Fill'); updateLayersPanel();
 }
 
@@ -983,6 +1442,7 @@ function setMod(name, on) {
 function cancelDrag() {
   if (pendingTouch) { clearTimeout(pendingTouch.timer); pendingTouch = null; }
   if (!drag) return;
+  if (drag.xf) { Object.assign(state.xf, drag.s0); previewTransform(); drag = null; requestRender(); return; }
   if (drag.float) { const f = drag.float, c = ctxOf(targetCanvas(f.layer)); c.save(); c.globalCompositeOperation = 'copy'; c.drawImage(f.original, 0, 0); c.restore(); touchTarget(f.layer); }
   if (drag.backup && drag.canvas) {
     const c = drag.canvas.getContext('2d'); c.save(); c.globalCompositeOperation = 'copy'; c.globalAlpha = 1; c.drawImage(drag.backup, 0, 0); c.restore();
@@ -996,11 +1456,24 @@ function twoPointers() { const [a, b] = [...pointers.values()]; return { a, b, d
 function startGesture() {
   const g = twoPointers();
   gesture = { d0: g.d, mx0: g.mx, my0: g.my, zoom0: state.zoom, panX0: state.panX, panY0: state.panY, t0: performance.now(), moved: false };
+  // during a free transform two fingers scale / rotate / move the piece instead of the view
+  if (state.xf) gesture.xf = { ...xfParams(state.xf), a0: Math.atan2(g.b.y - g.a.y, g.b.x - g.a.x), m0: screenToDoc({ clientX: g.mx, clientY: g.my }) };
 }
 function updateGesture() {
   if (pointers.size < 2) return;
   const g = twoPointers(), r = view.getBoundingClientRect();
   if (Math.abs(g.d - gesture.d0) > 10 || Math.hypot(g.mx - gesture.mx0, g.my - gesture.my0) > 10) gesture.moved = true;
+  if (gesture.xf && state.xf) {
+    const s0 = gesture.xf, x = state.xf, k = g.d / gesture.d0;
+    let da = Math.atan2(g.b.y - g.a.y, g.b.x - g.a.x) - s0.a0;
+    if (mods.shift) da = Math.round(da / (Math.PI / 12)) * (Math.PI / 12);
+    if (Math.abs(da) > 0.05) gesture.moved = true;
+    const m1 = screenToDoc({ clientX: g.mx, clientY: g.my }), vx = s0.cx - s0.m0.x, vy = s0.cy - s0.m0.y, c = Math.cos(da), sn = Math.sin(da);
+    x.cx = m1.x + k * (c * vx - sn * vy); x.cy = m1.y + k * (sn * vx + c * vy);
+    x.sx = s0.sx * k; x.sy = s0.sy * k; x.rot = s0.rot + da;
+    previewTransform(); updateXfFields(); requestRender();
+    return;
+  }
   const nz = Math.min(64, Math.max(0.02, gesture.zoom0 * g.d / gesture.d0));
   const docX = (gesture.mx0 - r.left - gesture.panX0) / gesture.zoom0, docY = (gesture.my0 - r.top - gesture.panY0) / gesture.zoom0;
   state.zoom = nz; state.panX = g.mx - r.left - docX * nz; state.panY = g.my - r.top - docY * nz;
@@ -1012,7 +1485,7 @@ function firePending(alt) {
   const dbl = lastTap && now - lastTap.t < 320 && Math.hypot(pt.e.clientX - lastTap.x, pt.e.clientY - lastTap.y) < 24;
   lastTap = { t: now, x: pt.e.clientX, y: pt.e.clientY };
   if (state.busy) { status('Still processing… one moment.'); return; }
-  toolHandlers[state.tool]?.down?.(pt.p, toolEvent(pt.e, { alt, detail: dbl ? 2 : 1 }));
+  handler()?.down?.(pt.p, toolEvent(pt.e, { alt, detail: dbl ? 2 : 1 }));
 }
 view.addEventListener('pointerdown', (e) => {
   if (!doc()) return;
@@ -1042,7 +1515,7 @@ view.addEventListener('pointerdown', (e) => {
     }, LONG_PRESS_MS) };
     return;
   }
-  toolHandlers[state.tool]?.down?.(p, toolEvent(e));
+  handler()?.down?.(p, toolEvent(e));
 });
 view.addEventListener('pointermove', (e) => {
   if (!doc()) return;
@@ -1058,7 +1531,7 @@ view.addEventListener('pointermove', (e) => {
     if (Math.hypot(e.clientX - pendingTouch.e.clientX, e.clientY - pendingTouch.e.clientY) < TAP_SLOP) return;
     firePending(false);
   }
-  if (drag && (e.buttons & 1 || (e.pointerType === 'touch' && pt))) toolHandlers[state.tool]?.move?.(p, toolEvent(e));
+  if (drag && (e.buttons & 1 || (e.pointerType === 'touch' && pt))) handler()?.move?.(p, toolEvent(e));
   if (PAINT_TOOLS.includes(state.tool) || state.tool === 'polylasso') requestRender();
 });
 function endPointer(e, cancelled) {
@@ -1075,7 +1548,7 @@ function endPointer(e, cancelled) {
   if (pendingTouch && pendingTouch.e.pointerId === e.pointerId) { if (cancelled) { cancelDrag(); return; } firePending(false); }
   if (drag?.pan) { drag = null; setTool(state.tool); return; }
   if (cancelled) { cancelDrag(); return; }
-  if (drag) toolHandlers[state.tool]?.up?.(screenToDoc(e), toolEvent(e));
+  if (drag) handler()?.up?.(screenToDoc(e), toolEvent(e));
   drag = null;
   if (e.pointerType === 'touch') { state.hover = null; requestRender(); }
 }
@@ -1112,6 +1585,16 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); finishPolygon(); return; }
     if (e.key === 'Escape') { e.preventDefault(); state.poly = null; requestRender(); return; }
     if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); state.poly.pts.pop(); if (!state.poly.pts.length) state.poly = null; requestRender(); return; }
+  }
+  if (state.xf) {
+    if (e.key === 'Enter') { e.preventDefault(); run('xfApply'); return; }
+    if (e.key === 'Escape') { e.preventDefault(); run('xfCancel'); return; }
+    if (e.key.startsWith('Arrow') && !(e.ctrlKey || e.metaKey)) {
+      const st = e.shiftKey ? 10 : 1, x = state.xf;
+      if (e.key === 'ArrowLeft') x.cx -= st; if (e.key === 'ArrowRight') x.cx += st;
+      if (e.key === 'ArrowUp') x.cy -= st; if (e.key === 'ArrowDown') x.cy += st;
+      e.preventDefault(); previewTransform(); requestRender(); return;
+    }
   }
   const mod = e.ctrlKey || e.metaKey;
   const key = e.key.toLowerCase();
@@ -1169,7 +1652,13 @@ const cmds = {
     }
     showModal({ title: 'New adjustment layer', body, hideCancel: true, okLabel: 'Close' });
   }),
-  rasterizeLayer: needDoc(() => { const l = activeLayer(); if (l.kind !== 'text') { status('Only text layers need converting to pixels.'); return; } rasterize(l); touch(l); commit('Convert text to pixels'); }),
+  rasterizeLayer: needDoc(() => { const l = activeLayer(); if (l.kind !== 'text' && l.kind !== 'smart') { status('Only text and live filter layers need converting to pixels.'); return; } const k = l.kind; rasterize(l); touch(l); updateLayersPanel(); commit(k === 'text' ? 'Convert text to pixels' : 'Convert live layer to pixels'); }),
+  convertSmart: needDoc(() => convertToSmart()),
+  freeTransform: needDoc(() => startTransform()),
+  xfApply: () => applyTransform(),
+  xfCancel: () => cancelTransform(),
+  colorRange: needDoc(() => openColorRangeDialog()),
+  refineEdge: needDoc(() => openRefineDialog()),
   ...Object.fromEntries(Object.keys(ADJ_LAYER).map((t) => [`adjLayer_${t}`, needDoc(() => newAdjustmentLayer(t))])),
   curves: needDoc(() => openAdjust(ADJ.curves)),
   cancelPolygon: () => { state.poly = null; buildOptionsBar(); requestRender(); },
@@ -1210,7 +1699,8 @@ const cmds = {
   toggleMask: needDoc(() => { const l = activeLayer(); if (!l.mask) return status('This layer has no mask.'); l.mask.enabled = !l.mask.enabled; touchMask(l); requestRender(); commit(l.mask.enabled ? 'Enable layer mask' : 'Disable layer mask'); }),
   editMaskToggle: needDoc(() => { const l = activeLayer(); if (!l.mask) return status('This layer has no mask.'); setMaskTarget(l, !l.editMask); }),
   invertMask: needDoc(() => {
-    const l = activeLayer(); if (!l.mask) return status('This layer has no mask.');
+    const l = activeLayer(); if (editingFMask(l)) { invertFilterMask(l); return; }
+    if (!l.mask) return status('This layer has no mask.');
     const m = makeMaskCanvas(l.canvas.width, l.canvas.height), x = m.getContext('2d');
     x.globalCompositeOperation = 'destination-out'; x.drawImage(l.mask.canvas, 0, 0);
     l.mask.canvas = m; touchMask(l); requestRender(); commit('Invert layer mask');
@@ -1227,7 +1717,7 @@ const cmds = {
   layerNew: needDoc(() => addLayer(createLayer(`Layer ${nextLayerId}`, doc().width, doc().height), 'New layer')),
   layerDuplicate: needDoc(() => {
     const l = activeLayer();
-    addLayer({ ...l, id: nextLayerId++, name: `${l.name} copy`, canvas: cloneCanvas(l.canvas), mask: cloneMask(l.mask), rev: ++globalRev }, 'Duplicate layer');
+    addLayer({ ...l, id: nextLayerId++, name: `${l.name} copy`, canvas: cloneCanvas(l.canvas), mask: cloneMask(l.mask), rev: ++globalRev, ...(l.kind === 'smart' ? { fmask: cloneMask(l.fmask) } : {}) }, 'Duplicate layer');
   }),
   layerDelete: needDoc(() => {
     const d = doc(); if (d.layers.length <= 1) { status('A document needs at least one layer.'); return; }
@@ -1265,14 +1755,16 @@ const cmds = {
   invert: needDoc(() => (editingMask() ? cmds.invertMask() : applyInstant('Invert', 'invert'))),
   grayscale: needDoc(() => applyInstant('Grayscale', 'grayscale')),
   autoLevels: needDoc(() => applyInstant('Auto levels', 'autoLevels')),
-  gaussianBlur: needDoc(() => openAdjust(ADJ.gaussianBlur)),
-  sharpen: needDoc(() => openAdjust(ADJ.sharpen)),
-  noise: needDoc(() => openAdjust(ADJ.noise)),
-  vignette: needDoc(() => openAdjust(ADJ.vignette)),
+  gaussianBlur: needDoc(() => filterCmd('gaussianBlur')),
+  sharpen: needDoc(() => filterCmd('sharpen')),
+  noise: needDoc(() => filterCmd('noise')),
+  vignette: needDoc(() => filterCmd('vignette')),
   swapColors: () => { const f = state.fg; setFg(state.bg); setBg(f); },
   resetColors: () => { setFg('#000000'); setBg('#ffffff'); },
 };
-function run(name) { closeMenus(); cmds[name]?.(); }
+// commands that may run while a free transform is open; anything else applies it first
+const XF_SAFE = new Set(['xfApply', 'xfCancel', 'undo', 'redo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'freeTransform', 'swapColors', 'resetColors']);
+function run(name) { closeMenus(); if (state.xf && !XF_SAFE.has(name)) applyTransform(); cmds[name]?.(); }
 
 // Ctrl+V is handled by the paste event (so system-clipboard images work too).
 const SHORTCUTS = {
@@ -1283,6 +1775,7 @@ const SHORTCUTS = {
   'mod+shift+n': 'layerNew', 'mod+j': 'layerDuplicate', 'mod+e': 'layerMergeDown', 'mod+]': 'layerUp', 'mod+[': 'layerDown',
   'mod+=': 'zoomIn', 'mod++': 'zoomIn', 'mod+shift+=': 'zoomIn', 'mod+shift++': 'zoomIn', 'mod+-': 'zoomOut', 'mod+0': 'zoomFit', 'mod+1': 'zoom100',
   'mod+b': 'brightnessContrast', 'mod+u': 'hueSaturation', 'mod+l': 'levels', 'mod+m': 'curves', 'mod+i': 'invert', 'mod+shift+u': 'grayscale',
+  'mod+t': 'freeTransform', 'mod+alt+r': 'refineEdge',
   'x': 'swapColors', 'd': 'resetColors', '?': 'shortcuts', 'shift+?': 'shortcuts',
 };
 
@@ -1291,16 +1784,16 @@ const MENUS = [
     ['Save project', 'saveProject', 'Ctrl+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E']]],
   ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
     ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-',
-    ['Clear', 'clear', 'Del'], ['Fill with color', 'fillSelection', 'Alt+⌫']]],
+    ['Clear', 'clear', 'Del'], ['Fill with color', 'fillSelection', 'Alt+⌫'], '-', ['Free transform', 'freeTransform', 'Ctrl+T']]],
   ['Image', [['Image size…', 'imageSize'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], '-',
     ['Rotate 90° clockwise', 'rotateCW'], ['Rotate 90° counter-clockwise', 'rotateCCW'], ['Rotate 180°', 'rotate180'],
     ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Flatten', 'flatten']]],
   ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
-    ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
+    ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
     ['New adjustment layer: Brightness / contrast…', 'adjLayer_brightnessContrast'], ['New adjustment layer: Hue / saturation…', 'adjLayer_hueSaturation'],
     ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
-    ['Edit layer settings…', 'editLayer'], ['Convert text to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Delete layer', 'layerDelete'], '-',
+    ['Edit layer settings…', 'editLayer'], ['Convert to live layer (editable filters)', 'convertSmart'], ['Convert text / live layer to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Delete layer', 'layerDelete'], '-',
     ['Move up', 'layerUp', 'Ctrl+]'], ['Move down', 'layerDown', 'Ctrl+['], ['Merge down', 'layerMergeDown', 'Ctrl+E'], '-',
     ['Flip layer horizontal', 'flipLayerH'], ['Flip layer vertical', 'flipLayerV'], '-',
     ['Add layer mask (reveal all)', 'addMask'], ['Add mask from selection', 'addMaskFromSelection'], ['Edit mask / pixels', 'editMaskToggle', '\\'],
@@ -1308,7 +1801,7 @@ const MENUS = [
   ['Adjust', [['Brightness / contrast…', 'brightnessContrast', 'Ctrl+B'], ['Hue / saturation / lightness…', 'hueSaturation', 'Ctrl+U'],
     ['Exposure…', 'exposure'], ['Levels…', 'levels', 'Ctrl+L'], ['Curves…', 'curves', 'Ctrl+M'], ['Auto levels', 'autoLevels'], '-',
     ['Invert', 'invert', 'Ctrl+I'], ['Grayscale', 'grayscale', 'Ctrl+Shift+U'], ['Sepia tone…', 'sepia']]],
-  ['Filter', [['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
+  ['Filter', [['Convert to live layer', 'convertSmart'], '-', ['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
   ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1']]],
   ['Help', [['Keyboard shortcuts', 'shortcuts', '?'], [`About ${APP}`, 'about']]],
 ];
@@ -1322,7 +1815,7 @@ function bakeMask(l) {
   return c;
 }
 function setMaskTarget(l, onMask) {
-  l.editMask = !!(onMask && l.mask);
+  l.editMask = !!(onMask && l.mask); l.editFMask = false;
   status(l.editMask ? 'Editing the layer mask: paint black to hide, white to reveal.' : 'Editing layer pixels.');
   updateLayersPanel(); buildOptionsBar();
 }
@@ -1367,6 +1860,7 @@ function mergeDown() {
 /** Permanently apply an adjustment layer's effect (through its mask and opacity) to one layer. */
 function bakeAdjustment(adj, target) {
   if (!adj.visible || adj.opacity <= 0) return;
+  if (adj.blend && adj.blend !== 'source-over') { bakeAdjustmentBlended(adj, target); return; }
   const w = target.canvas.width, h = target.canvas.height, c = ctxOf(target.canvas);
   const img = c.getImageData(0, 0, w, h), orig = new Uint8ClampedArray(img.data);
   runOp(adj.adj.type, img, adj.adj.params || {});
@@ -1379,6 +1873,20 @@ function bakeAdjustment(adj, target) {
     for (let j = 0; j < 3; j++) o[i + j] = orig[i + j] + (o[i + j] - orig[i + j]) * k;
   }
   c.putImageData(img, 0, 0); touch(target);
+}
+/** Blend-mode adjustment: blend the adjusted copy over the layer (like the live composite), keep the layer's alpha. */
+function bakeAdjustmentBlended(adj, target) {
+  const w = target.canvas.width, h = target.canvas.height;
+  const orig = ctxOf(target.canvas).getImageData(0, 0, w, h);
+  const img = new ImageData(new Uint8ClampedArray(orig.data), w, h);
+  runOp(adj.adj.type, img, adj.adj.params || {});
+  const top = putInto(null, img), tx = top.getContext('2d');
+  if (adj.mask && adj.mask.enabled) { tx.globalCompositeOperation = 'destination-in'; tx.drawImage(adj.mask.canvas, adj.x - target.x, adj.y - target.y); }
+  const out = cloneCanvas(target.canvas), ox = ctxOf(out);
+  ox.globalAlpha = adj.opacity; ox.globalCompositeOperation = adj.blend; ox.drawImage(top, 0, 0);
+  const res = ox.getImageData(0, 0, w, h), r = res.data, o = orig.data;
+  for (let i = 3; i < r.length; i += 4) r[i] = o[i]; // the adjustment never changes coverage
+  ctxOf(target.canvas).putImageData(res, 0, 0); touch(target);
 }
 function rotatedCanvas(src, kind) {
   const w = src.width, h = src.height, swap = kind === 'cw' || kind === 'ccw';
@@ -1401,7 +1909,8 @@ function transformDoc(kind, label) {
     else if (kind === '180') [x, y] = [W - (l.x + w), H - (l.y + h)];
     else if (kind === 'fh') x = W - (l.x + w);
     else if (kind === 'fv') y = H - (l.y + h);
-    if (l.kind !== 'adjust') l.canvas = rotatedCanvas(l.canvas, kind);
+    if (l.kind === 'smart') smartGeom(l, (c) => rotatedCanvas(c, kind));
+    else if (l.kind !== 'adjust') l.canvas = rotatedCanvas(l.canvas, kind);
     l.x = x; l.y = y; touch(l);
     if (l.mask) { l.mask.canvas = rotatedCanvas(l.mask.canvas, kind); touchMask(l); }
   }
@@ -1410,8 +1919,9 @@ function transformDoc(kind, label) {
   compDirty = true; fitToScreen(); commit(label);
 }
 function transformLayer(kind, label) {
-  const l = activeLayer(); rasterize(l, 'the transform');
-  if (l.kind !== 'adjust') l.canvas = rotatedCanvas(l.canvas, kind);
+  const l = activeLayer(); if (l.kind === 'text') rasterize(l, 'the transform');
+  if (l.kind === 'smart') smartGeom(l, (c) => rotatedCanvas(c, kind));
+  else if (l.kind !== 'adjust') l.canvas = rotatedCanvas(l.canvas, kind);
   touch(l);
   if (l.mask) { l.mask.canvas = rotatedCanvas(l.mask.canvas, kind); touchMask(l); }
   requestRender(); commit(label);
@@ -1431,8 +1941,9 @@ function resizeImage(nw, nh) {
     return c;
   };
   for (const l of d.layers) {
-    rasterize(l);
-    if (l.kind !== 'adjust') l.canvas = scale(l.canvas);
+    if (l.kind === 'text') rasterize(l);
+    if (l.kind === 'smart') smartGeom(l, scale);
+    else if (l.kind !== 'adjust') l.canvas = scale(l.canvas);
     l.x = Math.round(l.x * sx); l.y = Math.round(l.y * sy); touch(l);
     if (l.mask) { l.mask.canvas = scale(l.mask.canvas); touchMask(l); }
   }
@@ -1458,6 +1969,11 @@ function cropTo(r) {
   r = rectIntersect(r, { x: 0, y: 0, w: d.width, h: d.height }); if (!r) return;
   for (const l of d.layers) {
     if (l.kind === 'text') { l.x -= r.x; l.y -= r.y; touch(l); continue; } // stays editable; just shifts
+    if (l.kind === 'smart') { // crop the original too (blur near the new edge then sees transparency, as after any crop)
+      smartGeom(l, (src) => { const m = makeCanvas(r.w, r.h); m.getContext('2d').drawImage(src, l.x - r.x, l.y - r.y); return m; });
+      if (l.mask) { const m = makeCanvas(r.w, r.h); m.getContext('2d').drawImage(l.mask.canvas, l.x - r.x, l.y - r.y); l.mask.canvas = m; touchMask(l); }
+      l.x = 0; l.y = 0; touch(l); continue;
+    }
     const c = l.kind === 'adjust' ? l.canvas : makeCanvas(r.w, r.h);
     if (l.kind !== 'adjust') c.getContext('2d').drawImage(l.canvas, l.x - r.x, l.y - r.y);
     if (l.mask) { const m = makeCanvas(r.w, r.h); m.getContext('2d').drawImage(l.mask.canvas, l.x - r.x, l.y - r.y); l.mask.canvas = m; touchMask(l); }
@@ -1566,6 +2082,7 @@ async function applyInstant(label, op) {
 function openAdjust(def, presetValues = {}) {
   const l = activeLayer(); if (!canAdjust(l, def)) return;
   if (!editingMask(l)) rasterize(l, def.title);
+  if (!editingMask(l) && (def.op === 'gaussianBlur' || def.op === 'sharpen')) ensureCoversDoc(l); // let blur spread past tight layer edges
   const r = opRegion(l);
   if (!r) { status('The selection does not overlap the active layer.'); return; }
   const onMask = editingMask(l), cv = targetCanvas(l);
@@ -1574,7 +2091,7 @@ function openAdjust(def, presetValues = {}) {
   const values = Object.fromEntries(def.params.map((p) => [p.key, presetValues[p.key] ?? p.value]));
   const info = regionInfo(l, r), selMask = regionMask(l, r);
   const params = () => ({ ...values, ...(def.extra || {}) });
-  const touchIt = () => (onMask ? touchMask(l) : touch(l));
+  const touchIt = () => touchTarget(l);
   // Previews run in the worker; while one is running only the latest request is kept.
   let closed = false, running = false, dirty = false;
   const pump = async () => {
@@ -1615,6 +2132,102 @@ function openAdjust(def, presetValues = {}) {
   });
   preview();
 }
+// --- Select ▸ Color range… and Refine edge… ---------------------------------------------------
+const CR_MODES = [['sampled', 'Sampled color'], ['reds', 'Reds'], ['yellows', 'Yellows'], ['greens', 'Greens'], ['cyans', 'Cyans'], ['blues', 'Blues'], ['magentas', 'Magentas'],
+  ['highlights', 'Highlights'], ['midtones', 'Midtones'], ['shadows', 'Shadows']];
+const hexArr = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const arrHex = (c) => rgbToHex(c[0], c[1], c[2]);
+function fullComposite() { if (compDirty) { composite(); compDirty = false; } return comp; }
+function openColorRangeDialog() {
+  const d = doc(), o = state.opts, src = fullComposite();
+  const k = Math.min(1, 220 / Math.max(d.width, d.height)), pw = Math.max(1, Math.round(d.width * k)), ph = Math.max(1, Math.round(d.height * k));
+  const small = makeCanvas(pw, ph), sx = ctxOf(small); sx.imageSmoothingQuality = 'high'; sx.drawImage(src, 0, 0, pw, ph);
+  const smallImg = sx.getImageData(0, 0, pw, ph);
+  let color = o.crColor || hexArr(state.fg);
+  const body = document.createElement('div'); body.className = 'cr-dialog';
+  body.innerHTML = formHTML([
+    { label: 'Select', html: `<select id="crMode">${CR_MODES.map(([v, n]) => `<option value="${v}" ${o.crMode === v ? 'selected' : ''}>${n}</option>`).join('')}</select>` },
+    { label: 'Color', html: `<span><input type="color" id="crColor" value="${arrHex(color)}" /> <span class="muted">or click the preview / canvas</span></span>` },
+  ]) + `<label class="field"><span>Fuzziness</span><input type="range" id="crFuzz" min="1" max="200" value="${o.crFuzziness}" /><output id="crFuzzOut">${o.crFuzziness}</output></label>` +
+    `<div class="cr-preview-wrap"><canvas id="crPreview" width="${pw}" height="${ph}" title="Click to sample a color"></canvas></div>` +
+    `<div class="seg cr-view"><button type="button" data-crview="sel" class="on">Selection</button><button type="button" data-crview="img">Image</button></div>` +
+    `<p class="muted">Result combines with the current selection using the ${o.selMode} mode.</p>`;
+  const pv = body.querySelector('#crPreview'), px = pv.getContext('2d');
+  let view = 'sel';
+  const params = () => ({ mode: body.querySelector('#crMode').value, color, fuzziness: +body.querySelector('#crFuzz').value });
+  const draw = () => {
+    const pr = params(); body.querySelector('#crColor').closest('.field').classList.toggle('dim', pr.mode !== 'sampled');
+    body.querySelector('#crFuzzOut').textContent = pr.fuzziness;
+    if (view === 'img') { px.putImageData(smallImg, 0, 0); return; }
+    const m = colorRangeMask(smallImg, pr), out = px.createImageData(pw, ph);
+    for (let i = 0; i < m.length; i++) { const j = i * 4; out.data[j] = out.data[j + 1] = out.data[j + 2] = m[i]; out.data[j + 3] = 255; }
+    px.putImageData(out, 0, 0);
+  };
+  const sampleAt = (x, y) => {
+    const p = ctxOf(src).getImageData(Math.max(0, Math.min(d.width - 1, Math.floor(x))), Math.max(0, Math.min(d.height - 1, Math.floor(y))), 1, 1).data;
+    color = [p[0], p[1], p[2]]; body.querySelector('#crColor').value = arrHex(color); body.querySelector('#crMode').value = 'sampled'; draw();
+  };
+  pv.addEventListener('click', (e) => { const r = pv.getBoundingClientRect(); sampleAt(((e.clientX - r.left) / r.width) * d.width, ((e.clientY - r.top) / r.height) * d.height); });
+  body.querySelector('#crColor').addEventListener('input', (e) => { color = hexArr(e.target.value); body.querySelector('#crMode').value = 'sampled'; draw(); });
+  body.querySelectorAll('[data-crview]').forEach((b) => b.addEventListener('click', () => { view = b.dataset.crview; body.querySelectorAll('[data-crview]').forEach((q) => q.classList.toggle('on', q === b)); draw(); }));
+  body.querySelector('#crMode').addEventListener('change', draw);
+  body.querySelector('#crFuzz').addEventListener('input', draw);
+  colorRangeSampler = sampleAt; // while open, clicking the canvas samples (passive modal)
+  draw();
+  showModal({
+    title: 'Color range', body, passive: true,
+    ok: async () => {
+      colorRangeSampler = null;
+      const pr = params(); Object.assign(o, { crMode: pr.mode, crColor: color, crFuzziness: pr.fuzziness });
+      setBusy(1);
+      try {
+        const img = ctxOf(fullComposite()).getImageData(0, 0, d.width, d.height);
+        const m = await ops.colorRange(img, pr);
+        if (doc() === d) applyShape(m, o.selMode, 'Color range');
+        status(d.selection ? `Color range: ${d.selection.w} × ${d.selection.h} px selected` : 'Color range: nothing matched');
+      } finally { setBusy(-1); }
+    },
+    cancel: () => { colorRangeSampler = null; },
+  });
+}
+let colorRangeSampler = null;
+function openRefineDialog() {
+  const d = doc(), sel0 = d.selection, o = state.opts;
+  if (!sel0) { status('Make a selection first.'); return; }
+  const values = { smooth: o.refineSmooth, feather: o.refineFeather, shift: o.refineShift };
+  const body = document.createElement('div');
+  body.innerHTML = `<p class="muted">Edges preview on the canvas. Shift edge: negative contracts, positive expands.</p>`;
+  const fields = [
+    { key: 'smooth', label: 'Smooth', min: 0, max: 20, value: 0, unit: 'px' },
+    { key: 'feather', label: 'Feather', min: 0, max: 50, value: 0, step: 0.5, unit: 'px' },
+    { key: 'shift', label: 'Shift edge', min: -50, max: 50, value: 0, unit: 'px' },
+  ];
+  let closed = false, running = false, dirty = false;
+  const compute = (p) => ops.refine(sel0.mask, sel0.W, sel0.H, p);
+  const pump = async () => {
+    running = true;
+    while (dirty && !closed) {
+      dirty = false; const p = { ...values };
+      try { const m = await compute(p); if (!closed && doc() === d) { d.selection = makeSelection(sel0.W, sel0.H, m); requestRender(); } } catch (err) { status(err.message); }
+    }
+    running = false;
+  };
+  const preview = () => { dirty = true; if (!running) pump(); };
+  for (const f of fields) body.append(paramField({ ...f, value: values[f.key] }, values, preview, f.value));
+  showModal({
+    title: 'Refine edge', body, passive: true,
+    ok: async () => {
+      closed = true; Object.assign(o, { refineSmooth: values.smooth, refineFeather: values.feather, refineShift: values.shift });
+      setBusy(1);
+      try { const m = await compute({ ...values }); if (doc() === d) { d.selection = sel0; setSelection(makeSelection(sel0.W, sel0.H, m), 'Refine edge'); } }
+      finally { setBusy(-1); }
+      status(d.selection ? `Refined edge: ${d.selection.w} × ${d.selection.h} px` : 'Refine edge removed the whole selection');
+    },
+    cancel: () => { closed = true; if (doc() === d) { d.selection = sel0; requestRender(); } },
+  });
+  if (values.smooth || values.feather || values.shift) preview();
+}
+
 function openFeatherDialog() {
   const d = doc();
   if (!d.selection) { status('Make a selection first.'); return; }
@@ -1736,7 +2349,7 @@ function openTextDialog(p, existing = null) {
   const restore = existing ? { text: existing.text, canvas: existing.canvas, x: existing.x, y: existing.y, name: existing.name, rev: existing.rev } : null;
   const body = document.createElement('div');
   body.innerHTML = `<textarea id="tText" placeholder="Type your text">${escapeHtml(t0.text)}</textarea>` + formHTML([
-    { label: 'Font', html: `<select id="tFont">${TEXT_FONTS.map((f) => `<option ${f === t0.font ? 'selected' : ''}>${f}</option>`).join('')}</select>` },
+    { label: 'Font', html: `<select id="tFont">${TEXT_FONTS.map((f) => `<option ${f === t0.font ? 'selected' : ''} style="font-family:${escapeHtml(fontFamilyCSS(f))}">${f}</option>`).join('')}</select>` },
     { label: 'Size (px)', html: `<input type="number" id="tSize" value="${t0.size}" min="4" max="2000" />` },
     { label: 'Style', html: `<span><label><input type="checkbox" id="tBold" ${t0.bold ? 'checked' : ''}/> Bold</label> <label><input type="checkbox" id="tItalic" ${t0.italic ? 'checked' : ''}/> Italic</label></span>` },
     { label: 'Align', html: `<span class="seg" id="tAlign">${['left', 'center', 'right'].map((a) => `<button type="button" data-align="${a}" class="${t0.align === a ? 'on' : ''}">${a[0].toUpperCase() + a.slice(1)}</button>`).join('')}</span>` },
@@ -1758,7 +2371,9 @@ function openTextDialog(p, existing = null) {
       t.ox = edge - layer.x;
     }
     layer.text = t; renderTextLayer(layer); compDirty = true; requestRender();
+    if (!fontReady(t)) loadFont(t).then(() => { if (!closedText && layer.text.font === t.font) { renderTextLayer(layer); compDirty = true; requestRender(); } });
   };
+  let closedText = false;
   body.querySelectorAll('[data-align]').forEach((b) => b.addEventListener('click', () => {
     align = b.dataset.align; body.querySelectorAll('[data-align]').forEach((q) => q.classList.toggle('on', q === b)); draw();
   }));
@@ -1767,10 +2382,13 @@ function openTextDialog(p, existing = null) {
   compDirty = true; requestRender();
   showModal({ title: existing ? 'Edit text' : 'Add text', body, passive: true, okLabel: existing ? 'Done' : 'Add text',
     ok: () => {
+      closedText = true;
       const t = read(); Object.assign(o, { textFont: t.font, textSize: t.size, textBold: t.bold, textItalic: t.italic, textAlign: t.align });
-      d.activeId = layer.id; touch(layer); commit(existing ? 'Edit text' : 'Text');
+      const finish = () => { renderTextLayer(layer); compDirty = true; requestRender(); d.activeId = layer.id; touch(layer); commit(existing ? 'Edit text' : 'Text'); };
+      if (fontReady(t)) finish(); else loadFont(t).then(finish); // a bundled font is still downloading: render with it, not the fallback
     },
     cancel: () => {
+      closedText = true;
       if (existing) { Object.assign(existing, restore); compDirty = true; }
       else d.layers.splice(d.layers.indexOf(layer), 1);
       compDirty = true; requestRender(); updateLayersPanel();
@@ -1886,12 +2504,13 @@ for (const id of ['#fileInput', '#cameraInput']) $(id).addEventListener('change'
 function serializeProject() {
   const d = doc();
   return {
-    format: PROJECT_FORMAT, version: 3, app: APP, width: d.width, height: d.height, name: d.name,
+    format: PROJECT_FORMAT, version: 4, app: APP, width: d.width, height: d.height, name: d.name,
     activeIndex: activeIndex(),
     layers: d.layers.map((l) => ({
       name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, data: l.canvas.toDataURL('image/png'),
       mask: l.mask ? { enabled: l.mask.enabled, data: l.mask.canvas.toDataURL('image/png') } : null,
       ...(l.kind ? { kind: l.kind, adj: l.adj, text: l.text } : {}),
+      ...(l.kind === 'smart' ? { source: l.source.toDataURL('image/png'), filters: l.filters, fmask: l.fmask ? { enabled: l.fmask.enabled, data: l.fmask.canvas.toDataURL('image/png') } : null } : {}),
     })),
   };
 }
@@ -1900,7 +2519,8 @@ function saveProject() {
   download(new Blob([JSON.stringify(serializeProject())], { type: 'application/json' }), `${name}.tintwork.json`);
   status(`Saved project ${name}.tintwork.json`);
   cleanEntry = history.entries[history.index];
-  autosaveNow().then(() => markAutosaveClean()).catch(() => {}); // saved: no recovery prompt for this state
+  const slot = doc().slot;
+  autosaveNow().then(() => markAutosaveClean(slot)).catch(() => {}); // saved: no recovery prompt for this state
 }
 
 // ---------------------------------------------------------------------------
@@ -1913,15 +2533,51 @@ function scheduleAutosave() {
   if (!doc() || recoveryPending || history.entries[history.index] === writtenEntry) return;
   clearTimeout(autosaveTimer); autosaveTimer = setTimeout(autosaveNow, AUTOSAVE_DELAY);
 }
+const AUTOSAVE_STEPS = 20; // undo steps kept in each autosave
+const newSlot = () => `doc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+/**
+ * Autosave record v2: the last AUTOSAVE_STEPS history entries with every canvas stored once
+ * (history canvases are immutable and shared between entries, so each image is encoded and written once).
+ */
+function encodeHistory(d, dirty) {
+  const images = new Map(), ref = (c) => { const r = imageRef(c); images.set(r.id, r.encode); return r.id; };
+  const n = history.entries.length;
+  const start = Math.max(0, Math.min(history.index, n - AUTOSAVE_STEPS)), end = Math.min(n, start + AUTOSAVE_STEPS);
+  const entries = history.entries.slice(start, end).map((e) => {
+    const sn = e.snap;
+    return {
+      label: e.label,
+      snap: {
+        width: sn.width, height: sn.height, activeId: sn.activeId,
+        selection: sn.selection ? ref(selectionCanvas(sn.selection)) : null,
+        layers: sn.layers.map((l) => ({
+          id: l.id, name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, rev: l.rev, editMask: l.editMask,
+          kind: l.kind, adj: l.adj, text: l.text, canvas: ref(l.canvas),
+          mask: l.mask ? { enabled: l.mask.enabled, rev: l.mask.rev, canvas: ref(l.mask.canvas) } : null,
+          ...(l.kind === 'smart' ? { source: ref(l.source), filters: l.filters, editFMask: l.editFMask,
+            fmask: l.fmask ? { enabled: l.fmask.enabled, rev: l.fmask.rev, canvas: ref(l.fmask.canvas) } : null } : {}),
+        })),
+      },
+    };
+  });
+  const cur = history.entries[history.index].snap;
+  const record = {
+    format: 'tintwork-autosave', version: 2, app: APP, appVersion: APP_VERSION, slot: d.slot, name: d.name || 'Untitled',
+    width: d.width, height: d.height, savedAt: Date.now(), dirty, layerCount: cur.layers.length, steps: entries.length,
+    history: { index: history.index - start, entries }, imageIds: [...images.keys()],
+  };
+  return { record, images };
+}
 /** Write the current document to IndexedDB now (serialized: one write at a time). */
 async function autosaveNow() {
   clearTimeout(autosaveTimer); autosaveTimer = null;
   while (autosaveRunning) await autosaveRunning;
-  const d = doc(); if (!d || recoveryPending) return;
+  const d = doc(); if (!d || recoveryPending || history.index < 0) return;
   const entry = history.entries[history.index];
   autosaveRunning = (async () => {
     try {
-      await writeAutosave(await buildRecord(d, { app: APP, appVersion: APP_VERSION, dirty: entry !== cleanEntry }));
+      const { record, images } = encodeHistory(d, entry !== cleanEntry);
+      await writeAutosave(record, images);
       writtenEntry = entry; lastAutosave = Date.now();
     }
     catch (err) { if (!autosaveWarned) { autosaveWarned = true; toast(`Autosave is unavailable here (${err?.message || err}). Save your project to keep your work.`, 5000); } }
@@ -1934,8 +2590,53 @@ addEventListener('pagehide', () => { if (autosaveTimer) autosaveNow(); });
 
 let recoveryPending = false;
 async function restoreAutosave(r) {
+  if (r.version !== 2 || !r.history) return restoreLegacyAutosave(r);
+  const bufs = await readImages(r), canv = new Map();
+  for (const [id, buf] of bufs) {
+    const img = await decodeImage(buf), c = makeCanvas(img.width, img.height);
+    c.getContext('2d').drawImage(img, 0, 0); img.close?.();
+    adoptImage(c, id); canv.set(id, c); // re-saving this session reuses the stored bytes
+  }
+  const get = (id) => { const c = canv.get(id); if (!c) throw new Error(`Missing image ${id}`); return c; };
+  const sels = new Map(), selOf = (id, W, H) => {
+    if (!id) return null;
+    if (!sels.has(id)) {
+      const a = ctxOf(get(id)).getImageData(0, 0, W, H).data, m = new Uint8Array(W * H);
+      for (let i = 0; i < m.length; i++) m[i] = a[i * 4 + 3];
+      const sel = makeSelection(W, H, m);
+      if (sel && !sel._canvas) Object.defineProperty(sel, '_canvas', { value: get(id), enumerable: false }); // same id on the next autosave
+      sels.set(id, sel);
+    }
+    return sels.get(id);
+  };
+  let maxId = 0, maxRev = 0;
+  const entries = r.history.entries.map((e) => ({
+    label: e.label,
+    snap: {
+      width: e.snap.width, height: e.snap.height, activeId: e.snap.activeId, selection: selOf(e.snap.selection, e.snap.width, e.snap.height),
+      layers: e.snap.layers.map((L) => {
+        maxId = Math.max(maxId, L.id); maxRev = Math.max(maxRev, L.rev, L.mask?.rev || 0, L.fmask?.rev || 0);
+        const l = { ...L, canvas: get(L.canvas), mask: L.mask ? { ...L.mask, canvas: get(L.mask.canvas) } : null };
+        if (L.kind === 'smart') Object.assign(l, { source: get(L.source), fmask: L.fmask ? { ...L.fmask, canvas: get(L.fmask.canvas) } : null });
+        return l;
+      }),
+    },
+  }));
+  if (!entries.length || !entries[0].snap.layers.length) throw new Error('The autosaved copy has no layers');
+  nextLayerId = Math.max(nextLayerId, maxId + 1); globalRev = Math.max(globalRev, maxRev + 1);
+  state.doc = { width: r.width, height: r.height, layers: [], activeId: null, selection: null, name: r.name || 'Recovered', slot: r.slot };
+  history.entries = entries;
+  state.crop = null; state.poly = null; state.selPreview = null; state.cloneSrc = null; state.cloneOffset = null; state.xf = null;
+  restore(Math.min(entries.length - 1, Math.max(0, r.history.index)));
+  for (const l of state.doc.layers) if (l.kind === 'smart') smartCache.delete(l.id);
+  writtenEntry = history.entries[history.index]; cleanEntry = r.dirty ? null : writtenEntry;
+  fitToScreen(); $('#welcome').classList.add('hidden'); updateAll(); updateHistoryPanel();
+  status(`Recovered ${state.doc.name} with ${entries.length} undo step${entries.length === 1 ? '' : 's'} (autosave of ${new Date(r.savedAt).toLocaleString()}).`);
+}
+/** v0.3 records: the layers of one state, without history. */
+async function restoreLegacyAutosave(r) {
   const layers = [];
-  for (const L of r.layers) {
+  for (const L of r.layers || []) {
     const img = await decodeImage(L.png ?? L.blob);
     const l = createLayer(L.name, img.width, img.height, { visible: L.visible, opacity: L.opacity, blend: L.blend, x: L.x, y: L.y });
     l.canvas.getContext('2d').drawImage(img, 0, 0); img.close?.();
@@ -1950,22 +2651,45 @@ async function restoreAutosave(r) {
   }
   if (!layers.length) throw new Error('The autosaved copy has no layers');
   const ai = Math.min(layers.length - 1, Math.max(0, r.activeIndex ?? layers.length - 1));
-  state.doc = { width: r.width, height: r.height, layers, activeId: layers[ai].id, selection: null, name: r.name || 'Recovered' };
+  state.doc = { width: r.width, height: r.height, layers, activeId: layers[ai].id, selection: null, name: r.name || 'Recovered', slot: r.slot };
   afterDocChange('Recovered from autosave');
   status(`Recovered ${state.doc.name} (${layers.length} layer${layers.length === 1 ? '' : 's'}) from the autosave of ${new Date(r.savedAt).toLocaleString()}.`);
 }
-/** On start-up (or from File ▸ Recover autosave), offer to restore the last autosaved document. */
+const recordLayers = (r) => r.layerCount ?? r.layers?.length ?? 0;
+/**
+ * On start-up, offer the documents that closed with unsaved changes; File ▸ Recover autosave lists
+ * every slot (up to MAX_SLOTS documents, each with its recent undo history).
+ */
 async function checkRecovery(manual = false) {
-  let r; try { r = await readAutosave(); } catch (err) { if (manual) status(`Autosave unavailable: ${err?.message || err}`); return; }
-  if (!r || !r.layers?.length || (!manual && (!r.dirty || doc()))) { if (manual) status('There is no autosaved document.'); return; }
+  let list; try { list = await listAutosaves(); } catch (err) { if (manual) status(`Autosave unavailable: ${err?.message || err}`); return; }
+  list = list.filter((r) => recordLayers(r) > 0 && (manual || r.dirty));
+  if (!list.length || (!manual && doc())) { if (manual) status('There is no autosaved document.'); return; }
   recoveryPending = true;
+  const body = document.createElement('div');
+  const row = (r) => `<li class="slot-row" data-slot="${escapeHtml(r.slot)}"><div class="slot-info"><b>${escapeHtml(r.name || 'Untitled')}</b>` +
+    `<span class="muted">${r.width} × ${r.height} px · ${recordLayers(r)} layer${recordLayers(r) === 1 ? '' : 's'}${r.steps ? ` · ${r.steps} undo step${r.steps === 1 ? '' : 's'}` : ''} · ${escapeHtml(new Date(r.savedAt).toLocaleString())}${r.dirty ? ' · <em>unsaved</em>' : ''}</span></div>` +
+    `<button type="button" data-recover="${escapeHtml(r.slot)}" class="primary">Recover</button><button type="button" data-forget="${escapeHtml(r.slot)}" title="Delete this autosave">✕</button></li>`;
+  const draw = () => {
+    body.innerHTML = `<p class="recover-info">${manual ? `Autosaved documents (the ${MAX_SLOTS} most recent are kept):` : `${APP} closed with unsaved changes. Autosaved cop${list.length === 1 ? 'y' : 'ies'} found:`}</p>` +
+      `<ul class="slot-list">${list.map(row).join('')}</ul>` +
+      (manual && doc() ? '<p class="muted">Recovering replaces the open document.</p>' : manual ? '' : '<p class="muted">Discard deletes these autosaved copies.</p>');
+  };
+  const recover = (r) => { recoveryPending = false; closeModal(); restoreAutosave(r).catch((err) => openInfo('Recovery failed', `<p>${escapeHtml(err.message)}</p>`)); };
+  body.addEventListener('click', (e) => {
+    const rb = e.target.closest('[data-recover]');
+    if (rb) { recover(list.find((r) => r.slot === rb.dataset.recover)); return; }
+    const fb = e.target.closest('[data-forget]');
+    if (fb) {
+      const slot = fb.dataset.forget; list = list.filter((r) => r.slot !== slot); clearAutosave(slot).catch(() => {});
+      if (!list.length) { recoveryPending = false; closeModal(); status('Autosave deleted.'); } else draw();
+    }
+  });
+  draw();
   showModal({
-    title: manual ? 'Recover autosave' : 'Recover unsaved work?',
-    body: `<p class="recover-info">${manual ? 'The last autosaved copy is' : `${APP} closed with unsaved changes. Found an autosaved copy of`} <b>${escapeHtml(r.name || 'Untitled')}</b> — ${r.width} × ${r.height} px, ${r.layers.length} layer${r.layers.length === 1 ? '' : 's'}, saved ${escapeHtml(new Date(r.savedAt).toLocaleString())}.</p>` +
-      (manual && doc() ? '<p class="muted">Recovering replaces the open document (you can still undo nothing past this point).</p>' : '<p class="muted">Discarding deletes the autosaved copy.</p>'),
-    okLabel: 'Recover', cancelLabel: manual ? 'Cancel' : 'Discard',
-    ok: () => { recoveryPending = false; restoreAutosave(r).catch((err) => openInfo('Recovery failed', `<p>${escapeHtml(err.message)}</p>`)); },
-    cancel: () => { recoveryPending = false; if (!manual) clearAutosave().catch(() => {}); },
+    title: manual ? 'Recover autosave' : 'Recover unsaved work?', body,
+    okLabel: list.length > 1 ? 'Recover newest' : 'Recover', cancelLabel: manual ? 'Cancel' : 'Discard',
+    ok: () => recover(list[0]),
+    cancel: () => { recoveryPending = false; if (!manual) for (const r of list) clearAutosave(r.slot).catch(() => {}); },
   });
 }
 async function loadProject(data, filename) {
@@ -1977,6 +2701,12 @@ async function loadProject(data, filename) {
     if (L.kind === 'adjust' && L.adj && L.mask?.data) Object.assign(l, { kind: 'adjust', adj: L.adj, editMask: true });
     if (L.kind === 'text' && L.text) Object.assign(l, { kind: 'text', text: L.text });
     l.canvas.getContext('2d').drawImage(img, 0, 0);
+    if (L.kind === 'smart' && L.source) {
+      const si = await loadImage(L.source), src = makeCanvas(si.width, si.height); src.getContext('2d').drawImage(si, 0, 0);
+      let fmask = null;
+      if (L.fmask?.data) { const fi = await loadImage(L.fmask.data), f = makeCanvas(fi.width, fi.height); f.getContext('2d').drawImage(fi, 0, 0); fmask = { canvas: f, enabled: L.fmask.enabled !== false, rev: ++globalRev }; }
+      Object.assign(l, { kind: 'smart', source: src, filters: (L.filters || []).filter((f) => ADJ[f.type]), fmask, editFMask: false });
+    }
     if (L.mask?.data) {
       const mi = await loadImage(L.mask.data);
       const m = makeCanvas(mi.width, mi.height); m.getContext('2d').drawImage(mi, 0, 0);
@@ -1985,6 +2715,7 @@ async function loadProject(data, filename) {
     layers.push(l);
   }
   if (!layers.length) throw new Error('Project has no layers');
+  for (const l of layers) if (l.kind === 'smart') renderSmartSync(l);
   const ai = Math.min(layers.length - 1, Math.max(0, data.activeIndex ?? layers.length - 1));
   state.doc = { width: data.width, height: data.height, layers, activeId: layers[ai].id, selection: null, name: data.name || filename };
   afterDocChange('Open project');
@@ -2075,10 +2806,10 @@ function buildToolbar() {
 
 function buildOptionsBar() {
   const bar = $('#optionsbar'); const o = state.opts; const t = TOOLS.find((x) => x.id === state.tool);
-  const parts = [`<span class="tool-title">${t.name}</span>`];
+  const parts = state.xf ? xfBarParts() : [`<span class="tool-title">${t.name}</span>`];
   const range = (key, label, min, max, unit = '') => `<label>${label} <input type="range" data-opt="${key}" min="${min}" max="${max}" value="${o[key]}" /><input type="number" data-opt="${key}" min="${min}" max="${max}" value="${o[key]}" />${unit}</label>`;
   const d = doc();
-  switch (state.tool) {
+  switch (state.xf ? '' : state.tool) {
     case 'brush': parts.push(range('brushSize', 'Size', 1, 500, 'px'), range('brushHardness', 'Hardness', 0, 100, '%'), range('brushOpacity', 'Opacity', 1, 100, '%'), `<span class="muted">Shift+click: straight line · Alt+click: pick color</span>`); break;
     case 'eraser': parts.push(range('eraserSize', 'Size', 1, 500, 'px'), range('eraserHardness', 'Hardness', 0, 100, '%'), range('eraserOpacity', 'Opacity', 1, 100, '%')); break;
     case 'clone': parts.push(range('cloneSize', 'Size', 1, 500, 'px'), range('cloneHardness', 'Hardness', 0, 100, '%'), range('cloneOpacity', 'Opacity', 1, 100, '%'),
@@ -2112,8 +2843,12 @@ function buildOptionsBar() {
     default: break;
   }
   const al = activeLayer();
-  if (al && editingMask(al) && ['brush', 'eraser', 'fill'].includes(state.tool)) parts.push(`<span class="mask-badge">Editing mask</span>`);
+  if (al && editingMask(al) && ['brush', 'eraser', 'fill'].includes(state.tool) && !state.xf) parts.push(`<span class="mask-badge">${editingFMask(al) ? 'Editing filter mask' : 'Editing mask'}</span>`);
+  if (!state.xf && d && ['select', 'lasso', 'polylasso', 'wand', 'ellipse'].includes(state.tool)) parts.push(`<button data-cmd="colorRange">Color range…</button>`, `<button data-cmd="refineEdge" ${d.selection ? '' : 'disabled'}>Refine edge…</button>`);
+  if (!state.xf && d && state.tool === 'move') parts.push(`<button data-cmd="freeTransform">Transform</button>`);
+  bar.classList.toggle('xf', !!state.xf);
   bar.innerHTML = parts.join('');
+  bar.querySelectorAll('[data-xf]').forEach((inp) => inp.addEventListener('change', () => setXfField(inp.dataset.xf, +inp.value)));
   bar.querySelectorAll('[data-selmode]').forEach((b) => b.addEventListener('click', () => { o.selMode = b.dataset.selmode; buildOptionsBar(); }));
   bar.querySelectorAll('[data-opt]').forEach((inp) => {
     inp.addEventListener('input', () => {
@@ -2136,6 +2871,39 @@ $('#layerOpacity').addEventListener('input', (e) => {
 $('#layerOpacity').addEventListener('change', () => { if (activeLayer()) commit('Layer opacity'); });
 
 let dragLayerId = null;
+/** Layers panel sub-rows under a live layer: its filter mask and each filter (top = applied last). */
+function smartRows(l, d, s) {
+  const rows = [];
+  const sub = (cls) => { const li = document.createElement('li'); li.className = `sub-row ${cls}`; li.dataset.parent = l.id; li.addEventListener('click', (e) => e.stopPropagation()); return li; };
+  if (l.fmask) {
+    const li = sub('fmask-row' + (editingFMask(l) && l.id === d.activeId ? ' target' : ''));
+    const th = makeCanvas(40, 30), x = th.getContext('2d');
+    x.fillStyle = '#000'; x.fillRect(0, 0, 40, 30);
+    x.save(); x.translate((40 - d.width * s) / 2, (30 - d.height * s) / 2); x.scale(s, s); x.beginPath(); x.rect(0, 0, d.width, d.height); x.clip(); x.drawImage(l.fmask.canvas, l.x, l.y); x.restore();
+    if (!l.fmask.enabled) { x.strokeStyle = '#e8453a'; x.lineWidth = 2.5; x.beginPath(); x.moveTo(3, 3); x.lineTo(37, 27); x.moveTo(37, 3); x.lineTo(3, 27); x.stroke(); }
+    th.className = 'thumb fmask-thumb'; th.title = 'Filter mask — click to paint it · Shift+click to enable/disable';
+    th.addEventListener('click', (e) => {
+      e.stopPropagation(); if (state.xf) applyTransform(); d.activeId = l.id;
+      if (e.shiftKey) { l.fmask.enabled = !l.fmask.enabled; l.fmask.rev = ++globalRev; updateSmart(l, l.fmask.enabled ? 'Enable filter mask' : 'Disable filter mask'); return; }
+      l.editFMask = true; l.editMask = false; status('Editing the filter mask: black hides the filters, white shows them.'); updateLayersPanel(); buildOptionsBar(); requestRender();
+    });
+    const label = document.createElement('span'); label.className = 'name'; label.textContent = 'Filter mask';
+    li.append(th, label); rows.push(li);
+  }
+  for (let i = l.filters.length - 1; i >= 0; i--) {
+    const f = l.filters[i], li = sub('filter-row' + (f.enabled ? '' : ' off')); li.dataset.filter = i;
+    const eye = document.createElement('button'); eye.className = 'eye' + (f.enabled ? '' : ' off'); eye.innerHTML = ICONS.eye; eye.title = 'Show / hide this filter';
+    eye.addEventListener('click', (e) => { e.stopPropagation(); setSmartFilters(l, l.filters.map((g, j) => (j === i ? { ...g, enabled: !g.enabled } : g)), `${f.enabled ? 'Hide' : 'Show'} live filter`); });
+    const name = document.createElement('span'); name.className = 'name'; name.textContent = ADJ[f.type].title; name.title = `${filterSummary(f)} — double-click to edit`;
+    name.addEventListener('dblclick', (e) => { e.stopPropagation(); d.activeId = l.id; openSmartFilterDialog(l, i); });
+    const edit = document.createElement('button'); edit.className = 'mini'; edit.textContent = '✎'; edit.title = 'Edit filter';
+    edit.addEventListener('click', (e) => { e.stopPropagation(); d.activeId = l.id; openSmartFilterDialog(l, i); });
+    const del = document.createElement('button'); del.className = 'mini'; del.textContent = '✕'; del.title = 'Remove filter';
+    del.addEventListener('click', (e) => { e.stopPropagation(); setSmartFilters(l, l.filters.filter((_, j) => j !== i), 'Delete live filter'); });
+    li.append(eye, name, edit, del); rows.push(li);
+  }
+  return rows;
+}
 function updateLayersPanel() {
   const ul = $('#layerList'); ul.innerHTML = '';
   const d = doc(); if (!d) return;
@@ -2153,12 +2921,14 @@ function updateLayersPanel() {
     if (l.kind === 'adjust') { // a simple original badge: half-filled circle
       tx.fillStyle = '#2a2c33'; tx.fillRect(0, 0, 40, 30); tx.strokeStyle = tx.fillStyle = '#d9dce2'; tx.lineWidth = 2;
       tx.beginPath(); tx.arc(20, 15, 9, 0, Math.PI * 2); tx.stroke(); tx.beginPath(); tx.arc(20, 15, 9, Math.PI / 2, Math.PI * 1.5); tx.fill();
+    } else if (l.kind === 'smart') { // live-filter badge
+      tx.fillStyle = '#7a5cffdd'; tx.fillRect(26, 16, 14, 14); tx.fillStyle = '#fff'; tx.font = '700 12px sans-serif'; tx.textAlign = 'center'; tx.textBaseline = 'middle'; tx.fillText('≈', 33, 23);
     } else if (l.kind === 'text') {
       tx.fillStyle = '#000a'; tx.fillRect(26, 16, 14, 14); tx.fillStyle = '#fff'; tx.font = '700 12px sans-serif'; tx.textAlign = 'center'; tx.textBaseline = 'middle'; tx.fillText('T', 33, 23.5);
     }
     th.className = 'thumb' + (l.id === d.activeId && l.mask && !editingMask(l) ? ' target' : '');
-    th.title = l.kind === 'adjust' ? `${ADJ_LAYER[l.adj.type]} — double-click to edit` : l.kind === 'text' ? 'Text — double-click to edit' : 'Layer pixels';
-    th.addEventListener('click', (e) => { e.stopPropagation(); d.activeId = l.id; if (l.kind !== 'adjust') setMaskTarget(l, false); else updateLayersPanel(); buildOptionsBar(); requestRender(); });
+    th.title = l.kind === 'adjust' ? `${ADJ_LAYER[l.adj.type]} — double-click to edit` : l.kind === 'text' ? 'Text — double-click to edit' : l.kind === 'smart' ? 'Live filter layer — double-click to manage filters' : 'Layer pixels';
+    th.addEventListener('click', (e) => { e.stopPropagation(); if (state.xf) applyTransform(); d.activeId = l.id; l.editFMask = false; if (l.kind !== 'adjust') setMaskTarget(l, false); else updateLayersPanel(); buildOptionsBar(); requestRender(); });
     if (l.kind) th.addEventListener('dblclick', (e) => { e.stopPropagation(); d.activeId = l.id; editLayer(l); });
     let mth = null;
     if (l.mask) {
@@ -2179,7 +2949,7 @@ function updateLayersPanel() {
     const meta = document.createElement('span'); meta.className = 'meta';
     meta.textContent = `${Math.round(l.opacity * 100)}%${l.blend !== 'source-over' ? ' · ' + BLEND_MODES.find((b) => b[0] === l.blend)?.[1] : ''}`;
     li.append(eye, th); if (mth) li.append(mth); li.append(name, meta);
-    li.addEventListener('click', () => { d.activeId = l.id; updateLayersPanel(); buildOptionsBar(); requestRender(); });
+    li.addEventListener('click', () => { if (state.xf && l.id !== d.activeId) applyTransform(); d.activeId = l.id; updateLayersPanel(); buildOptionsBar(); requestRender(); });
     li.addEventListener('dblclick', () => {
       const input = document.createElement('input'); input.type = 'text'; input.value = l.name; input.style.flex = '1'; input.style.minWidth = '0';
       name.replaceWith(input); input.focus(); input.select();
@@ -2197,6 +2967,7 @@ function updateLayersPanel() {
     });
     li.addEventListener('dragend', () => { dragLayerId = null; });
     ul.append(li);
+    if (l.kind === 'smart') ul.append(...smartRows(l, d, s));
   }
   const al = activeLayer();
   document.querySelector('#layersPanel [data-cmd="addMask"]')?.classList.toggle('on', !!al.mask);
@@ -2256,6 +3027,8 @@ document.querySelectorAll('.panel-actions [data-cmd]').forEach((b) => { b.innerH
 $('#welcome').classList.remove('hidden');
 render();
 checkRecovery();
+// warm the bundled open-licensed fonts so text renders with them on the first try
+if (document.fonts) for (const f of Object.keys(BUNDLED_FONTS)) for (const bold of [false, true]) loadFont({ font: f, size: 16, bold }).catch(() => {});
 status(`${APP} ready — open an image (Ctrl+O), drop one in, or create a new canvas (Ctrl+N).`);
 
 // Small automation/testing hook (also handy from the devtools console).
@@ -2265,7 +3038,10 @@ window.tintwork = {
   mods, setMod, openSheet, closeSheet, toast, MAX_PIXELS, IS_IOS, fitPixels, renderExport,
   /** true once the current state is in IndexedDB and nothing is waiting to be written */
   get autosaveSettled() { return !autosaveTimer && !autosaveRunning && writtenEntry === history.entries[history.index]; },
-  autosaveNow, readAutosave, clearAutosave, checkRecovery, newAdjustmentLayer, editLayer, adjCache, rasterize, renderTextLayer, textLayerAt, undo, redo, closeModal, mergeDown,
+  autosaveNow, readAutosave, clearAutosave, listAutosaves, checkRecovery, restoreAutosave,
+  startTransform, applyTransform, cancelTransform, get xf() { return state.xf; }, previewTransform, xfMatrix,
+  convertToSmart, setSmartFilters, updateSmart, openSmartFilterDialog, openLiveFilterPanel, composeSmart, filteredSync, addFilterMask,
+  openColorRangeDialog, openRefineDialog, colorRangeMask, bakeAdjustment, BUNDLED_FONTS, fontReady, loadFont, AUTOSAVE_STEPS, MAX_SLOTS, newAdjustmentLayer, editLayer, adjCache, rasterize, renderTextLayer, textLayerAt, undo, redo, closeModal, mergeDown,
   get zoom() { return state.zoom; },
   compositePixel(x, y) { if (compDirty) { composite(); compDirty = false; } return [...compCtx.getImageData(x, y, 1, 1).data]; },
   get doc() { return state.doc; },
