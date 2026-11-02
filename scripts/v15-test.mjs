@@ -216,7 +216,7 @@ const drag = async (b, pts, steps = 12) => { await page.mouse.move(b.x + b.w * p
   const sat1 = await prev(0.15, 0.6), spread = (p) => Math.max(...p) - Math.min(...p);
   const sliders = await page.evaluate(() => [...document.querySelectorAll('#rawLocalBox [data-l]')].map((e) => e.dataset.l));
   check(spread(sat1) < spread(sat0) / 3 && ['highlights', 'shadows', 'saturation', 'tint', 'clarity', 'texture', 'sharpness', 'noise'].every((k) => sliders.includes(k)), `local sliders: ${sliders.filter((k) => k !== 'feather').join(', ')}; saturation −100 turns the painted wall grey (spread ${spread(sat0)} → ${spread(sat1)})`);
-  await page.screenshot({ path: 'screenshots/15b-raw-mask-list-ranges.png' });
+  await page.screenshot({ path: 'screenshots/15b-raw-brush-range-controls.png' });
   // apply → the layer keeps the masks; re-develop shows them again
   const n0 = await page.evaluate(() => window.tintwork.history.index); await page.click('#modalOk');
   await page.waitForFunction((n) => window.tintwork.history.index > n && !window.tintwork.rawUI && !document.querySelector('.dev-overlay'), n0, { timeout: 60000 });
