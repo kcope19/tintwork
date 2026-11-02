@@ -38,10 +38,13 @@ function transferablesOf(doc) {
   add(doc.composite); for (const l of doc.layers) { add(l.pixels); add(l.mask?.data); }
   return out;
 }
+/** Develop parallelism inputs: device memory (GB, from the page) and an optional worker-count override (tests). */
+const devEnv = { deviceMemory: (typeof navigator !== 'undefined' && navigator.deviceMemory) || 0 };
+export function setDevelopEnv(e) { Object.assign(devEnv, e); }
 /** A RAW develop session: the decoded sensor image stays in the worker until close(). */
 export async function openRawSession(bytes, settings) {
   const session = ++sessionSeq;
-  const res = await call('rawOpen', { session, bytes, settings }, [bytes.buffer]);
+  const res = await call('rawOpen', { session, bytes, settings, env: { ...devEnv } }, [bytes.buffer]);
   return {
     ...res, session, firstPreview: res.preview,
     preview: (s) => call('rawPreview', { session, settings: s }).then((r) => r.preview),

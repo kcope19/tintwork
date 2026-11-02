@@ -348,6 +348,35 @@ export function develop(src, opts) {
 // ---- whole pipeline on a band of output rows (develop → noise reduction → sharpening) ---------------------------
 /** Rows of context a band needs above and below so NR and sharpening match a whole-image run (multiple of 4). */
 export const BAND_HALO = 48;
+
+/**
+ * Memory-aware parallelism. A band worker holds its source region and its develop buffers (linear float RGB, 16-bit
+ * output, noise-reduction and sharpening scratch): about BAND_BYTES_PER_PX bytes per output pixel at peak (measured,
+ * see scripts/raw-memory.mjs). Bands are developed `workers` at a time, so the band memory in flight is
+ * workers × (pixels / bands) × BAND_BYTES_PER_PX; it is kept under DEV_BUDGET of the device memory by using smaller
+ * bands first (cheap: only the halo rows are read twice) and fewer workers only when that is not enough.
+ */
+export const BAND_BYTES_PER_PX = 32;
+export const DEV_BUDGET = 1 / 8; // share of navigator.deviceMemory for band buffers in flight
+export const WORKERS_PER_GB = 1.5; // pool size limit from device memory (each idle worker costs a few MB)
+/** Develop worker pool size: one per spare core (max 8), fewer on small-memory devices (deviceMemory in GB, 0 = unknown). */
+export function poolSize(cores, deviceMemory = 0) {
+  const byCores = Math.min(8, Math.max(1, (cores || 2) - 1));
+  return deviceMemory > 0 ? Math.max(1, Math.min(byCores, Math.floor(deviceMemory * WORKERS_PER_GB))) : byCores;
+}
+/** { workers, bands, inFlightMB, budgetMB } for a develop of width × height output pixels. cap: test override (0 = one thread). */
+export function planWorkers({ width, height, pool, deviceMemory = 0, cap = null, bits = 16 }) {
+  let workers = cap == null ? pool : Math.min(pool, cap);
+  const perPx = bits === 16 ? BAND_BYTES_PER_PX : BAND_BYTES_PER_PX / 2;
+  const budget = (deviceMemory > 0 ? deviceMemory : 8) * 2 ** 30 * DEV_BUDGET, MB = 2 ** 20;
+  if (workers < 1) return { workers: 0, bands: 1, inFlightMB: Math.round((width * height * perPx) / MB), budgetMB: Math.round(budget / MB) };
+  const maxBands = Math.max(workers, Math.floor(height / (BAND_HALO * 2))); // bands at least as tall as both halos
+  const inFlight = (w, b) => w * (Math.ceil(height / b) + 2 * BAND_HALO) * width * perPx;
+  let bands = workers;
+  while (bands < maxBands && inFlight(workers, bands) > budget) bands++;
+  while (workers > 1 && inFlight(workers, bands) > budget) workers--;
+  return { workers, bands, inFlightMB: Math.round(inFlight(workers, bands) / MB), budgetMB: Math.round(budget / MB) };
+}
 /**
  * Develop output rows [rows[0], rows[1]) including noise reduction and sharpening. The band is computed with `halo`
  * extra rows on each side (clamped to the image) so the neighbourhood filters see the same pixels as a whole-image run.

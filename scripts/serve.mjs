@@ -1,6 +1,6 @@
 // Tiny static server for Tintwork. Only the files the app needs are served (no .git,
 // tests or assets), with no-cache headers so edits show up on the next reload.
-// Usage: node scripts/serve.mjs [port]      (default 8080, binds 127.0.0.1)
+// Usage: node scripts/serve.mjs [port] [--isolated]   (default 8080, binds 127.0.0.1; --isolated sends COOP/COEP)
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,7 +14,8 @@ const MIME = {
 };
 const ALLOW = [/^\/$/, /^\/index\.html$/, /^\/manifest\.webmanifest$/, /^\/sw\.js$/, /^\/src\/[\w.-]+\.(js|css|svg)$/, /^\/icons\/[\w.-]+\.png$/, /^\/fonts\/([\w-]+\/)?[\w.-]+\.(woff2|css|txt|md)$/, /^\/vendor\/[\w-]+\/[\w.-]+\.(js|wasm)$/, /^\/vendor\/[\w-]+\/LICENSE(-[A-Z]+)?$/];
 
-export function createStaticServer() {
+/** isolated: send COOP/COEP like the _headers file does on Netlify / Cloudflare Pages (enables threaded RAW decode). */
+export function createStaticServer({ isolated = false } = {}) {
   return http.createServer((req, res) => {
     let pathname;
     try { pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400); res.end(); return; }
@@ -26,6 +27,7 @@ export function createStaticServer() {
       'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
       'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff',
       ...(pathname === '/sw.js' ? { 'Service-Worker-Allowed': '/' } : {}),
+      ...(isolated ? { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Cross-Origin-Resource-Policy': 'same-origin' } : {}),
     });
     if (req.method === 'HEAD') { res.end(); return; }
     fs.createReadStream(file).pipe(res);
@@ -33,6 +35,6 @@ export function createStaticServer() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const port = +process.argv[2] || 8080;
-  createStaticServer().listen(port, '127.0.0.1', () => console.log(`Tintwork on http://127.0.0.1:${port}/ (${new Date().toISOString()})`));
+  const port = +process.argv.slice(2).find((a) => /^\d+$/.test(a)) || 8080, isolated = process.argv.includes('--isolated');
+  createStaticServer({ isolated }).listen(port, '127.0.0.1', () => console.log(`Tintwork on http://127.0.0.1:${port}/${isolated ? ' (cross-origin isolated: COOP/COEP)' : ''} (${new Date().toISOString()})`));
 }

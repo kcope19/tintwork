@@ -21,7 +21,9 @@
     "guide": "node scripts/build-guide.mjs",
     "serve": "node scripts/serve.mjs 8080",
     "icons": "node scripts/make-icons.mjs",
-    "test:v12": "node scripts/v12-test.mjs"
+    "test:v12": "node scripts/v12-test.mjs",
+    "mem:raw": "node scripts/raw-memory.mjs",
+    "serve:isolated": "node scripts/serve.mjs 8080 --isolated"
   },
   "license": "MIT",
   "type": "module",

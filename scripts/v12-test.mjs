@@ -111,13 +111,14 @@ writeFileSync(plainFile, makeDNG({ W: 480, H: 320, lens: false, scene: colourSce
 // --- offline: the decoder is cached by the service worker before any RAW file is opened ---------------------
 {
   const sw = readFileSync('sw.js', 'utf8');
-  check(/tintwork-shell-v1\.2\.0/.test(sw) && ['flashraw_simd.wasm', 'flashraw.wasm', 'flashraw_simd_jxl.wasm', 'develop-worker.js'].every((f) => sw.includes(f)), 'service worker v1.2.0 pre-caches the RAW decoder WebAssembly (SIMD + fallback + JPEG XL build) and the develop worker');
+  check(/tintwork-shell-v1\.\d+\.\d+/.test(sw) && ['flashraw_simd.wasm', 'flashraw.wasm', 'flashraw_simd_jxl.wasm', 'develop-worker.js'].every((f) => sw.includes(f)), 'service worker v1.2.0 pre-caches the RAW decoder WebAssembly (SIMD + fallback + JPEG XL build) and the develop worker');
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'allow' });
   const page = await ctx.newPage(); page.on('pageerror', (e) => errors.push(`offline: ${e.message}`));
   await page.goto(base); await page.waitForFunction(() => window.tintwork && document.readyState === 'complete');
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
-  await page.waitForFunction(async () => { const ks = await caches.keys(); if (!ks.includes('tintwork-shell-v1.2.0')) return false; const c = await caches.open('tintwork-shell-v1.2.0'); return !!(await c.match('./vendor/flashraw/flashraw_simd.wasm')) && !!(await c.match('./vendor/flashraw/flashraw_simd_jxl.wasm')); }, null, { timeout: 30000, polling: 250 });
-  const cached = await page.evaluate(async () => { const c = await caches.open('tintwork-shell-v1.2.0'); const ks = (await c.keys()).map((r) => new URL(r.url).pathname); return ks.filter((k) => /flashraw|develop-worker/.test(k)); });
+  const cacheName = sw.match(/tintwork-shell-v[\d.]+/)[0];
+  await page.waitForFunction(async (cacheName) => { const ks = await caches.keys(); if (!ks.includes(cacheName)) return false; const c = await caches.open(cacheName); return !!(await c.match('./vendor/flashraw/flashraw_simd.wasm')) && !!(await c.match('./vendor/flashraw/flashraw_simd_jxl.wasm')); }, cacheName, { timeout: 30000, polling: 250 });
+  const cached = await page.evaluate(async (cacheName) => { const c = await caches.open(cacheName); const ks = (await c.keys()).map((r) => new URL(r.url).pathname); return ks.filter((k) => /flashraw|develop-worker/.test(k)); }, cacheName);
   check(cached.some((k) => k.endsWith('flashraw_simd.wasm')) && cached.some((k) => k.endsWith('flashraw.wasm')), `decoder WebAssembly is in the cache right after the first visit, with no RAW file opened (${cached.filter((k) => k.endsWith('.wasm')).map((k) => k.split('/').pop()).join(', ')})`);
   await ctx.setOffline(true);
   await page.reload(); await page.waitForFunction(() => window.tintwork && document.readyState === 'complete', null, { timeout: 30000 });

@@ -1,0 +1,20 @@
+# Response headers for Netlify and Cloudflare Pages (both read this file from the published folder).
+# COOP + COEP make the page cross-origin isolated, which enables SharedArrayBuffer and so the multithreaded
+# RAW decoder. Every resource Tintwork loads is same-origin, so require-corp blocks nothing it uses.
+# Without these headers (for example on GitHub Pages) Tintwork falls back to the single-threaded decoder.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-origin
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+
+/sw.js
+  Cache-Control: no-cache
+  Service-Worker-Allowed: /
+
+/index.html
+  Cache-Control: no-cache
+
+/*.wasm
+  Content-Type: application/wasm

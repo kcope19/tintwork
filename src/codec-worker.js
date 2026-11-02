@@ -3,14 +3,26 @@
 import { readPSD, writePSD } from './psd.js';
 import * as R from './raw.js';
 
-let flashraw = null;
+let flashraw = null, decoder = null; // decoder: { threads, reason, binary } of the loaded FlashRaw build
+/**
+ * Threaded decode needs SharedArrayBuffer, which browsers only allow on cross-origin isolated pages (served with
+ * COOP: same-origin + COEP: require-corp, see _headers). Then the multithreaded build is used; otherwise, or if it
+ * fails to start, FlashRaw falls back to the single-threaded SIMD (or scalar) build.
+ */
+const threadedDecodeOK = () => self.crossOriginIsolated === true && typeof SharedArrayBuffer === 'function';
 async function engine() {
   if (!flashraw) {
-    flashraw = import('../vendor/flashraw/browser.js').then(async (m) => { await m.init({ threads: false }); return m; })
-      .catch((e) => { flashraw = null; throw e; });
+    flashraw = import('../vendor/flashraw/browser.js').then(async (m) => {
+      const want = threadedDecodeOK() && !noThreads;
+      await m.init({ threads: want ? Math.max(2, Math.min(8, self.navigator?.hardwareConcurrency || 4)) : false });
+      const c = await m.getCapabilities();
+      decoder = { threads: c.threads?.count || 0, reason: want ? c.threads?.reason || null : (noThreads ? 'turned off' : 'the page is not cross-origin isolated'), binary: c.wasm?.binary || null, isolated: self.crossOriginIsolated === true };
+      return m;
+    }).catch((e) => { flashraw = null; throw e; });
   }
   return flashraw;
 }
+let noThreads = false; // test override (env.decodeThreads === false)
 const sessions = new Map();
 const PREVIEW_SIDE = 1400;
 
@@ -21,13 +33,14 @@ function buffersOf(obj, out = []) { // transferable buffers inside a result (ded
   return out;
 }
 // ---- develop band workers ---------------------------------------------------------------------------------------
-const POOL_SIZE = Math.min(8, Math.max(1, (self.navigator?.hardwareConcurrency || 2) - 1));
+const CORES = self.navigator?.hardwareConcurrency || 2;
+const poolSize = () => R.poolSize(CORES, deviceMemory || self.navigator?.deviceMemory || 0);
 let pool = null, jobSeq = 0;
 function workers() {
   if (pool) return pool;
   pool = [];
   try {
-    if (typeof Worker === 'function') for (let i = 0; i < POOL_SIZE; i++) {
+    if (typeof Worker === 'function') for (let i = 0, n = poolSize(); i < n; i++) {
       const w = new Worker(new URL('./develop-worker.js', import.meta.url), { type: 'module', name: `tintwork-develop-${i + 1}` });
       const jobs = new Map();
       w.onmessage = (e) => { const m = e.data, j = jobs.get(m.id); if (!j) return; if (m.stage === 'half') j.onHalf?.(m.res); else { jobs.delete(m.id); m.stage === 'error' ? j.reject(new Error(m.error)) : j.resolve(m.res); } };
@@ -40,19 +53,25 @@ function workers() {
 /**
  * Develop the whole image (or preview) in bands across the worker pool. Every band reads only the part of the source
  * it needs (rows + halo, mapped through orientation, lens warp and CA). onHalf(band) streams half-resolution bands.
+ * Bands are handed out as workers become free and each band's source is copied only when it is sent, so at most
+ * `plan.workers` band buffers exist at once: on small-memory devices the plan uses fewer workers and smaller bands.
  */
+let workerCap = null, deviceMemory = 0, bandsOverride = 0; // test override / navigator.deviceMemory from the page
 async function developBands(src, opts, { half = false, onHalf = null } = {}) {
-  const P = workers();
-  if (!P.length) { // no nested workers: same maths, one thread
-    const r = R.developRows(src, opts);
-    return { width: r.width, height: r.height, data: r.data, data8: r.bits === 16 ? R.to8(r.data) : null, bands: 1, ms: r.ms };
-  }
-  const bands = R.planBands(src, opts, P.length), [FW, FH] = [src.fullW || src.width, src.fullH || src.height];
+  const P = workers(), [FW, FH] = [src.fullW || src.width, src.fullH || src.height];
   const [OW, OH] = R.orientedSize(FW, FH, opts.orientation || 1), bits = opts.bits || 16;
+  const plan = R.planWorkers({ width: OW, height: OH, pool: P.length, deviceMemory, cap: workerCap, bits });
+  if (!P.length || plan.workers < 1) { // no nested workers: same maths, one thread
+    const r = R.developRows(src, opts);
+    return { width: r.width, height: r.height, data: r.data, data8: r.bits === 16 ? R.to8(r.data) : null, bands: 1, workers: 0, ms: r.ms };
+  }
+  const bands = R.planBands(src, opts, bandsOverride || plan.bands);
   const data = bits === 16 ? new Uint16Array(OW * OH * 4) : new Uint8ClampedArray(OW * OH * 4), data8 = bits === 16 ? new Uint8ClampedArray(OW * OH * 4) : null;
   const ms = { nr: 0, sharpen: 0, develop: 0, band: 0, extract: 0, assemble: 0 }, t0 = performance.now();
-  await Promise.all(bands.map((b, i) => new Promise((resolve, reject) => {
-    const te = performance.now(), region = R.extractRegion(src, b.rect), id = ++jobSeq, slot = P[i % P.length]; ms.extract += performance.now() - te;
+  let next = 0;
+  const run = (slot) => new Promise((resolve, reject) => {
+    const b = bands[next++];
+    const te = performance.now(), region = R.extractRegion(src, b.rect), id = ++jobSeq; ms.extract += performance.now() - te;
     slot.jobs.set(id, { resolve, reject, onHalf });
     slot.w.postMessage({ id, region, opts: { ...opts, rows: b.rows }, half }, [region.data.buffer]);
   }).then((r) => {
@@ -61,9 +80,12 @@ async function developBands(src, opts, { half = false, onHalf = null } = {}) {
     ms.assemble += performance.now() - ta;
     for (const k of ['nr', 'sharpen', 'develop']) ms[k] = Math.max(ms[k], r.ms[k] || 0);
     ms.band = Math.max(ms.band, r.ms.total || 0);
-  })));
+    if (next < bands.length) return run(slot);
+  });
+  const n = Math.min(plan.workers, P.length, bands.length);
+  await Promise.all(P.slice(0, n).map(run));
   ms.wall = performance.now() - t0;
-  return { width: OW, height: OH, data, data8, bands: bands.length, ms };
+  return { width: OW, height: OH, data, data8, bands: bands.length, workers: n, ms };
 }
 const lensFor = (s, set) => (set.lens === false ? s.lensOff : s.lensOpts);
 function caFor(s, set) {
@@ -85,7 +107,8 @@ const handlers = {
   async psdRead({ bytes }) { return readPSD(new Uint8Array(bytes)); },
   async psdWrite({ doc }) { return { bytes: writePSD(doc) }; },
   /** Open a RAW file: decode the sensor data (or report why not), build the develop preview. */
-  async rawOpen({ session, bytes, settings }) {
+  async rawOpen({ session, bytes, settings, env }) {
+    if (env) { deviceMemory = +env.deviceMemory || 0; bandsOverride = +env.bands || 0; if ('decodeThreads' in env) noThreads = env.decodeThreads === false; if ('workerCap' in env) workerCap = env.workerCap == null ? null : Math.max(0, +env.workerCap | 0); }
     workers(); // start the develop workers now: they load while the sensor data decodes
     const fr = await engine(), t0 = performance.now(), src = new Uint8Array(bytes);
     let raw;
@@ -123,6 +146,7 @@ const handlers = {
       warnings: (frame.warnings || []).map((w) => w.message || String(w.kind)), baselineExposure: meta.dng?.baselineExposure || 0,
     });
     const preview = await previewOf(s, { ...R.DEFAULT_SETTINGS, ...settings });
+    info.decoder = decoder;
     return { info, decoded: true, decodeMs, preview };
   },
   async rawPreview({ session, settings }) {
@@ -148,7 +172,7 @@ const handlers = {
     });
     const total = Math.round(performance.now() - t);
     return { width: OW, height: OH, data16: out.data, data8: out.data8, scaled: factor > 1, bands: out.bands,
-      ms: { ...Object.fromEntries(Object.entries(out.ms).map(([k, v]) => [k, Math.round(v)])), half: Math.round(firstHalf), total, ca: s.ca?.ms } };
+      workers: out.workers, ms: { ...Object.fromEntries(Object.entries(out.ms).map(([k, v]) => [k, Math.round(v)])), half: Math.round(firstHalf), total, ca: s.ca?.ms } };
   },
   async rawJpeg({ session }) {
     const s = sessions.get(session); if (!s) throw new Error('RAW session closed');

@@ -18,7 +18,7 @@ import { decodePNG, encodePNG, pngInfo } from './png.js';
 import { BUILTIN_PRESETS, RATIO_ONLY, allPresets, presetById, presetPixels, centredRatioRect, constrainRect, describePreset, saveCustomPreset, deleteCustomPreset, customPresets } from './presets.js';
 import { formatName, variantSize, uniqueNamer, zipFiles } from './batch.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
-import { isRawName, isPsdName, isPsdBytes, readPSDAsync, writePSDAsync, openRawSession, RAW_EXTS, PSD_EXTS } from './codecs.js';
+import { isRawName, isPsdName, isPsdBytes, readPSDAsync, writePSDAsync, openRawSession, setDevelopEnv, RAW_EXTS, PSD_EXTS } from './codecs.js';
 import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEYS } from './psd.js';
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity } from './raw.js';
 
@@ -4481,6 +4481,7 @@ async function flatPSD(canvas) {
 
 // ---- camera RAW ----
 let rawUI = null; // open develop dialog (tests read it through window.tintwork)
+let lastDecoder = null; // { threads, reason, binary, isolated } of the RAW decoder build in use
 let lastDevelopProgress = null; // { halfBands } of the develop in progress (or the last one)
 /** Open a camera RAW file: develop dialog (or the last settings in batch), then a 16 bits/channel document. */
 async function openRAW(file, interactive = true, rawSettings = null) {
@@ -4490,7 +4491,8 @@ async function openRAW(file, interactive = true, rawSettings = null) {
   let sess;
   try { sess = await openRawSession(bytes, settings); }
   catch (err) { toast(`${file.name} could not be read as a camera RAW file (${err.message}).`, 7000); console.error(err); return; }
-  const timing = { read: Math.round(tRead - t0), decode: sess.decodeMs, kind: 'raw', format: sess.info.format };
+  const timing = { read: Math.round(tRead - t0), decode: sess.decodeMs, kind: 'raw', format: sess.info.format, decodeThreads: sess.info.decoder?.threads || 0 };
+  lastDecoder = sess.info.decoder || null;
   try {
     if (!sess.decoded) {
       if (!sess.info.jpeg) { toast(`${file.name}: Tintwork cannot decode this ${sess.info.format} file (${sess.reason}) and it has no embedded preview.`, 8000); return; }
@@ -4554,7 +4556,7 @@ async function developToDocument(file, sess, settings, timing, t0, { overlayFrom
     if (remember) try { localStorage.setItem(RAW_LAST_KEY, JSON.stringify(settings)); } catch { /* private mode */ } // batch runs leave "last used" alone
     await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res))); // first frame on screen
     const now = performance.now();
-    Object.assign(timing, { develop: Math.round(tBuild - tDev), worker: r.ms, bands: bandsN, build: Math.round(now - tBuild), total: Math.round(now - t0), width: r.width, height: r.height, mp: +(r.width * r.height / 1e6).toFixed(1) });
+    Object.assign(timing, { develop: Math.round(tBuild - tDev), worker: r.ms, bands: bandsN, workers: r.workers, build: Math.round(now - tBuild), total: Math.round(now - t0), width: r.width, height: r.height, mp: +(r.width * r.height / 1e6).toFixed(1) });
     if (ov) Object.assign(timing, { halfFirst: Math.round(tHalfFirst - tDev), half: halfBands ? Math.round(tHalf - tDev) : null, halfBands, full: Math.round(now - tDev) });
     lastImport = { ...timing, notes: r.scaled ? [`Developed at ${r.width}×${r.height} to fit this device's memory.`] : [] };
     if (r.scaled) toast(`Developed at ${r.width}×${r.height} to stay within this device's memory.`, 6000);
@@ -6363,6 +6365,7 @@ function openLayerToDocDialog() {
 }
 
 window.tintwork = {
+  setDevelopEnv, get lastDecoder() { return lastDecoder; },
   // v1.1
   openPSD, openRAW, documentFromPSD, documentToPSD, flatPSD, get rawUI() { return rawUI; }, get lastImport() { return lastImport; }, get lastExportNotes() { return lastExportNotes; },
   readPSDAsync, writePSDAsync, openRawSession, isRawName, isPsdName, RAW_DEFAULTS, PSD_TYPE, DEEP_LIMIT_MB,
