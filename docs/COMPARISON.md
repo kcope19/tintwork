@@ -6,6 +6,26 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v0.6: Windows/Chromium engine, files and core tools (researched 2026-11-01)
+
+Source numbers like [12] refer to the Sources list below.
+
+| Feature | Tintwork status | How paid tools do it | Our improvement / gap |
+|---|---|---|---|
+| GPU compute engine | ✅ WebGPU compute (composite, blur, LUT adjustments, hue/sat, brush dabs), with WebGL2 then CPU fallbacks and a selectable engine | Photoshop/Affinity: native GPU back ends (D3D12/Metal/OpenCL) with a CPU fallback [1][5]. Photopea: WebGL in the browser | Among browser editors, WebGPU is the newest API available. Gap: we could not measure on real Windows GPU hardware here (only SwiftShader); see the README tables |
+| Save in place / Save As / recent files | ✅ File System Access: Ctrl+S writes back to the file, Ctrl+Shift+S always asks, opened images are never overwritten by a project save, and Open Recent keeps handles | Desktop editors: native Save/Save As/Open Recent. Photopea: File ▸ Save rewrites a file opened from the device in modern browsers [12][13]. The API is in Chromium on Windows, macOS, ChromeOS, Linux and Android [14] | On par with Photopea. A new document also gets Save (through Save As with a suggested name, which Photopea said it held back on because of picker naming [13]). Gap: no directory/folder access yet (batch export comes in v0.9) |
+| Installable app + OS file handling | ✅ PWA with window controls overlay, file_handlers (.png/.jpg/.webp/.tintwork), app shortcuts and an offline shell | Photopea: an installable PWA that registers file handlers through `launchQueue` [15]. Desktop editors: native installers | Comparable to Photopea. Gap: no native installer, and no "Open with" for TIFF/PSD |
+| Stroke smoothing (mouse) | ✅ A 0–100 stabilizer: the tip trails the pointer on a string, and catches up on pause or release | Photoshop: Smoothing 0–100 with Pulled String, Stroke Catch-up, Catch-up on Stroke End and Adjust for Zoom modes [16] | Same core behaviour with one simple control. Gap: no per-mode toggles or zoom adjustment |
+| Gradient tool | ✅ Linear, radial and reflected; fg→bg or fg→transparent; reverse; opacity; dither; Shift snaps to 45°; selection-aware; paints masks; computed at 16 bits in a 16-bit document | Photoshop: linear, radial, angle, reflected and diamond types; reverse, dither and opacity; Shift constrains to 45°; a newer non-destructive gradient layer with on-canvas handles [17][18] | Dither is always on and the 16-bit path is native. Gaps: no angle/diamond types, no multi-stop editor, and no live gradient layer |
+| Shapes | ✅ Rectangle, rounded rectangle, ellipse and line; fill, stroke or both; each on a new layer; Shift constrains, Ctrl draws from the centre; live preview | Pixelmator Pro: vector shape layers (rectangle, rounded rect, oval, polygon, star, line) with editable fill and stroke [19]. Photoshop: vector shape layers | Gap: our shapes are raster (they cannot be edited after they are drawn), and there are no polygons, stars or custom shapes. Vector shapes are planned after layer styles |
+| Dodge / Burn | ✅ A brush with a Shadows/Midtones/Highlights range and exposure; Alt toggles between dodge and burn; masks are excluded | Photoshop and Affinity: Dodge/Burn tools with a tonal range (Shadows/Midtones/Highlights) and exposure; Alt toggles in Affinity [20][21] | Comparable. Gap: no "protect tones" option, and there is a non-destructive overlay-layer workflow only if done by hand |
+| Red-eye removal | ✅ Click a pupil; pupil size and darken amount | Photoshop: Red Eye tool with Pupil Size and Darken Amount [22]. Pixelmator Pro: repair tools instead of a dedicated red-eye tool [23] | On par with Photoshop's controls. Gap: no automatic eye detection |
+| Context menus | ✅ Right-click on the canvas (undo/redo, selection commands, copy/paste, free transform) and on layers (rename, duplicate, delete, merge, show/hide, mask) | All desktop editors offer context menus | Comparable |
+| Warp / perspective | ❌ Deferred to v0.7 | Photoshop: Edit ▸ Transform ▸ Warp/Perspective. Affinity: Mesh Warp / Perspective tools | Gap |
+
+### Summary
+In v0.6 Tintwork caught up with Photopea on the "desktop-like web app" basics: real Save/Save As, recent files, OS file handling and an installable window. It added a WebGPU engine with fallbacks. The core tools now include a mouse-friendly stroke stabilizer, gradients, shapes, dodge/burn and red eye. The biggest remaining gaps compared with paid desktop editors are editable vector shapes and live gradient layers, warp/perspective transforms (next milestone), groups, clipping masks and layer styles. GPU speed on real Windows hardware also remains unmeasured.
+
 ## v0.5: GPU rendering and high bit depth (researched 2026-11-01)
 
 | Feature | Tintwork status | How paid tools do it | Our improvement / gap |
@@ -38,13 +58,25 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 9. caniuse, `EXT_texture_norm16`: https://caniuse.com/wf-ext-texture-norm16
 10. Photoshop dither setting (Color Settings): https://www.underwaterphotography.com/PhotoShop/PhotoShop/1_7_10_4.html
 11. Adobe, "Default keyboard shortcuts in Photoshop": https://helpx.adobe.com/photoshop/using/default-keyboard-shortcuts.html
+12. Photopea, "Open and Save": https://www.photopea.com/learn/opening-saving
+13. Photopea GitHub issue #2118, "Optionally support the Native File System API": https://github.com/photopea/photopea/issues/2118
+14. Chrome for Developers, "The File System Access API": https://developer.chrome.com/docs/capabilities/web-apis/file-system-access
+15. Chrome for Developers, "How Photopea uses the File Handling API": https://developer.chrome.com/blog/how-photopea-uses-the-file-handling-api
+16. Adobe, "Create smoother brush strokes using stroke smoothing": https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/create-smoother-more-polished-brush-strokes-with-stroke-smoothing.html
+17. Adobe, "Using gradients" (Photoshop Elements): https://helpx.adobe.com/uk/photoshop-elements/using/gradients.html
+18. Photoshop Essentials, "How to Use Live Gradients in Photoshop 2023": https://www.photoshopessentials.com/basics/how-to-use-live-gradients-in-photoshop-2023/
+19. Apple, Pixelmator Pro User Guide, "Draw vector shapes and graphics": https://support.apple.com/guide/pixelmator-pro/draw-vector-shapes-and-graphics-pixe136a0db0/mac
+20. Affinity forum, "Dodge and Burn Brush: Shadows/Highlights Only": https://forum.affinity.serif.com/index.php?/topic/57578-dodge-and-burn-brush-shadowshighlights-only/
+21. Digital Camera World, "Master the dodge and burn tools in Affinity Photo": https://www.digitalcameraworld.com/tutorials/master-the-dodge-and-burn-tools-in-affinity-photo-for-incredible-contrast
+22. Adobe, "Remove red eye in flash photos": https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/remove-red-eye-in-flash-photos.html
+23. Apple, Pixelmator Pro User Guide, "Repair and clone areas": https://support.apple.com/guide/pixelmator-pro/repair-remove-and-clone-objects-in-images-pixc5f9d789e/macos
 
 ### Benchmark caveat
-`scripts/bench.mjs` ran on a Linux box with no GPU. Headless Chromium used SwiftShader (software) and WebKit used software GL, so GPU timings there are slower than the CPU worker and are not representative of real hardware (see README).
+`scripts/bench.mjs` ran on a Linux box with no GPU. Headless Chromium used SwiftShader (software) for both WebGL2 and WebGPU and WebKit used software GL, so GPU timings there are slower than the CPU worker and are not representative of real hardware (see README).
 
 ## Roadmap (feature areas researched as each milestone lands; Windows + Chrome/Edge first)
-- v0.6: WebGPU engine, mouse precision (stabilizer, on-canvas brush resize, context menus), File System Access, installable PWA, Windows conventions; shapes, gradients, dodge/burn, warp, perspective, red-eye
-- v0.7: groups, clipping masks, layer styles
+- ~~v0.6: WebGPU engine, mouse precision, File System Access, installable PWA, Windows conventions; shapes, gradients, dodge/burn, red-eye~~ (done)
+- v0.7: groups, clipping masks, layer styles, warp and perspective
 - v0.8: auto enhance, auto white balance, straighten, looks and presets
 - v0.9: multiple document tabs, crop presets, batch export
 - v1.0: onboarding, help, accessibility, error handling, iPhone memory tuning

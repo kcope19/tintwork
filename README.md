@@ -9,6 +9,52 @@ any third-party branding, assets or proprietary code.
 
 ![Workspace](screenshots/04-layer-blend-brush.png)
 
+## What's new in v0.6 (Windows desktop, Chrome and Edge first)
+
+![Gradient and shapes](screenshots/6x-gradient-shapes.png)
+
+- **WebGPU compute engine** (`src/webgpu.js`) is now the main engine on Chrome and Edge. The order is WebGPU, then WebGL2, then CPU. **View ▸ Rendering engine…** offers Automatic, WebGPU, WebGL2 (GPU) or CPU and shows the adapter, its limits and memory use (screenshot `6x-engine-webgpu.png`).
+  - It covers compositing (every blend mode, opacity, masks, adjustment layers), blur, curves/levels LUTs, hue/saturation and the other point adjustments, plus brush-dab stamping.
+  - Pipelines are specialized per blend mode and operation (constants are baked in, which is about 3x faster than branching at runtime).
+  - Blur uses a bilinear "paired-tap" gather shader, which halves the texture reads. It runs 4x faster than the v0.6 shared-memory version, and the output is identical.
+  - On a real GPU, results go straight to the canvas. On software adapters (SwiftShader) they are read back instead. Automatic mode still chooses the CPU when the adapter is software or fails the speed probe.
+- **File System Access** (Chrome/Edge): **Ctrl+S** saves in place, and the first save goes through Save As. **Ctrl+Shift+S** always asks where to save. Export uses the save picker. An opened JPEG/PNG is never overwritten by a project save. **File ▸ Open recent** keeps file handles in IndexedDB (screenshot `6x-open-recent.png`). Browsers without the API fall back to download and upload.
+- **Installable app (PWA)**: window controls overlay, file handling (opening .png/.jpg/.webp/.tintwork from Explorer), app shortcuts (`?action=new`, `?action=open`) and an offline shell. The title bar shows the document name, with • when there are unsaved changes.
+- **Mouse precision** (the essentials only):
+  - a stroke stabilizer ("smoothing" 0–100, string model with catch-up);
+  - **[ ]** brush size and **Shift+[ ]** hardness;
+  - cursor-anchored wheel zoom;
+  - right-click menus on the canvas and on layers (screenshot `6x-context-menu.png`).
+- **New core tools**:
+  - **Gradient (G)**: linear, radial or reflected; foreground→background or foreground→transparent; reverse and opacity. It respects soft selections. Shift snaps to 45°. On a mask it paints the mask. 8-bit output is dithered, and in a 16-bit document the gradient is computed at 16 bits.
+  - **Shapes (U)**: rectangle, rounded rectangle, ellipse and line. Each can be fill, stroke or both, and each lands on its own new layer. Shift draws a square, circle or 45° line; Ctrl draws from the centre. A live preview shows while you drag (screenshot `6x-shape-preview.png`).
+  - **Dodge / Burn (O)**: targets shadows, midtones or highlights with an exposure setting. Alt switches to the opposite mode.
+  - **Red eye (J)**: click a pupil. The pupil size and darken amount are adjustable.
+  - Pressing a tool key again cycles through the tools that share it: G gradient/fill, O ellipse select/dodge-burn, J spot heal/red eye.
+- Fixes:
+  - Opening a project now names the document after its file.
+  - The window title is no longer overwritten.
+  - Context-menu commands no longer run twice.
+
+### v0.6 benchmarks (`npm run bench`, raw log in `docs/bench-v0.6.log`)
+
+These were measured on the same Linux box with **no GPU**. Chromium's WebGPU adapter is **SwiftShader (software)** and uses readback output. WebGL2 is ANGLE on SwiftShader. These GPU numbers measure a CPU emulating a GPU, so they are **not representative of a real Windows GPU**. They do show that the WebGPU path is correct and how its cost scales. Automatic mode chooses the CPU path on this box. Times are in ms per operation, and the GPU columns include upload and readback.
+
+| Operation (Chromium) | CPU / worker | WebGL2 (SwiftShader) | WebGPU (SwiftShader) |
+|---|---|---|---|
+| Gaussian blur 25 px, 12 MP | 2012 | 6291 | 6975 |
+| Gaussian blur 25 px, 24 MP | 3385 | 13459 | 13000 |
+| Curves, 12 MP | 72 | 299 | 443 |
+| Curves, 24 MP | 130 | 633 | 1013 |
+| 10-layer composite, 12 MP (cold / warm) | 549 / 301 | 4309 / 3549 | 6484 / 4115 |
+| 10-layer composite, 24 MP (cold / warm) | 1134 / 615 | 9436 / 7175 | 12196 / 8030 |
+| Large brush stroke, 12 MP | 384 | 410 (CPU path) | 3709 (async engine call) |
+| Large brush stroke, 24 MP | 490 | 566 (CPU path) | 6479 (async engine call) |
+
+GPU memory for the 10-layer composite: WebGL2 used 916 MB at 12 MP and 1831 MB at 24 MP; WebGPU used 1099 MB and 2197 MB.
+
+Before the paired-tap shader, the WebGPU blur took 29,813 ms at 12 MP. The WebKit run (software GL, CPU fallback) is in the log.
+
 ## What's new in v0.5
 
 - **GPU engine (WebGL2)** with an automatic CPU fallback. Layers, every blend mode, opacity, layer masks, adjustment layers and live filters are composited in half-float or float textures. Gaussian blur (separable), sharpen, noise, vignette, curves/levels (LUT textures), hue/saturation, exposure, brightness/contrast, invert, grayscale and sepia run as shaders.
@@ -277,7 +323,7 @@ test-assets/          generated test image (export outputs are git-ignored)
 
 - On documents over 2.5 MP, adjustment layers and live filters are computed in the worker, so the previous result shows briefly after each edit.
 - Live filters cover Gaussian blur, sharpen, noise and vignette only, and there is one filter mask per layer. Transforming a selection on a live layer converts it to pixels. Text layers are rasterized when converted.
-- Free transform has no perspective or warp. Resampling is bilinear (canvas smoothing), so repeated transforms of a pixel layer soften it; live layers keep their original pixels, but those originals are resampled too.
+- Free transform has no perspective or warp yet (moved to the next milestone). Resampling is bilinear (canvas smoothing), so repeated transforms of a pixel layer soften it; live layers keep their original pixels, but those originals are resampled too.
 - Color range uses one sample color (no add/subtract eyedroppers or localized clusters), and its preview is downscaled. Refine edge has no hair/edge detection or color decontamination.
 - Autosave keeps the last 20 undo steps per document and 5 documents. iOS Safari may evict website storage after several days without use, so autosave is not a backup; save a project file.
 - Bundled fonts are Latin-subset only, with 400/700 weights (Bebas Neue and Pacifico 400 only). There is no per-character styling, paragraph boxes or text on a path, and transforms and filters rasterize a text layer.
@@ -290,14 +336,17 @@ test-assets/          generated test image (export outputs are git-ignored)
 - In 16-bit mode, brushes, the eraser, clone/heal, transforms and moving selected pixels edit the 8-bit proxy and are then reconciled. Pixels they touch drop to 8-bit precision; untouched pixels keep 16-bit.
 - GPU and CPU differ slightly: blur is a true Gaussian on the GPU and a 3-box approximation on the CPU (mean difference under 1 level), and noise uses a different random pattern. Linear-light blur and sharpen run on the CPU only.
 - The GPU path runs on the main thread. On software GL it is slower than the CPU worker, so automatic mode avoids it there.
+- WebGPU: headless/software adapters use the readback output (slower). Direct canvas output is only used on real GPUs, and it has not been benchmarked on Windows hardware from this box. WebGL2 has no brush path, so brushes fall back to the CPU there. WebGPU brush stamping is an async engine call and only pays off on a real GPU.
+- Shapes are raster layers (not editable vector shapes). Gradients have no editor for multi-stop presets, no angle or diamond types, and no gradient fill layer. Dodge/burn and red eye work on 8-bit pixels: in a 16-bit document, touched pixels drop to 8-bit precision, as with other brushes.
+- Deferred by request: mouse side-button mapping, deep accessibility and input customization.
 - Brush has no pressure sensitivity, spacing or texture settings yet.
 - Single open document at a time (tabs are not implemented).
 
 ## Roadmap
 
 Milestones to 1.0 (Windows desktop, Chrome and Edge first; Mac and iPhone kept working):
-- **v0.6**: WebGPU engine (with WebGL2 then CPU fallback), pen tablets (pressure, tilt, coalesced/predicted events, pressure curves), File System Access (Save / Save As / recent files), installable PWA (window controls overlay, file handling), Windows conventions. Also shapes, gradients, dodge/burn, warp, perspective and red-eye.
-- **v0.7**: groups, clipping masks, layer styles.
+- ~~**v0.6**: WebGPU engine (with WebGL2 then CPU fallback), File System Access, installable PWA, Windows conventions, mouse precision, shapes, gradients, dodge/burn, red-eye~~ (done). Warp and perspective transform move to v0.7.
+- **v0.7**: groups, clipping masks, layer styles, warp and perspective transform.
 - **v0.8**: auto enhance, auto white balance, straighten, looks and presets.
 - **v0.9**: multi-document tabs, crop presets, batch export.
 - **v1.0**: onboarding, help, accessibility, error handling, memory tuning, full tests, user guide.
@@ -308,10 +357,10 @@ Longer-term items:
 1. ~~Layer masks~~ (done in v0.2). Next: clipping masks and vector masks.
 2. ~~Lasso, polygonal lasso, magic wand, add/subtract/intersect, feather~~ (done in v0.2). ~~Ellipse, select-and-move pixels~~ (v0.3). ~~Color range, refine edge, free transform of selections~~ (v0.4). Next: a quick-mask editing mode, and saved selections.
 3. **Non-destructive editing**: ~~adjustment layers, editable text layers~~ (v0.3), ~~live filters, adjustment blend modes~~ (v0.4). Next: clipping masks, more live filters.
-4. **Retouching**: ~~clone stamp~~ (done in v0.2), ~~healing brush, spot healing~~ (v0.3), dodge/burn, smudge.
+4. **Retouching**: ~~clone stamp~~ (done in v0.2), ~~healing brush, spot healing~~ (v0.3), ~~dodge/burn, red eye~~ (v0.6), smudge.
 5. **History snapshots**: named snapshots, a history brush, and IndexedDB-backed history so large documents don't run out of memory.
 6. ~~**Curves** with a point editor~~ (v0.3). Next: per-channel levels/curves, color balance, vibrance, white balance, LUT import (.cube).
-7. **Performance**: ~~Web Worker for filters~~ (done in v0.2), ~~WebGL2 GPU pipeline, 16-bit~~ (v0.5). Next: WebGPU compute engine as the primary path on Chrome/Edge (v0.6), OffscreenCanvas, tiled rendering for very large images.
+7. **Performance**: ~~Web Worker for filters~~ (done in v0.2), ~~WebGL2 GPU pipeline, 16-bit~~ (v0.5). ~~WebGPU compute engine as the primary path on Chrome/Edge~~ (v0.6). Next: OffscreenCanvas, tiled rendering for very large images.
 8. **RAW support** via a WASM decoder (e.g. LibRaw compiled to WASM), EXIF reading and orientation, 16-bit pipeline.
 9. **Plugin system**: a sandboxed filter/tool API (worker-based, ImageData in/out), a manifest format and a plugin manager.
 10. **Packaging**: installable PWA with offline cache and file handling, and desktop builds (Tauri or Electron) with native open/save dialogs.

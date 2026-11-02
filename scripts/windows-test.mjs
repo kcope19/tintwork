@@ -169,6 +169,7 @@ p = await P(); check(p.open === 1 && p.kind === 'image' && /Holiday/.test(p.name
 await page.keyboard.press('Control+KeyS'); await page.waitForTimeout(400);
 p = await P(); check(p.save === 4 && /\.tintwork$/.test(p.lastSave.suggestedName), `Ctrl+S on an opened image asks for a project name ("${p.lastSave.suggestedName}") instead of overwriting the PNG`);
 // recent files
+await page.evaluate(() => window.tintwork.newDocument(64, 64, 'white', 'Scratch'));
 await page.evaluate(() => window.tintwork.run('openRecent')); await page.waitForSelector('#recentList');
 const rec = await page.evaluate(() => [...document.querySelectorAll('#recentList .recent-open b')].map((b) => b.textContent));
 check(rec.length >= 2 && rec.includes('Holiday.tintwork') && rec.includes('Holiday.png') && new Set(rec).size === rec.length, `Open recent lists ${rec.join(', ')} (no duplicates)`);
@@ -176,6 +177,107 @@ await page.screenshot({ path: 'screenshots/6x-open-recent.png' });
 await page.click('#recentList .recent-open:has(b:text-is("Holiday.tintwork"))');
 await page.waitForFunction(() => window.tintwork.doc?.name === 'Holiday.tintwork' && window.tintwork.doc.fileKind === 'project', null, { timeout: 5000 }).catch(() => {});
 p = await P(); check(p.kind === 'project' && p.name === 'Holiday.tintwork', `opening from the recent list restores the project (${p.name})`);
+
+// --- v0.6 core tools: gradient, shapes, dodge / burn, red eye ------------------------------------------------
+await page.evaluate(() => window.tintwork.setEnginePref('cpu'));
+const grad = await page.evaluate(() => {
+  const t = window.tintwork, r = {};
+  t.newDocument(256, 20, 'white', 'grad'); t.setFg('#000000'); t.state.bg = '#ffffff'; Object.assign(t.state.opts, { gradType: 'linear', gradColors: 'fg-bg', gradReverse: false, gradOpacity: 100 });
+  t.applyGradient({ x: 0, y: 10 }, { x: 256, y: 10 });
+  const row = t.activeLayer().canvas.getContext('2d').getImageData(0, 10, 256, 1).data; r.mid = row[128 * 4]; r.ends = [row[0], row[255 * 4]];
+  let mono = 0; for (let x = 8; x < 256; x += 8) if (row[x * 4] < row[(x - 8) * 4]) mono++; r.nonMono = mono;
+  // radial
+  t.newDocument(200, 200, 'white', 'radial'); t.state.opts.gradType = 'radial'; t.setFg('#ff0000'); t.state.bg = '#0000ff';
+  t.applyGradient({ x: 100, y: 100 }, { x: 200, y: 100 });
+  const px = (x, y) => [...t.activeLayer().canvas.getContext('2d').getImageData(x, y, 1, 1).data];
+  r.centre = px(100, 100); r.corner = px(2, 2);
+  // selection limits the gradient
+  t.newDocument(200, 100, 'white', 'sel'); t.state.opts.gradType = 'linear'; t.setFg('#000000'); t.state.bg = '#000000';
+  t.setSelection(t.makeSelection(200, 100, t.rectMask(200, 100, { x: 0, y: 0, w: 100, h: 100 })), 'sel');
+  t.applyGradient({ x: 0, y: 0 }, { x: 200, y: 0 }); r.inSel = px(50, 50)[0]; r.outSel = px(150, 50)[0];
+  // gradient on a layer mask
+  t.newDocument(200, 50, 'white', 'mask'); t.run('layerNew'); const l = t.activeLayer(); l.canvas.getContext('2d').fillRect(0, 0, 200, 50); t.touch(l);
+  t.run('addMask'); l.editMask = true; t.setFg('#000000'); t.state.bg = '#ffffff';
+  t.applyGradient({ x: 0, y: 0 }, { x: 200, y: 0 });
+  const m = l.mask.canvas.getContext('2d').getImageData(0, 25, 200, 1).data; r.mask = [m[3], m[100 * 4 + 3], m[199 * 4 + 3]];
+  return r;
+});
+check(Math.abs(grad.mid - 128) <= 2 && grad.ends[0] <= 2 && grad.ends[1] >= 253 && grad.nonMono === 0, `linear gradient black → white (ends ${grad.ends.join('/')}, middle ${grad.mid}, monotonic)`);
+check(grad.centre[0] > 250 && grad.centre[2] < 5 && grad.corner[2] > 250 && grad.corner[0] < 5, `radial gradient: centre ${grad.centre.slice(0, 3)}, corner ${grad.corner.slice(0, 3)}`);
+check(grad.inSel < 10 && grad.outSel === 255, `gradient stays inside the selection (inside ${grad.inSel}, outside ${grad.outSel})`);
+check(grad.mask[0] < 5 && Math.abs(grad.mask[1] - 128) < 4 && grad.mask[2] > 250, `gradient on a layer mask ramps hide → reveal (${grad.mask.join(', ')})`);
+
+const deepGrad = await page.evaluate(() => {
+  const t = window.tintwork; t.newDocument(4000, 4, 'white', 'deep'); t.setDepth(16);
+  t.setFg('#404040'); t.state.bg = '#505050'; Object.assign(t.state.opts, { gradType: 'linear', gradColors: 'fg-bg' });
+  t.applyGradient({ x: 0, y: 0 }, { x: 4000, y: 0 });
+  const l = t.activeLayer(), d = t.deepOf(l), v16 = new Set(), v8 = new Set(), c8 = l.canvas.getContext('2d').getImageData(0, 1, 4000, 1).data;
+  for (let x = 0; x < 4000; x++) { v16.add(d.data[(1 * 4000 + x) * 4]); v8.add(c8[x * 4]); }
+  return { depth: t.doc.depth, v16: v16.size, v8: v8.size };
+});
+check(deepGrad.depth === 16 && deepGrad.v16 > 1000, `16-bit gradient keeps ${deepGrad.v16} distinct levels across a 16-step 8-bit range (8-bit proxy: ${deepGrad.v8})`);
+
+await page.evaluate(() => { const t = window.tintwork; t.newDocument(600, 400, 'white', 'Shapes'); t.setFg('#2a7de1'); t.state.bg = '#ffffff'; t.run('zoomFit'); });
+await page.keyboard.press('KeyU');
+const sb = await page.locator('#view').boundingBox();
+const toScreen = (x, y) => page.evaluate(([x, y]) => { const t = window.tintwork, v = document.querySelector('#view').getBoundingClientRect(); return [v.left + t.state.panX + x * t.zoom, v.top + t.state.panY + y * t.zoom]; }, [x, y]);
+const n1 = await page.evaluate(() => window.tintwork.doc.layers.length);
+let [sx, sy] = await toScreen(50, 50); let [ex, ey] = await toScreen(250, 200);
+await page.mouse.move(sx, sy); await page.mouse.down(); await page.mouse.move((sx + ex) / 2, (sy + ey) / 2, { steps: 3 }); await page.mouse.move(ex, ey, { steps: 3 }); await page.mouse.up();
+const shp = await page.evaluate(() => { const t = window.tintwork, l = t.activeLayer(), x = l.canvas.getContext('2d'); return { dims: [t.doc.width, t.doc.height, l.canvas.width, t.history.entries.map((e) => e.label).join('|')], tool: t.state.tool, n: t.doc.layers.length, name: l.name, inside: [...x.getImageData(150, 125, 1, 1).data], outside: [...x.getImageData(400, 300, 1, 1).data] }; });
+check(shp.tool === 'shape' && shp.n === n1 + 1 && shp.name === 'Rectangle' && shp.inside.join() === '42,125,225,255' && shp.outside[3] === 0, `U + drag draws a rectangle on a new layer (${shp.dims}, ${shp.name}, inside ${shp.inside}, outside alpha ${shp.outside[3]})`);
+await page.evaluate(() => { const t = window.tintwork; t.state.opts.shapeKind = 'ellipse'; t.state.opts.shapeStyle = 'both'; t.state.opts.shapeStroke = 10; t.setFg('#e8553a'); t.state.bg = '#222222'; t.setTool('shape'); });
+[sx, sy] = await toScreen(420, 200); [ex, ey] = await toScreen(520, 260);
+await page.keyboard.down('Shift'); await page.keyboard.down('Control');
+await page.mouse.move(sx, sy); await page.mouse.down(); await page.mouse.move(ex, ey, { steps: 4 });
+await page.screenshot({ path: 'screenshots/6x-shape-preview.png' });
+await page.mouse.up(); await page.keyboard.up('Control'); await page.keyboard.up('Shift');
+const ell = await page.evaluate(() => { const t = window.tintwork, x = t.activeLayer().canvas.getContext('2d'), g = (a, b) => [...x.getImageData(a, b, 1, 1).data]; return { dims: [t.doc.width, t.doc.height, t.history.entries.map((e) => e.label).join('|')], n: t.doc.layers.length, tool: t.state.tool, name: t.activeLayer().name, c: g(420, 200), top: g(420, 200 - 100), left: g(320, 200), side: g(420 + 98, 200), corner: g(420 + 90, 200 + 90) }; });
+check(ell.name === 'Ellipse' && ell.c.join() === '232,85,58,255' && ell.top[0] === 34 && ell.left[0] === 34 && ell.corner[3] === 0, `Shift+Ctrl drag: circle from the centre with fill + stroke (${ell.dims} ${ell.name}, ${ell.n}, ${ell.tool}; centre ${ell.c.slice(0, 3)}, rim ${ell.top.slice(0, 3)}, outside alpha ${ell.corner[3]})`);
+await page.evaluate(() => { const t = window.tintwork; t.state.opts.shapeKind = 'line'; t.state.opts.shapeStroke = 6; t.setFg('#000000'); t.addShapeLayer(t.shapeGeom({ a: { x: 20, y: 380 }, b: { x: 580, y: 300 }, mods: { square: true } })); });
+const ln = await page.evaluate(() => { const t = window.tintwork, x = t.activeLayer().canvas.getContext('2d'); const dd = x.getImageData(0, 0, 600, 400).data; let n = 0; for (let i = 3; i < dd.length; i += 4) if (dd[i]) n++; return { n, w: t.activeLayer().canvas.width, cls: t.activeLayer().canvas.constructor.name, layers: t.doc.layers.map((q) => q.name + ':' + q.id).join(','), act: t.doc.activeId, name: t.activeLayer().name, on: x.getImageData(300, 380, 1, 1).data[3], off: x.getImageData(300, 340, 1, 1).data[3] }; });
+check(ln.name === 'Line' && ln.on === 255 && ln.off === 0, `Shift snaps a line to 0/45/90° (${JSON.stringify(ln)})`);
+
+// gradient through the UI (G, drag) for the screenshot
+await page.evaluate(() => { const t = window.tintwork; t.doc.activeId = t.doc.layers[0].id; t.updateLayersPanel(); t.setFg('#1d2b53'); t.state.bg = '#ffd27a'; t.state.opts.gradType = 'linear'; t.state.opts.shapeKind = 'rect'; t.state.opts.shapeStyle = 'fill'; });
+await page.keyboard.press('KeyG');
+[sx, sy] = await toScreen(0, 0); [ex, ey] = await toScreen(0, 400);
+await page.mouse.move(sx + 5, sy + 2); await page.mouse.down(); await page.mouse.move(ex + 5, ey - 2, { steps: 5 }); await page.mouse.up();
+const gUI = await page.evaluate(() => { const t = window.tintwork, x = t.doc.layers[0].canvas.getContext('2d'); return { tool: t.state.tool, top: [...x.getImageData(300, 2, 1, 1).data], bottom: [...x.getImageData(300, 397, 1, 1).data], hist: t.history.entries[t.history.index].label }; });
+check(gUI.tool === 'gradient' && gUI.top[2] > 70 && gUI.bottom[0] > 240 && gUI.hist === 'Gradient', `G + drag fills the background with a gradient (top ${gUI.top.slice(0, 3)}, bottom ${gUI.bottom.slice(0, 3)})`);
+await page.evaluate(() => window.tintwork.compositeSettled());
+await page.screenshot({ path: 'screenshots/6x-gradient-shapes.png' });
+await page.keyboard.press('KeyG'); const gk = await page.evaluate(() => window.tintwork.state.tool);
+await page.keyboard.press('KeyG'); const gk2 = await page.evaluate(() => window.tintwork.state.tool);
+await page.keyboard.press('KeyM'); await page.keyboard.press('KeyO'); const ok1 = await page.evaluate(() => window.tintwork.state.tool);
+await page.keyboard.press('KeyO'); const ok2 = await page.evaluate(() => window.tintwork.state.tool);
+check(gk === 'fill' && gk2 === 'gradient' && ok1 === 'ellipse' && ok2 === 'tone', `shared tool keys cycle (G: gradient → ${gk} → ${gk2}; O: ${ok1} → ${ok2})`);
+
+const tone = await page.evaluate(() => {
+  const t = window.tintwork, r = {};
+  for (const [mode, range] of [['dodge', 'midtones'], ['burn', 'midtones'], ['dodge', 'highlights']]) {
+    t.newDocument(300, 100, 'white', 'tone'); const x = t.activeLayer().canvas.getContext('2d'); x.fillStyle = '#404040'; x.fillRect(0, 0, 300, 100); t.touch(t.activeLayer());
+    t.setTool('tone'); Object.assign(t.state.opts, { toneMode: mode, toneRange: range, toneSize: 40, toneHardness: 100, toneOpacity: 50, smoothing: 0 });
+    t.paintStroke([{ x: 20, y: 50 }, { x: 150, y: 50 }, { x: 280, y: 50 }], { tool: 'tone' });
+    r[mode + '-' + range] = { on: x.getImageData(150, 50, 1, 1).data[0], off: x.getImageData(150, 5, 1, 1).data[0], label: t.history.entries[t.history.index].label };
+  }
+  return r;
+});
+const dm = tone['dodge-midtones'], bm = tone['burn-midtones'], dh = tone['dodge-highlights'];
+check(dm.on > 80 && dm.off === 64 && dm.label === 'Dodge', `dodge lightens under the stroke only (64 → ${dm.on}; outside ${dm.off})`);
+check(bm.on < 50 && bm.label === 'Burn', `burn darkens (64 → ${bm.on})`);
+check(dh.on > 64 && dh.on < dm.on, `dodge on highlights barely touches dark tones (64 → ${dh.on}, midtones ${dm.on})`);
+
+const red = await page.evaluate(() => {
+  const t = window.tintwork; t.newDocument(200, 200, 'white', 'eye');
+  const x = t.activeLayer().canvas.getContext('2d'); x.fillStyle = 'rgb(220,170,140)'; x.fillRect(0, 0, 200, 200);
+  x.fillStyle = 'rgb(200,30,30)'; x.beginPath(); x.arc(100, 100, 12, 0, 7); x.fill(); t.touch(t.activeLayer());
+  t.state.opts.redeyeSize = 40; const n = t.redEyeAt({ x: 101, y: 99 });
+  const g = (a, b) => [...x.getImageData(a, b, 1, 1).data];
+  return { n, pupil: g(100, 100), skin: g(100, 85), far: g(20, 20), label: t.history.entries[t.history.index].label };
+});
+check(red.n > 300 && red.pupil[0] < 40 && red.skin.join() === '220,170,140,255' && red.label === 'Red eye', `red eye: pupil ${red.pupil.slice(0, 3)} (was 200,30,30), skin next to it unchanged, ${red.n} px fixed`);
+await page.evaluate(() => window.tintwork.setEnginePref('webgpu'));
 
 // --- installable app ------------------------------------------------------------------------------------
 const man = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());

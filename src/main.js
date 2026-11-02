@@ -40,6 +40,10 @@ const state = {
     cloneSize: 40, cloneHardness: 60, cloneOpacity: 100, cloneAligned: true,
     healSize: 40, healHardness: 80, healOpacity: 100, spotSize: 30, spotHardness: 80, spotOpacity: 100,
     xfKeepAspect: false, xfSkew: false,
+    gradType: 'linear', gradColors: 'fg-bg', gradReverse: false, gradOpacity: 100,
+    shapeKind: 'rect', shapeStyle: 'fill', shapeStroke: 8, shapeRadius: 0,
+    toneSize: 60, toneHardness: 40, toneOpacity: 40, toneMode: 'dodge', toneRange: 'midtones',
+    redeyeSize: 40, redeyeDarken: 60,
     crMode: 'sampled', crColor: null, crFuzziness: 40, refineSmooth: 0, refineShift: 0, refineFeather: 0,
   },
   selPreview: null,   // in-progress rectangle / lasso outline
@@ -984,6 +988,23 @@ function render() {
     else if (sp.pts?.length) { path.moveTo(sp.pts[0].x, sp.pts[0].y); for (const q of sp.pts) path.lineTo(q.x, q.y); path.closePath(); }
     ants(path);
   }
+  if (state.shapePreview) {
+    const g = state.shapePreview, o = state.opts;
+    vctx.save(); vctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * px, dpr * py);
+    const path = shapePath(g), style = g.kind === 'line' ? 'stroke' : o.shapeStyle;
+    vctx.globalAlpha = 0.75;
+    if (style !== 'stroke') { vctx.fillStyle = state.fg; vctx.fill(path); }
+    if (style !== 'fill') { vctx.strokeStyle = style === 'both' ? state.bg : state.fg; vctx.lineWidth = Math.max(1, o.shapeStroke); vctx.lineCap = g.kind === 'line' ? 'round' : 'butt'; vctx.stroke(path); }
+    vctx.restore(); ants(path);
+  }
+  if (state.gradPreview) {
+    const { a, b } = state.gradPreview, [x1, y1] = toS(a.x, a.y), [x2, y2] = toS(b.x, b.y);
+    vctx.save(); vctx.lineWidth = 3; vctx.strokeStyle = '#000a'; vctx.beginPath(); vctx.moveTo(x1, y1); vctx.lineTo(x2, y2); vctx.stroke();
+    vctx.lineWidth = 1; vctx.strokeStyle = '#fff'; vctx.stroke();
+    for (const [x, y, c] of [[x1, y1, state.fg], [x2, y2, state.opts.gradColors === 'fg-bg' ? state.bg : '#0000']]) { vctx.beginPath(); vctx.arc(x, y, 5, 0, Math.PI * 2); vctx.fillStyle = c; vctx.fill(); vctx.stroke(); }
+    if (state.opts.gradType === 'radial') { vctx.setLineDash([4, 4]); vctx.beginPath(); vctx.arc(x1, y1, Math.hypot(x2 - x1, y2 - y1), 0, Math.PI * 2); vctx.stroke(); }
+    vctx.restore();
+  }
   if (state.poly?.pts.length) {
     const path = new Path2D(), pts = state.poly.pts;
     path.moveTo(pts[0].x, pts[0].y); for (const q of pts) path.lineTo(q.x, q.y);
@@ -1057,7 +1078,7 @@ function screenToDoc(e) {
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
-const PAINT_TOOLS = ['brush', 'eraser', 'clone', 'heal', 'spot'];
+const PAINT_TOOLS = ['brush', 'eraser', 'clone', 'heal', 'spot', 'tone', 'redeye']; // tools with a round size cursor and [ ] sizing
 const TOOLS = [
   { id: 'move', name: 'Move', key: 'V' },
   { id: 'select', name: 'Rectangle select', key: 'M' },
@@ -1072,7 +1093,11 @@ const TOOLS = [
   { id: 'clone', name: 'Clone stamp (Alt+click sets source)', key: 'S' },
   { id: 'heal', name: 'Healing brush (Alt+click sets source)', key: 'R' },
   { id: 'spot', name: 'Spot healing', key: 'J' },
-  { id: 'fill', name: 'Fill', key: 'G' },
+  { id: 'redeye', name: 'Red eye (J again)', key: 'J' },
+  { id: 'tone', name: 'Dodge / burn (O again)', key: 'O' },
+  { id: 'gradient', name: 'Gradient', key: 'G' },
+  { id: 'fill', name: 'Fill (G again)', key: 'G' },
+  { id: 'shape', name: 'Shape', key: 'U' },
   { id: 'text', name: 'Text', key: 'T' },
   { id: 'eyedropper', name: 'Color picker', key: 'I' },
   { sep: true },
@@ -1086,7 +1111,7 @@ function setTool(id) {
   if (state.tool === 'polylasso' && id !== 'polylasso') state.poly = null;
   state.tool = id;
   for (const b of document.querySelectorAll('#toolbar button')) b.classList.toggle('active', b.dataset.tool === id);
-  const cursors = { move: 'move', select: 'crosshair', lasso: 'crosshair', polylasso: 'crosshair', wand: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', clone: 'none', heal: 'none', spot: 'none', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
+  const cursors = { move: 'move', select: 'crosshair', lasso: 'crosshair', polylasso: 'crosshair', wand: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', clone: 'none', heal: 'none', spot: 'none', tone: 'none', redeye: 'none', gradient: 'crosshair', shape: 'crosshair', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
   view.style.cursor = cursors[id] || 'default';
   buildOptionsBar();
   requestRender();
@@ -1241,6 +1266,26 @@ const toolHandlers = {
   heal: paintTool('heal'),
   spot: paintTool('spot'),
   fill: { down(p) { fillAt(p); } },
+  tone: paintTool('tone'),
+  redeye: { down(p) { redEyeAt(p); } },
+  gradient: {
+    down(p) { const l = activeLayer(); if (!l) return; drag = { a: p, b: p }; state.gradPreview = drag; },
+    move(p, e) { drag.b = e.shiftKey ? snap45(drag.a, p) : p; requestRender(); },
+    up() {
+      const g = state.gradPreview; state.gradPreview = null; requestRender();
+      if (!g || Math.hypot(g.b.x - g.a.x, g.b.y - g.a.y) * state.zoom < 3) return;
+      applyGradient(g.a, g.b);
+    },
+  },
+  shape: {
+    down(p) { if (!doc()) return; drag = { a: p, b: p, mods: {} }; state.shapePreview = shapeGeom(drag); },
+    move(p, e) { drag.b = p; drag.mods = { square: e.shiftKey, center: primaryMod(e) }; state.shapePreview = shapeGeom(drag); requestRender(); },
+    up() {
+      const g = state.shapePreview; state.shapePreview = null; requestRender();
+      if (!g || (g.kind === 'line' ? Math.hypot(g.x2 - g.x1, g.y2 - g.y1) : Math.min(g.w, g.h)) * state.zoom < 2) return;
+      addShapeLayer(g);
+    },
+  },
   eyedropper: { down(p) { drag = {}; pickColor(p); }, move(p) { pickColor(p); } },
   text: { down(p) { const hit = textLayerAt(p); if (hit) { doc().activeId = hit.id; openTextDialog(null, hit); } else openTextDialog(p); } },
   zoom: { down(p, e) { const r = view.getBoundingClientRect(); zoomAt(e.altKey ? 1 / 1.5 : 1.5, e.clientX - r.left, e.clientY - r.top); } },
@@ -1539,7 +1584,7 @@ function rectFromPoints(a, b, square) {
 /** Brush, eraser and clone stamp share the same stroke machinery. */
 function paintTool(kind) {
   const erase = kind === 'eraser', clone = kind === 'clone' || kind === 'heal', heal = kind === 'heal' || kind === 'spot';
-  const LABEL = { brush: 'Brush stroke', eraser: 'Eraser', clone: 'Clone stamp', heal: 'Healing brush', spot: 'Spot healing' };
+  const LABEL = { brush: 'Brush stroke', eraser: 'Eraser', clone: 'Clone stamp', heal: 'Healing brush', spot: 'Spot healing', tone: 'Dodge / burn' };
   return {
     down(p, e) {
       const layer = activeLayer(); if (!layer) return;
@@ -1548,7 +1593,7 @@ function paintTool(kind) {
         if (e.altKey) { state.cloneSrc = { x: p.x, y: p.y }; state.cloneOffset = null; status(`Clone source set at ${Math.round(p.x)}, ${Math.round(p.y)}`); buildOptionsBar(); requestRender(); return; }
         if (!state.cloneSrc) { status('Alt+click to set a source point first.'); return; }
       }
-      if ((clone || heal) && editingMask(layer)) { status('This tool paints layer pixels. Click the layer thumbnail to target pixels.'); return; }
+      if ((clone || heal || kind === 'tone') && editingMask(layer)) { status('This tool paints layer pixels. Click the layer thumbnail to target pixels.'); return; }
       if (e.altKey && kind === 'brush') { pickColor(p); return; }
       if (!editingMask(layer)) rasterize(layer, 'painting');
       ensureCoversDoc(layer);
@@ -1564,11 +1609,13 @@ function paintTool(kind) {
         backup: cloneCanvas(canvas),
         stroke: makeCanvas(canvas.width, canvas.height),
         tmp: doc().selection || clone ? makeCanvas(canvas.width, canvas.height) : null,
-        stamp: makeStamp(size, hardness, kind === 'spot' ? '#3a3f4a' : erase || clone || onMask ? '#ffffff' : state.fg),
+        stamp: makeStamp(size, hardness, kind === 'spot' ? '#3a3f4a' : erase || clone || onMask || kind === 'tone' ? '#ffffff' : state.fg),
+        // dodge / burn: Alt flips the mode for this stroke
+        tone: kind === 'tone' ? { burn: (o.toneMode === 'burn') !== !!e.altKey, range: o.toneRange } : null,
         last: null, dirty: null, hardness,
-        stampColor: kind === 'spot' ? '#3a3f4a' : erase || clone || onMask ? '#ffffff' : state.fg,
+        stampColor: kind === 'spot' ? '#3a3f4a' : erase || clone || onMask || kind === 'tone' ? '#ffffff' : state.fg,
         // large brushes stamp on the GPU (WebGPU with synchronous output); everything else uses Canvas 2D
-        gpuDabs: size >= GPU_DAB_MIN && gfx.engine?.kind === 'webgpu' && gfx.engine.syncOutput && !gfx.engine.lost ? [] : null,
+        gpuDabs: kind !== 'tone' && size >= GPU_DAB_MIN && gfx.engine?.kind === 'webgpu' && gfx.engine.syncOutput && !gfx.engine.lost ? [] : null,
         lazy: { x: p.x, y: p.y }, // stabilizer ("lazy mouse") position
       };
       gfx.dabPath = drag.gpuDabs ? 'webgpu' : 'cpu';
@@ -1593,7 +1640,7 @@ function paintTool(kind) {
       lastPaintPoint = drag.last;
       if (drag.heal) { finishHeal(drag); return; }
       touchTarget(drag.layer);
-      commit(drag.onMask ? (erase ? 'Erase mask' : 'Paint mask') : LABEL[kind]);
+      commit(drag.onMask ? (erase ? 'Erase mask' : 'Paint mask') : kind === 'tone' ? (drag.tone.burn ? 'Burn' : 'Dodge') : LABEL[kind]);
       updateLayersPanel();
     },
   };
@@ -1640,6 +1687,24 @@ function flushGpuDabs(rect) {
   }
   if (drag.gpuDabs) drag.gpuDabs.length = 0;
 }
+/**
+ * Dodge (lighten) / burn (darken) inside the stroke coverage: a gamma curve whose strength follows coverage ×
+ * exposure × a tonal-range weight (shadows, midtones or highlights). Alpha is preserved.
+ */
+function toneRect(c, cover, rx, ry, rw, rh) {
+  const src = ctxOf(drag.backup).getImageData(rx, ry, rw, rh), d = src.data;
+  const cv = cover.getContext('2d', { willReadFrequently: true }).getImageData(rx, ry, rw, rh).data;
+  const { burn, range } = drag.tone, k0 = drag.opacity;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = cv[i + 3]; if (!a || !d[i + 3]) continue;
+    const L = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
+    const w = range === 'shadows' ? (1 - L) * (1 - L) : range === 'highlights' ? L * L : 1;
+    const k = (a / 255) * k0 * w; if (k <= 0) continue;
+    const g = burn ? 1 + k : 1 / (1 + k);
+    for (let ch = 0; ch < 3; ch++) d[i + ch] = Math.round(255 * Math.pow(d[i + ch] / 255, g));
+  }
+  c.putImageData(src, rx, ry);
+}
 function stampLine(a, b) {
   const dist = Math.hypot(b.x - a.x, b.y - a.y);
   const step = Math.max(0.5, drag.size * 0.12);
@@ -1678,6 +1743,8 @@ function applyStroke() {
     c.globalAlpha = drag.opacity; c.drawImage(drag.srcTmp, 0, 0);
   } else if (drag.kind === 'spot') {
     c.globalAlpha = 0.55; c.drawImage(cover, 0, 0);
+  } else if (drag.tone) {
+    toneRect(c, cover, rx, ry, rw, rh);
   } else if (drag.onMask) {
     // mask' = mask * (1 - a) + lum * a   (white reveals, black hides)
     c.globalAlpha = drag.opacity; c.globalCompositeOperation = 'destination-out'; c.drawImage(cover, 0, 0);
@@ -1752,6 +1819,129 @@ function fillAt(p) {
   c.putImageData(img, 0, 0);
   touchTarget(layer);
   requestRender(); commit(onMask ? 'Fill mask' : 'Fill'); updateLayersPanel();
+}
+
+// --- Gradient, shapes and red-eye ---------------------------------------------------------------------
+function snap45(a, p) {
+  const dx = p.x - a.x, dy = p.y - a.y, ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4), r = Math.hypot(dx, dy);
+  return { x: a.x + Math.cos(ang) * r, y: a.y + Math.sin(ang) * r };
+}
+/** Small deterministic hash noise in [-0.5, 0.5) for dithering. */
+const hashNoise = (x, y) => { let h = (x * 374761393 + y * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296 - 0.5; };
+/**
+ * Gradient from a to b (doc coords) on the active layer or its mask: linear, radial or reflected; foreground →
+ * background or foreground → transparent; restricted (softly) by the selection. Computed in floating point and
+ * dithered for 8-bit documents; 16-bit documents get a true 16-bit gradient (no banding).
+ */
+function applyGradient(a, b, o = state.opts) {
+  const layer = activeLayer(); if (!layer) return false;
+  if (layer.kind === 'adjust' && !editingMask(layer)) { status('Select a pixel layer or a mask for the gradient.'); return false; }
+  if (!editingMask(layer)) rasterize(layer, 'the gradient');
+  ensureCoversDoc(layer);
+  const onMask = editingMask(layer), cv = targetCanvas(layer), W = cv.width, H = cv.height;
+  const sel = doc().selection, ox = layer.x, oy = layer.y;
+  let c0 = hexToRgb(state.fg).map((v) => v / 255), c1 = o.gradColors === 'fg-bg' ? hexToRgb(state.bg).map((v) => v / 255) : c0.slice();
+  let a0 = 1, a1 = o.gradColors === 'fg-bg' ? 1 : 0;
+  if (o.gradReverse) { [c0, c1] = [c1, c0]; [a0, a1] = [a1, a0]; }
+  const op = (o.gradOpacity ?? 100) / 100, type = o.gradType;
+  const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy || 1, len = Math.sqrt(len2);
+  const tAt = (x, y) => { // x, y: doc coords of the pixel centre
+    let t = type === 'radial' ? Math.hypot(x - a.x, y - a.y) / len : ((x - a.x) * dx + (y - a.y) * dy) / len2;
+    if (type === 'reflected') t = Math.abs(t);
+    return t < 0 ? 0 : t > 1 ? 1 : t;
+  };
+  const selW = (x, y) => { if (!sel) return 1; return x >= 0 && y >= 0 && x < sel.W && y < sel.H ? sel.mask[y * sel.W + x] / 255 : 0; };
+  const deep = !onMask && useDeep(layer);
+  if (deep) {
+    const src = deepOf(layer), out = createDeep(src.width, src.height, new Uint16Array(src.data)), dd = out.data;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const k = selW(x + ox, y + oy); if (!k) continue;
+      const t = tAt(x + ox + 0.5, y + oy + 0.5), ga = (a0 + (a1 - a0) * t) * op * k, j = (y * W + x) * 4;
+      const A = dd[j + 3] / 65535, oa = ga + A * (1 - ga); if (oa <= 0) continue;
+      for (let ch = 0; ch < 3; ch++) { const gc = c0[ch] + (c1[ch] - c0[ch]) * t; dd[j + ch] = Math.round(((gc * ga + (dd[j + ch] / 65535) * A * (1 - ga)) / oa) * 65535); }
+      dd[j + 3] = Math.round(oa * 65535);
+    }
+    setDeep(layer, out);
+  } else {
+    const c = ctxOf(cv), img = c.getImageData(0, 0, W, H), d = img.data;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const k = selW(x + ox, y + oy); if (!k) continue;
+      const t = tAt(x + ox + 0.5, y + oy + 0.5), j = (y * W + x) * 4, n = hashNoise(x, y);
+      if (onMask) { // a mask takes the gradient's brightness: black hides, white reveals
+        const g = (0.2126 * (c0[0] + (c1[0] - c0[0]) * t) + 0.7152 * (c0[1] + (c1[1] - c0[1]) * t) + 0.0722 * (c0[2] + (c1[2] - c0[2]) * t)) * (a0 + (a1 - a0) * t);
+        const ka = op * k; d[j] = d[j + 1] = d[j + 2] = 255;
+        d[j + 3] = Math.max(0, Math.min(255, Math.round((d[j + 3] / 255 * (1 - ka) + g * ka) * 255 + n)));
+        continue;
+      }
+      const ga = (a0 + (a1 - a0) * t) * op * k, A = d[j + 3] / 255, oa = ga + A * (1 - ga); if (oa <= 0) continue;
+      for (let ch = 0; ch < 3; ch++) { const gc = c0[ch] + (c1[ch] - c0[ch]) * t; d[j + ch] = Math.max(0, Math.min(255, Math.round(((gc * ga + (d[j + ch] / 255) * A * (1 - ga)) / oa) * 255 + n))); }
+      d[j + 3] = Math.max(0, Math.min(255, Math.round(oa * 255)));
+    }
+    c.putImageData(img, 0, 0);
+    touchTarget(layer);
+  }
+  requestRender(); commit(onMask ? 'Gradient mask' : 'Gradient'); updateLayersPanel();
+  return true;
+}
+const SHAPE_NAME = { rect: 'Rectangle', ellipse: 'Ellipse', line: 'Line' };
+/** Shape geometry from a drag: Shift = square / circle / 45° line, Ctrl (⌘ on Mac) = from the centre. */
+function shapeGeom({ a, b, mods = {} }, o = state.opts) {
+  const kind = o.shapeKind;
+  if (kind === 'line') { const q = mods.square ? snap45(a, b) : b; return { kind, x1: a.x, y1: a.y, x2: q.x, y2: q.y }; }
+  let w = b.x - a.x, h = b.y - a.y;
+  if (mods.square) { const m = Math.max(Math.abs(w), Math.abs(h)); w = Math.sign(w || 1) * m; h = Math.sign(h || 1) * m; }
+  let x = a.x, y = a.y;
+  if (mods.center) { x = a.x - w; y = a.y - h; w *= 2; h *= 2; }
+  if (w < 0) { x += w; w = -w; } if (h < 0) { y += h; h = -h; }
+  return { kind, x, y, w, h };
+}
+function shapePath(g, o = state.opts) {
+  const p = new Path2D();
+  if (g.kind === 'line') { p.moveTo(g.x1, g.y1); p.lineTo(g.x2, g.y2); }
+  else if (g.kind === 'ellipse') p.ellipse(g.x + g.w / 2, g.y + g.h / 2, g.w / 2, g.h / 2, 0, 0, Math.PI * 2);
+  else if (o.shapeRadius > 0) p.roundRect(g.x, g.y, g.w, g.h, Math.min(o.shapeRadius, g.w / 2, g.h / 2));
+  else p.rect(g.x, g.y, g.w, g.h);
+  return p;
+}
+/** Draw a shape on a new layer above the active one (fill = foreground; stroke = foreground, or background with "fill + stroke"). */
+function addShapeLayer(g, o = state.opts) {
+  const d = doc(); if (!d) return null;
+  if (state.xf) applyTransform();
+  const l = createLayer(SHAPE_NAME[g.kind], d.width, d.height), x = l.canvas.getContext('2d'), path = shapePath(g, o);
+  const style = g.kind === 'line' ? 'stroke' : o.shapeStyle;
+  if (style !== 'stroke') { x.fillStyle = state.fg; x.fill(path); }
+  if (style !== 'fill') {
+    x.strokeStyle = style === 'both' ? state.bg : state.fg; x.lineWidth = Math.max(1, o.shapeStroke);
+    x.lineJoin = o.shapeRadius > 0 || g.kind !== 'rect' ? 'round' : 'miter'; x.lineCap = g.kind === 'line' ? 'round' : 'butt'; x.stroke(path);
+  }
+  const i = d.layers.indexOf(activeLayer());
+  d.layers.splice(i < 0 ? d.layers.length : i + 1, 0, l); d.activeId = l.id;
+  touch(l); requestRender(); commit(SHAPE_NAME[g.kind]); updateLayersPanel(); buildOptionsBar();
+  return l;
+}
+/**
+ * Red-eye: inside the circle, strongly red pixels lose their red excess (set towards the green/blue mean)
+ * and are darkened; weight fades out at the rim and with weaker redness so skin around the eye is kept.
+ */
+function redEyeAt(p, o = state.opts) {
+  const layer = activeLayer(); if (!layer || layer.kind === 'adjust') return 0;
+  if (editingMask(layer)) { status('Red eye works on layer pixels. Click the layer thumbnail to target pixels.'); return 0; }
+  rasterize(layer, 'red-eye removal');
+  const r = Math.max(2, o.redeyeSize / 2), cx = p.x - layer.x, cy = p.y - layer.y, cv = layer.canvas;
+  const x0 = Math.max(0, Math.floor(cx - r)), y0 = Math.max(0, Math.floor(cy - r)), x1 = Math.min(cv.width, Math.ceil(cx + r)), y1 = Math.min(cv.height, Math.ceil(cy + r));
+  if (x1 <= x0 || y1 <= y0) return 0;
+  const c = ctxOf(cv), img = c.getImageData(x0, y0, x1 - x0, y1 - y0), d = img.data, dark = 1 - (o.redeyeDarken ?? 60) / 100 * 0.6;
+  let n = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    const dist = Math.hypot(x + 0.5 - cx, y + 0.5 - cy) / r; if (dist >= 1) continue;
+    const j = ((y - y0) * (x1 - x0) + (x - x0)) * 4, R = d[j], G = d[j + 1], B = d[j + 2], gb = (G + B) / 2;
+    const redness = R > 50 ? (R - Math.max(G, B)) / R : 0; if (redness <= 0.25) continue;
+    const k = Math.min(1, (redness - 0.25) / 0.25) * Math.min(1, (1 - dist) / 0.25);
+    d[j] = Math.round(R + (gb * dark - R) * k); d[j + 1] = Math.round(G + (G * dark - G) * k); d[j + 2] = Math.round(B + (B * dark - B) * k); n++;
+  }
+  if (!n) { status('No red eye found there. Click the centre of the pupil, or make the tool bigger.'); return 0; }
+  c.putImageData(img, x0, y0); touch(layer); requestRender(); commit('Red eye'); updateLayersPanel();
+  return n;
 }
 
 function pickColor(p) {
@@ -2024,8 +2214,9 @@ window.addEventListener('keydown', (e) => {
   if (cmd) { e.preventDefault(); run(cmd); return; }
   if (key === ' ') { if (!spaceDown) { spaceDown = true; view.style.cursor = 'grab'; } e.preventDefault(); return; }
   if (!mod && !e.altKey) {
-    const t = TOOLS.find((tt) => tt.key && tt.key.toLowerCase() === key);
-    if (t) { setTool(t.id); return; }
+    // tools that share a letter cycle when it is pressed again (G: gradient ↔ fill, O, J…)
+    const same = TOOLS.filter((tt) => tt.key && tt.key.toLowerCase() === key);
+    if (same.length) { const i = same.findIndex((tt) => tt.id === state.tool); setTool(same[(i + 1) % same.length].id); return; }
     if (key === '[' || key === ']') { adjustBrushSize(key === ']' ? 1 : -1); return; }
     if (e.shiftKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) { adjustBrushHardness(e.code === 'BracketRight' ? 1 : -1); return; }
     if (key === 'enter' && state.crop) { run('cropApply'); return; }
@@ -2956,7 +3147,7 @@ function download(blob, filename) {
 function openShortcutsDialog() {
   const K = (cmd, spec) => keyLabel(shortcutFor(cmd, spec));
   const rows = [
-    ['V / M / C', 'Move / Rectangle select / Crop'], ['L / P / W', 'Lasso / Polygonal lasso / Magic wand'], ['B / E / S / G', 'Brush / Eraser / Clone stamp / Fill'], ['T / I', 'Text / Color picker'],
+    ['V / M / C', 'Move / Rectangle select / Crop'], ['L / P / W', 'Lasso / Polygonal lasso / Magic wand'], ['B / E / S', 'Brush / Eraser / Clone stamp'], ['G (again: Fill) / U', 'Gradient / Shapes'], ['O again / J again', 'Dodge-burn / Red eye'], ['T / I', 'Text / Color picker'],
     [platformText('Shift / Alt / Shift+Alt (selecting)'), 'Add / subtract / intersect'], [`${K('invertSelection', 'Ctrl+Shift+I')}, ${keyLabel('Shift+F6')}`, 'Invert selection / feather'], ['Enter, double-click / Esc', 'Close / cancel polygon'],
     ['R / J', 'Healing brush / Spot healing'], [platformText('Alt+click (clone, healing)'), 'Set source point'], ['\\', 'Toggle editing mask / pixels'],
     ['H, hold Space', 'Pan'], ['Z, mouse wheel', platformText('Zoom (Shift+wheel pans)')], ['[ and ]', 'Brush size'], [platformText('Shift+click'), 'Straight brush line'], [platformText('Alt+click (brush)'), 'Pick color'],
@@ -3320,7 +3511,7 @@ async function loadProject(data, filename) {
   if (!layers.length) throw new Error('Project has no layers');
   for (const l of layers) if (l.kind === 'smart') renderSmartSync(l);
   const ai = Math.min(layers.length - 1, Math.max(0, data.activeIndex ?? layers.length - 1));
-  state.doc = { width: data.width, height: data.height, layers, activeId: layers[ai].id, selection: null, name: data.name || filename, depth: data.depth === 16 ? 16 : 8 };
+  state.doc = { width: data.width, height: data.height, layers, activeId: layers[ai].id, selection: null, name: filename || data.name || 'Untitled', depth: data.depth === 16 ? 16 : 8 };
   afterDocChange('Open project');
   status(`Opened project ${filename} (${layers.length} layers)`);
 }
@@ -3412,6 +3603,7 @@ function buildOptionsBar() {
   const bar = $('#optionsbar'); const o = state.opts; const t = TOOLS.find((x) => x.id === state.tool);
   const parts = state.xf ? xfBarParts() : [`<span class="tool-title">${t.name}</span>`];
   const range = (key, label, min, max, unit = '') => `<label>${label} <input type="range" data-opt="${key}" min="${min}" max="${max}" value="${o[key]}" /><input type="number" data-opt="${key}" min="${min}" max="${max}" value="${o[key]}" />${unit}</label>`;
+  const seg = (key, choices) => `<span class="seg">${choices.map(([v, label]) => `<button data-seg="${key}" data-val="${v}" class="${o[key] === v ? 'on' : ''}">${label}</button>`).join('')}</span>`;
   const d = doc();
   switch (state.xf ? '' : state.tool) {
     case 'brush': parts.push(range('brushSize', 'Size', 1, 1000, 'px'), range('brushHardness', 'Hardness', 0, 100, '%'), range('brushOpacity', 'Opacity', 1, 100, '%'), range('smoothing', 'Smoothing', 0, 100, '%'), `<span class="muted">${platformText('Shift+click: straight line · Alt+click: pick color · [ ] size · Shift+[ ] hardness')}</span>`); break;
@@ -3434,6 +3626,17 @@ function buildOptionsBar() {
       break;
     }
     case 'fill': parts.push(range('fillTolerance', 'Tolerance', 0, 255), `<label><input type="checkbox" data-opt="fillContiguous" ${o.fillContiguous ? 'checked' : ''}/> Contiguous</label>`, `<button data-cmd="fillSelection">Fill selection</button>`); break;
+    case 'gradient': parts.push(seg('gradType', [['linear', 'Linear'], ['radial', 'Radial'], ['reflected', 'Reflected']]), seg('gradColors', [['fg-bg', 'Foreground → background'], ['fg-transparent', 'Foreground → transparent']]),
+      `<label><input type="checkbox" data-opt="gradReverse" ${o.gradReverse ? 'checked' : ''}/> Reverse</label>`, range('gradOpacity', 'Opacity', 1, 100, '%'),
+      `<span class="muted">${platformText('Drag to draw · Shift = 45° steps · on a mask: black hides, white reveals')}</span>`); break;
+    case 'shape': parts.push(seg('shapeKind', [['rect', 'Rectangle'], ['ellipse', 'Ellipse'], ['line', 'Line']]),
+      o.shapeKind === 'line' ? '' : seg('shapeStyle', [['fill', 'Fill'], ['stroke', 'Stroke'], ['both', 'Fill + stroke']]),
+      range('shapeStroke', o.shapeKind === 'line' ? 'Width' : 'Stroke', 1, 200, 'px'), o.shapeKind === 'rect' ? range('shapeRadius', 'Corner radius', 0, 500, 'px') : '',
+      `<span class="muted">${platformText('Each shape goes on a new layer · Shift = square / circle / 45° · Ctrl = from the centre')}</span>`); break;
+    case 'tone': parts.push(seg('toneMode', [['dodge', 'Dodge (lighten)'], ['burn', 'Burn (darken)']]), seg('toneRange', [['shadows', 'Shadows'], ['midtones', 'Midtones'], ['highlights', 'Highlights']]),
+      range('toneSize', 'Size', 1, 1000, 'px'), range('toneHardness', 'Hardness', 0, 100, '%'), range('toneOpacity', 'Exposure', 1, 100, '%'), range('smoothing', 'Smoothing', 0, 100, '%'),
+      `<span class="muted">${platformText('Alt = opposite mode while painting')}</span>`); break;
+    case 'redeye': parts.push(range('redeyeSize', 'Pupil size', 4, 400, 'px'), range('redeyeDarken', 'Darken', 0, 100, '%'), `<span class="muted">Click the centre of each red pupil</span>`); break;
     case 'eyedropper': parts.push(`<label><input type="checkbox" data-opt="sampleAll" ${o.sampleAll ? 'checked' : ''}/> Sample all layers</label>`); break;
     case 'crop': {
       const c = state.crop;
@@ -3447,13 +3650,14 @@ function buildOptionsBar() {
     default: break;
   }
   const al = activeLayer();
-  if (al && editingMask(al) && ['brush', 'eraser', 'fill'].includes(state.tool) && !state.xf) parts.push(`<span class="mask-badge">${editingFMask(al) ? 'Editing filter mask' : 'Editing mask'}</span>`);
+  if (al && editingMask(al) && ['brush', 'eraser', 'fill', 'gradient'].includes(state.tool) && !state.xf) parts.push(`<span class="mask-badge">${editingFMask(al) ? 'Editing filter mask' : 'Editing mask'}</span>`);
   if (!state.xf && d && ['select', 'lasso', 'polylasso', 'wand', 'ellipse'].includes(state.tool)) parts.push(`<button data-cmd="colorRange">Color range…</button>`, `<button data-cmd="refineEdge" ${d.selection ? '' : 'disabled'}>Refine edge…</button>`);
   if (!state.xf && d && state.tool === 'move') parts.push(`<button data-cmd="freeTransform">Transform</button>`);
   bar.classList.toggle('xf', !!state.xf);
   bar.innerHTML = platformText(parts.join(''));
   bar.querySelectorAll('[data-xf]').forEach((inp) => inp.addEventListener('change', () => setXfField(inp.dataset.xf, +inp.value)));
   bar.querySelectorAll('[data-selmode]').forEach((b) => b.addEventListener('click', () => { o.selMode = b.dataset.selmode; buildOptionsBar(); }));
+  bar.querySelectorAll('[data-seg]').forEach((b) => b.addEventListener('click', () => { o[b.dataset.seg] = b.dataset.val; buildOptionsBar(); }));
   bar.querySelectorAll('[data-opt]').forEach((inp) => {
     inp.addEventListener('input', () => {
       const k = inp.dataset.opt;
@@ -3681,7 +3885,7 @@ window.tintwork = {
     h.down(points[0], ev); for (let i = 1; i < points.length; i++) h.move(points[i], ev); h.up(points[points.length - 1], ev); drag = null;
     return { dabPath: gfx.dabPath || 'cpu' };
   },
-  closeContextMenu, showContextMenu, adjustBrushHardness, adjustBrushSize,
+  closeContextMenu, showContextMenu, adjustBrushHardness, adjustBrushSize, applyGradient, addShapeLayer, shapeGeom, redEyeAt,
   get engine() { return gfx.engine; }, compositeSettled, get engineReady() { return gfx.ready || Promise.resolve(gfx.engine); },
   get zoom() { return state.zoom; },
   async compositePixelAsync(x, y) { if (compDirty) { composite(); compDirty = false; } await compositeSettled(); return [...compCtx.getImageData(x, y, 1, 1).data]; },
