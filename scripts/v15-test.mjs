@@ -29,7 +29,7 @@ const brushW = (a, src, u, v, W, H) => { const P = R.localPlan(R.prepareLocals([
   check(a.type === 'brush' && a.name === 'Sky' && a.highlights === 100 && a.noise === 0 && a.tint === 20 && a.strokes.length === 1 && a.strokes[0].erase && a.strokes[0].size === 0.05 && a.lum.lo === 20 && a.lum.hi === 80 && a.lum.soft === 50 && a.color.hue === 330 && a.color.range === 90,
     'brush masks, names, ranges and the new controls are validated (bad strokes dropped, values clamped, lum range ordered, hue wrapped)');
   const many = R.cleanLocal([{ type: 'brush', strokes: Array.from({ length: 600 }, () => ({ pts: [0.5, 0.5] })) }])[0];
-  check(many.strokes.length === R.MAX_STROKES && Object.keys(R.LOCAL_RANGES).length === 11, `at most ${R.MAX_STROKES} strokes per mask; 11 local controls (${Object.keys(R.LOCAL_RANGES).join(', ')})`);
+  check(many.strokes.length === R.MAX_STROKES && ['exposure', 'contrast', 'highlights', 'shadows', 'temp', 'tint', 'saturation', 'clarity', 'texture', 'sharpness', 'noise'].every((k) => k in R.LOCAL_RANGES), `at most ${R.MAX_STROKES} strokes per mask; the 11 v1.5 local controls are kept (${Object.keys(R.LOCAL_RANGES).join(', ')})`);
 }
 { // brush weights: size / feather / flow / erase
   const W = 400, H = 200, src = flat(W, H, () => [0.3, 0.3, 0.3]);
