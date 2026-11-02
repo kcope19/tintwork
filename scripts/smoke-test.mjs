@@ -801,7 +801,7 @@ const reloaded = await page.evaluate(async () => {
   const l = t.doc.layers[0];
   return { v: data.version, kind: l.kind, filters: l.filters?.length, fmask: !!l.fmask, before, after: t.compositePixel(160, 100) };
 });
-check(reloaded.v === 6 && reloaded.kind === 'smart' && reloaded.filters === 2 && reloaded.fmask && near(reloaded.before, reloaded.after, 1), 'project files (v6) keep the layer live: original pixels, filter stack and filter mask');
+check(reloaded.v >= 6 && reloaded.kind === 'smart' && reloaded.filters === 2 && reloaded.fmask && near(reloaded.before, reloaded.after, 1), 'project files (v6+) keep the layer live: original pixels, filter stack and filter mask');
 await page.evaluate(() => { const t = window.tintwork; t.setTool('move'); t.run('rasterizeLayer'); });
 check(await page.evaluate(() => !window.tintwork.activeLayer().kind && window.tintwork.history.entries.at(-1).label === 'Convert live layer to pixels'), 'Layer ▸ Convert to pixels bakes a live layer');
 
@@ -1140,7 +1140,7 @@ const prj = await page.evaluate(async () => {
   const after = t.activeLayer().deep; let max = after ? 0 : 1e9; if (after) for (let i = 0; i < after.data.length; i++) max = Math.max(max, Math.abs(after.data[i] - before.data[i]));
   return { v: data.version, depth: t.doc.depth, max };
 });
-check(prj.v === 6 && prj.depth === 16 && prj.max === 0, `project v6 keeps 16-bit layer data (max diff ${prj.max})`);
+check(prj.v >= 6 && prj.depth === 16 && prj.max === 0, `project v6+ keeps 16-bit layer data (max diff ${prj.max})`);
 // open a 16-bit PNG
 await page.setInputFiles('#fileInput', g16);
 await page.waitForFunction(() => window.tintwork.doc?.name === 'gradient16.png'); await idle();

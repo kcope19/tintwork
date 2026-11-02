@@ -111,7 +111,7 @@ writeFileSync(plainFile, makeDNG({ W: 480, H: 320, lens: false, scene: colourSce
 // --- offline: the decoder is cached by the service worker before any RAW file is opened ---------------------
 {
   const sw = readFileSync('sw.js', 'utf8');
-  check(/tintwork-shell-v1\.\d+\.\d+/.test(sw) && ['flashraw_simd.wasm', 'flashraw.wasm', 'flashraw_simd_jxl.wasm', 'develop-worker.js'].every((f) => sw.includes(f)), 'service worker v1.2.0 pre-caches the RAW decoder WebAssembly (SIMD + fallback + JPEG XL build) and the develop worker');
+  check(/tintwork-shell-v1\.\d+\.\d+/.test(sw) && ['flashraw_simd.wasm', 'flashraw.wasm', 'flashraw_simd_jxl.wasm', 'develop-worker.js'].every((f) => sw.includes(f)), 'service worker pre-caches the RAW decoder WebAssembly (SIMD + fallback + JPEG XL build) and the develop worker');
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'allow' });
   const page = await ctx.newPage(); page.on('pageerror', (e) => errors.push(`offline: ${e.message}`));
   await page.goto(base); await page.waitForFunction(() => window.tintwork && document.readyState === 'complete');
@@ -175,6 +175,7 @@ const setSlider = (k, v) => page.evaluate(([k, v]) => { const el = document.quer
   check(fr2 < fr0 * 0.7, `manual red/cyan +75 and blue/yellow −50 remove the fringe too (${fr0.toFixed(1)} → ${fr2.toFixed(1)})`);
   // tone curve: drag the middle of the RGB curve up
   await page.evaluate(() => { document.querySelector('#rawCurveBox').open = true; });
+  await page.locator('#rawCurveBox .curves-graph').scrollIntoViewIfNeeded(); // v1.3: the Defringe section sits above the curve
   const before = await previewStats(), box = await page.locator('#rawCurveBox .curves-graph').boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down(); await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.3, { steps: 4 }); await page.mouse.up();
   await page.waitForTimeout(50); await waitPreview(7);
