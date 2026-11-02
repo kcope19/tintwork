@@ -7,6 +7,27 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.2 (faster RAW develop, more develop controls, presets)
+
+![RAW develop controls](screenshots/12x-raw-develop-controls.png)
+
+- **Parallel, progressive RAW develop**: the full-resolution develop is split into row bands (with a 48-row overlap so filters see their neighbours) and runs on a pool of nested Web Workers (`min(8, cores − 1)`; it falls back to one thread without nested workers). Bands are bit-identical to a single-thread develop (tested). **Open** closes the dialog at once, paints a half-resolution pass band by band (about 0.3 s after Open for 24 MP), then swaps in the 16-bit document (screenshot `12x-raw-progressive.png`).
+- **Timing**, 24 MP Sony ARW, headless Chromium on this 8-core Linux box. Both builds were measured with the same script, interleaved, as the median of 10 runs each:
+
+  | | v1.1.0 | v1.2.0 |
+  |---|---|---|
+  | File → develop dialog | 1.06 s | 1.08 s |
+  | **Open → full 16-bit image on screen** | **3.3 s** | **1.3 s** |
+  | Open → first preview | (none) | 0.3 s (half resolution) |
+  | Total | ~4.4 s | ~2.4 s |
+
+  Worker time for the full develop went from about 3.1 s to about 1.05 s. The other sample cameras now take 1.8–2.8 s end to end (2.3–4.6 s in v1.1). The file → dialog phase is still dominated by the single-threaded decode (~0.6 s).
+- **New develop controls**: **tone curve** (RGB plus red, green and blue curves, using the same point editor as Curves); **vibrance** and **saturation**; **sharpening** (amount, radius, detail and masking: an unsharp mask on luminance with a halo limiter and an edge mask); **chromatic aberration**, which is automatic lateral CA (radial red and blue scale, estimated from high-contrast edges toward the corners) plus manual **red/cyan** and **blue/yellow** sliders; and a **Before / after** toggle (button or `\`).
+- **Presets**: save, apply and delete named develop presets in the dialog (stored in `localStorage`). File ▸ Batch process has a **RAW files develop with** setting: last used, defaults, or any preset. Only an interactive Open changes "last used".
+- **Offline RAW**: the service worker (cache `tintwork-shell-v1.2.0`) now pre-caches the FlashRaw wasm (SIMD and fallback builds) and the develop worker at install, so RAW opens offline before the first RAW file has ever been opened. The optional JPEG XL build is cached on a best-effort basis.
+- New code: `src/develop-worker.js` (band worker). `src/raw.js` gains `developRows`, `planBands`, `extractRegion`, `halveRegion`, `sharpen`, `estimateCA`, `caScales` and `cleanSettings`, and its box blur is faster.
+- Tests: `npm run test:v12` (35 checks): band develop equals single-thread, half-res tiling, sharpening/vibrance/saturation/curve/CA unit tests, offline pre-cache with an offline reload, every new dialog control with the mouse, presets, progressive Open, batch with defaults, a preset and last used, and the 24 MP timing. The v1.1 24 MP limit was tightened from 9 s to 5 s.
+
 ## What's new in v1.1 (camera RAW and layered PSD)
 
 ![RAW develop](screenshots/11x-raw-develop.png)
@@ -271,7 +292,7 @@ http(s) rather than opened as a `file://` URL because it uses ES modules.
 
 ```bash
 npx playwright install chromium webkit   # one time
-npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile, v0.7, v0.8, v0.9, v1.0 and v1.1 tests
+npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile, v0.7, v0.8, v0.9, v1.0, v1.1 and v1.2 tests
 npm run test:platform    # scripts/desktop-platform-test.mjs: Windows/Mac keyboard labels and shortcuts
 npm run bench            # scripts/bench.mjs: GPU vs CPU timings and banding
 npm run test:desktop     # scripts/smoke-test.mjs (Chromium)
@@ -281,6 +302,7 @@ npm run test:v09         # scripts/v09-test.mjs: GPU 3D LUT per engine, tabs (hi
 npm run test:v10         # scripts/v10-test.mjs: open → edit → save → reopen → export + autosave recovery, welcome, user guide, error catcher, memory guardrails, accessibility, dirty-rect and proxy rendering, 16-bit inner effects
 npm run fetch-raw        # one time: downloads the CC0 RAW samples listed in test-assets/raw-samples.json
 npm run test:v11         # scripts/v11-test.mjs: PSD/PSB import/export round trips, RAW develop dialog, lens opcodes, JPEG fallback, per-format decode, 24 MP timing
+npm run test:v12         # scripts/v12-test.mjs: parallel/progressive RAW develop, sharpening, curve, vibrance/saturation, CA, before/after, presets, batch RAW settings, offline decoder, 24 MP timing
 node scripts/perf.mjs cpu --json out.json  # 24 MP timings: open, pan/zoom, layer toggle, adjustment drag, brush, export
 npm run test:mobile      # scripts/mobile-test.mjs (WebKit iPhone 14 + Chromium Pixel 7, touch input)
 ```
@@ -403,7 +425,7 @@ test-assets/          generated test image (export outputs are git-ignored)
 
 ## Known limitations
 
-- RAW: develop runs in one worker thread (about 2–3 s for 24 MP with colour noise reduction on). Lens correction uses DNG opcodes only, so most proprietary RAW files (CR2, NEF, ARW…) have no automatic distortion fix; there are no lens-profile databases, chromatic-aberration or defringe controls, no local adjustments and no sharpening in the dialog. Colours for cameras the decoder has no matrix for are approximate. The decoder's WebAssembly file is cached for offline use only after the first RAW file is opened.
+- RAW: decoding is single-threaded (multi-threaded wasm needs cross-origin isolation headers, COOP/COEP, which plain static hosting does not send), so file → dialog stays about 1 s for 24 MP. Developing uses bands on several workers, which raises peak memory: each band worker holds its own copy of its part of the image, plus the overlap. Lens correction uses DNG opcodes only, so most proprietary RAW files (CR2, NEF, ARW…) get no automatic distortion fix, and there is no lens-profile database. Automatic CA correction is lateral only (a radial red/blue scale): there is no defringe for purple fringing (axial CA). Sharpening is a luminance unsharp mask with a halo limiter, not deconvolution. There are no local adjustments, and develop is one-way into pixels: it cannot be reopened. Presets are per browser, and there is no import/export for them yet. Colours for cameras the decoder has no matrix for are approximate.
 - PSD: text, smart objects, fill/shape layers and effects do not survive import as editable objects; vector masks, artboards and layer comps are ignored; CMYK files are converted without a colour profile, 32-bit files are converted to 16-bit (values above 1.0 clipped), and Lab, duotone, indexed, bitmap and multichannel files are refused. Export writes PSD only (no PSB), 8 or 16 bits, with layer styles baked.
 - On documents over 2.5 MP, adjustment layers and live filters are computed in the worker. While a slider is dragged a reduced-resolution preview is shown; the full result replaces it a moment after you stop. The very first render of a new adjustment layer shows the image unadjusted until the worker finishes.
 - Live filters cover Gaussian blur, sharpen, noise and vignette only, and there is one filter mask per layer. Transforming a selection on a live layer converts it to pixels. Text layers are rasterized when converted.
@@ -445,6 +467,7 @@ Milestones to 1.0 (Windows desktop, Chrome and Edge first; Mac and iPhone kept w
 - ~~**v0.9**: multi-document tabs, crop presets, multi-size and batch export, actions~~ (done).
 - ~~**v1.0**: onboarding, help, accessibility, error handling, memory tuning, full tests, user guide~~ (done).
 - ~~**v1.1**: camera RAW develop, PSD/PSB import and layered PSD export~~ (done).
+- ~~**v1.2**: parallel and progressive RAW develop, sharpening, tone curve, vibrance/saturation, chromatic aberration, before/after, presets, batch RAW settings, offline decoder~~ (done).
 
 Longer-term items:
 
@@ -456,7 +479,7 @@ Longer-term items:
 5. **History snapshots**: named snapshots, a history brush, and IndexedDB-backed history so large documents don't run out of memory.
 6. ~~**Curves** with a point editor~~ (v0.3). ~~white balance, LUT import (.cube)~~ (v0.8). Next: per-channel levels/curves, color balance, vibrance.
 7. **Performance**: ~~Web Worker for filters~~ (done in v0.2), ~~WebGL2 GPU pipeline, 16-bit~~ (v0.5). ~~WebGPU compute engine as the primary path on Chrome/Edge~~ (v0.6). Next: OffscreenCanvas, tiled rendering for very large images.
-8. ~~**RAW support** via a WASM decoder, orientation, 16-bit pipeline~~ (v1.1). Next: camera colour profiles beyond the decoder's matrices, lens profiles for files without opcodes, multi-threaded develop.
+8. ~~**RAW support** via a WASM decoder, orientation, 16-bit pipeline~~ (v1.1). Next: camera colour profiles beyond the decoder's matrices, lens profiles for files without opcodes. ~~Multi-threaded develop~~ (v1.2); next: threaded decode, defringe.
 9. **Plugin system**: a sandboxed filter/tool API (worker-based, ImageData in/out), a manifest format and a plugin manager.
 10. **Packaging**: installable PWA with offline cache and file handling, and desktop builds (Tauri or Electron) with native open/save dialogs.
 11. Multiple documents (tabs), ~~autosave and recovery~~ (v0.3), ~~recovery slots with history~~ (v0.4), pen pressure, custom brushes, guides, rulers and snapping.

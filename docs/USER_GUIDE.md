@@ -74,14 +74,23 @@ Tintwork is a layered photo editor that runs entirely in your browser. Nothing i
 
 Opening a RAW file (File ▸ Open, drag and drop, Open recent, or double-clicking a file once Tintwork is installed) shows the **Develop** dialog with a live preview:
 
+- **Presets**: choose a saved preset, *Last used settings* or *Default settings* under **Apply**. Type a name and click **Save preset** to keep the current settings (tone curve included); **Delete** removes the chosen preset. Presets are stored in this browser.
 - **White balance**: *As shot* uses the camera's setting, *Auto* measures the photo, *Custom* lets you set **Temperature** (kelvin) and **Tint**. Moving either slider switches to Custom.
-- **Tone**: **Exposure** (in stops), **Highlight recovery**, **Shadows** and **Contrast**.
+- **Tone**: **Exposure** (in stops), **Highlight recovery**, **Shadows** and **Contrast**. Open **Tone curve** to drag points on the RGB curve or on the red, green or blue curve on its own; the label next to it says whether the curve is straight or edited.
+- **Color**: **Vibrance** boosts muted colours more than colours that are already strong, which is gentle on skin tones. **Saturation** changes all colours evenly; −100 gives black and white.
+- **Sharpening**: **Amount** sets the strength (0 turns it off). **Radius** is the size of the edges that are sharpened, in pixels. **Detail** at low values holds back halos on strong edges, and at high values sharpens fine texture fully. **Masking** at higher values sharpens only edges and leaves smooth areas such as skin and sky alone.
 - **Noise reduction**: **Luminance** smooths grain, **Color** removes coloured speckles. Both are a little slower to apply at full size.
 - **Lens**: when the file carries correction data (most DNG files from phones and many converters), **Corrections** fixes distortion and corner darkening. Untick it to see the uncorrected image. **Vignette fix** brightens or darkens the corners by hand.
+- **Color fringes**: tick **Remove chromatic aberration** to measure and remove red, cyan, blue or yellow edges toward the corners automatically; the measured amount is shown next to it. **Red / cyan** and **Blue / yellow** fine-tune it by hand, or work on their own when the box is unticked.
+- **Before / after** (or the `\` key) shows the photo with the default settings so you can compare; click it again to return to your edit.
 - **Reset** returns to the defaults; **Use camera JPEG** opens the small, already processed JPEG stored inside the file instead.
-- **Open** develops the full image into a new 16 bits/channel document. Decoding and developing run in the background, so the window stays responsive; a 24 MP file usually takes a few seconds.
+- **Open** closes the dialog straight away. A quick half-resolution version appears within a moment with the label *Developing full resolution…*, then the full image replaces it as a new 16 bits/channel document. Developing is split across several background threads, so the window stays responsive; a 24 MP file is usually on screen in one to two seconds after Open.
 
-If Tintwork cannot decode a file's sensor data (an unusual camera or compression), it opens the camera's embedded JPEG instead and says so. That image is 8-bit and the develop settings do not apply. Batch processing develops RAW files with the settings you last used.
+The settings you open with become the *last used settings*. If Tintwork cannot decode a file's sensor data (an unusual camera or compression), it opens the camera's embedded JPEG instead and says so. That image is 8-bit and the develop settings do not apply.
+
+**Batch processing** (File ▸ Batch process): **RAW files develop with** chooses the last used settings, the defaults or one of your presets for every RAW file in the batch. A batch does not change your last used settings.
+
+**Offline**: the RAW decoder is downloaded and stored when Tintwork is first loaded, so RAW files open without a connection even if you have never opened one before.
 
 ## Layered PSD files
 

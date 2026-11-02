@@ -6,6 +6,25 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.2: RAW develop speed, detail, colour, presets (researched 2026-11-02)
+
+Compared with Camera Raw / Lightroom Classic (Detail panel, presets, Sync/Previous) and Affinity Photo 2 (Develop persona).
+
+| Feature | Photoshop / Camera Raw | Lightroom Classic | Affinity Photo | Tintwork 1.2 |
+|---|---|---|---|---|
+| Sharpening | Amount, Radius, Detail, Masking (Alt shows the mask) [74] | Same [74] | Detail refinement: radius and amount [76][77] | ✅ Amount, radius, detail, masking. 🟡 There is no mask preview overlay. |
+| Tone curve | Parametric and point, RGB and per channel [46] | Same | Curves in the Tones tab [66] | ✅ Point curve, RGB and per channel. ❌ No parametric curve. |
+| Vibrance / saturation | ✅ [46] | ✅ | ✅ in Enhance [66] | ✅ |
+| Chromatic aberration | Remove CA checkbox plus defringe sliders [64] | Same [75] | CA reduction plus defringe [77] | 🟡 Automatic lateral CA plus manual red/cyan and blue/yellow. ❌ No defringe for purple fringing. |
+| Before / after | ✅ (several views) | ✅ (several views) | ✅ split view | 🟡 Toggle only (button or `\`), no split view |
+| Develop presets | ✅ [46] | ✅ presets, Previous, Sync, Auto Sync [75] | ✅ per-panel presets [78] | ✅ Named presets with all settings, plus last used and defaults. 🟡 Stored in the browser, no import/export. |
+| Apply settings to many RAW files | Batch / Synchronize | Sync, Paste Settings [75] | Batch job with a macro | ✅ Batch process: last used, defaults or a preset per run |
+| Speed (24 MP) | Near-instant cached previews, GPU | Same | Fast, native | 🟡 About 1.3 s Open → full 16-bit on screen and about 0.3 s to a half-res preview, using parallel workers in the browser. Decode is still single-threaded (about 0.6 s). |
+| Offline | Desktop app | Desktop app | Desktop app | ✅ Installable PWA, with the decoder pre-cached at install |
+
+### Summary
+v1.2 closes most of the gaps the v1.1 comparison listed in the develop step: sharpening with the familiar four controls, a per-channel curve, vibrance, lateral CA, presets and batch application. These are the controls that matter most for a one-way develop into layers, which is how Affinity works too. Speed is now comparable to opening a file in a desktop editor (about 2.4 s file → document for 24 MP). The desktop apps still have instant previews, though. The remaining differences are lens-profile databases, defringe, local adjustments, re-editable develop settings, AI denoise and split-view comparison.
+
 ## v1.1: camera RAW and layered PSD (researched 2026-11-02)
 
 Compared with Photoshop + Camera Raw, Lightroom Classic and Affinity Photo 2 (Develop persona, PSD import/export).
@@ -218,6 +237,11 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 71. Beyond Photo Tips, "How Well Does Affinity Handle Adobe PSD files?": https://www.beyondphototips.com/affinity-photo-adobe-psd-files/
 72. Adobe, "Edit Lightroom Classic photos in Photoshop": https://helpx.adobe.com/lightroom-classic/help/editing-photoshop.html
 73. CreativePro, "Affinity for Photoshop Users": https://creativepro.com/affinity-photoshop-users/
+74. Adobe, "How to retouch photos in Lightroom Classic" (Sharpen a photo: Amount, Radius, Detail, Masking): https://helpx.adobe.com/my_ms/lightroom-classic/help/retouch-photos.html
+75. Ask Tim Grey, "Options for Synchronizing Adjustments" (Previous, Sync, Auto Sync, Copy/Paste Settings): https://asktimgrey.com/2021/10/26/options-for-synchronizing-adjustments/
+76. Chris Wright Photography, "The Problem with RAW Editors" (Affinity Photo 2.6 develop workflow): https://chriswright.photography/the-problem-with-raw-editors/
+77. Beyond Photo Tips, "Can Affinity Photo Open RAW Files?" (Develop persona tabs: Lens CA reduction and defringe, Details refinement): https://www.beyondphototips.com/can-affinity-photo-open-raw-files/
+78. Design Bundles, "How to Create Presets in Affinity Photo" (Develop persona presets): https://designbundles.net/design-school/how-to-create-presets-in-affinity-photo
 
 ### Benchmark caveat
 `scripts/bench.mjs` ran on a Linux box with no GPU. Headless Chromium used SwiftShader (software) for both WebGL2 and WebGPU and WebKit used software GL, so GPU timings there are slower than the CPU worker and are not representative of real hardware (see README).
@@ -229,3 +253,4 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 - ~~v0.9: multiple document tabs, crop presets, batch export, actions~~ (done)
 - ~~v1.0: onboarding, help, accessibility, error handling, iPhone memory tuning~~ (done)
 - ~~v1.1: camera RAW develop, PSD/PSB import and layered PSD export~~ (done)
+- ~~v1.2: parallel/progressive RAW develop, sharpening, curve, vibrance, CA, presets, batch RAW settings~~ (done)
