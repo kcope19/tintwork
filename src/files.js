@@ -5,13 +5,18 @@
 export const fsaSupported = typeof window !== 'undefined' && 'showOpenFilePicker' in window && 'showSaveFilePicker' in window;
 
 export const PROJECT_TYPE = { description: 'Tintwork project', accept: { 'application/x-tintwork+json': ['.tintwork'] } };
+const RAW_ACCEPT = { 'image/x-camera-raw': ['.dng', '.cr2', '.cr3', '.crw', '.nef', '.nrw', '.arw', '.srf', '.sr2', '.raf', '.orf', '.rw2', '.rwl', '.pef', '.srw', '.erf', '.3fr', '.fff', '.iiq', '.mos', '.mef', '.mrw', '.x3f', '.kdc', '.dcr'] };
+const PSD_ACCEPT = { 'image/vnd.adobe.photoshop': ['.psd', '.psb'] };
 export const OPEN_TYPES = [
-  { description: 'Images and Tintwork projects', accept: { 'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'], 'image/webp': ['.webp'], 'application/x-tintwork+json': ['.tintwork'], 'application/json': ['.json'] } },
+  { description: 'Images, PSD, camera RAW and Tintwork projects', accept: { 'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'], 'image/webp': ['.webp'], ...PSD_ACCEPT, ...RAW_ACCEPT, 'application/x-tintwork+json': ['.tintwork'], 'application/json': ['.json'] } },
+  { description: 'Camera RAW', accept: RAW_ACCEPT },
+  { description: 'PSD / PSB (layered)', accept: PSD_ACCEPT },
 ];
 export const EXPORT_TYPES = {
   'image/png': { description: 'PNG image', accept: { 'image/png': ['.png'] } },
   'image/jpeg': { description: 'JPEG image', accept: { 'image/jpeg': ['.jpg', '.jpeg'] } },
   'image/webp': { description: 'WebP image', accept: { 'image/webp': ['.webp'] } },
+  'image/vnd.adobe.photoshop': { description: 'PSD (layers)', accept: PSD_ACCEPT },
 };
 
 /** null when the user cancels the picker. */

@@ -57,6 +57,37 @@
         "image/webp": [
           ".webp"
         ],
+        "image/vnd.adobe.photoshop": [
+          ".psd",
+          ".psb"
+        ],
+        "image/x-camera-raw": [
+          ".dng",
+          ".cr2",
+          ".cr3",
+          ".crw",
+          ".nef",
+          ".nrw",
+          ".arw",
+          ".srf",
+          ".sr2",
+          ".raf",
+          ".orf",
+          ".rw2",
+          ".rwl",
+          ".pef",
+          ".srw",
+          ".erf",
+          ".3fr",
+          ".fff",
+          ".iiq",
+          ".mos",
+          ".mef",
+          ".mrw",
+          ".x3f",
+          ".kdc",
+          ".dcr"
+        ],
         "application/x-tintwork+json": [
           ".tintwork"
         ]

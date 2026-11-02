@@ -18,9 +18,13 @@ import { decodePNG, encodePNG, pngInfo } from './png.js';
 import { BUILTIN_PRESETS, RATIO_ONLY, allPresets, presetById, presetPixels, centredRatioRect, constrainRect, describePreset, saveCustomPreset, deleteCustomPreset, customPresets } from './presets.js';
 import { formatName, variantSize, uniqueNamer, zipFiles } from './batch.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
+import { isRawName, isPsdName, isPsdBytes, readPSDAsync, writePSDAsync, openRawSession, RAW_EXTS, PSD_EXTS } from './codecs.js';
+import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEYS } from './psd.js';
+import { DEFAULT_SETTINGS as RAW_DEFAULTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
+const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -3068,6 +3072,7 @@ const cmds = {
   place: needDoc(() => { fileMode = 'place'; $('#fileInput').click(); }),
   saveProject: needDoc(() => saveProject()),
   export: needDoc(() => openExportDialog()),
+  exportPSD: needDoc(() => exportImage(PSD_TYPE, 1, (doc().name || 'image').replace(/\.[^.]+$/, ''))),
   mode8: needDoc(() => setDepth(8)),
   mode16: needDoc(() => setDepth(16)),
   engine: () => openEngineDialog(),
@@ -3285,7 +3290,7 @@ const shortcutLabel = (cmd, spec) => keyLabel(shortcutFor(cmd, spec));
 
 const MENUS = [
   ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Take photo (camera)…', 'camera'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
-    ['Open recent…', 'openRecent'], '-', ['Save', 'saveProject', 'Ctrl+S'], ['Save as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E'], ['Export multiple sizes…', 'exportMulti'], ['Batch process…', 'batch'], '-',
+    ['Open recent…', 'openRecent'], '-', ['Save', 'saveProject', 'Ctrl+S'], ['Save as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E'], ['Export layered PSD…', 'exportPSD'], ['Export multiple sizes…', 'exportMulti'], ['Batch process…', 'batch'], '-',
     ['Next document', 'docNext', 'Ctrl+Tab'], ['Previous document', 'docPrev', 'Ctrl+Shift+Tab'], ['Close document', 'docClose', 'Ctrl+Alt+W']]],
   ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
     ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-',
@@ -4146,7 +4151,7 @@ function openExportDialog() {
   const base = (doc().name || 'image').replace(/\.[^.]+$/, '');
   body.innerHTML = formHTML([
     { label: 'File name', html: `<input type="text" id="eName" value="${escapeHtml(base)}" />` },
-    { label: 'Format', html: `<select id="eFmt"><option value="image/png">PNG (lossless)</option><option value="image/png16">PNG 16-bit</option><option value="image/jpeg">JPEG</option><option value="image/webp">WebP</option></select>` },
+    { label: 'Format', html: `<select id="eFmt"><option value="image/png">PNG (lossless)</option><option value="image/png16">PNG 16-bit</option><option value="image/jpeg">JPEG</option><option value="image/webp">WebP</option><option value="${PSD_TYPE}">PSD (layers)</option></select>` },
     { label: 'Quality', html: `<span><input type="range" id="eQ" min="1" max="100" value="90" disabled /> <output id="eQv">90</output></span>` },
     { label: 'Size', html: `<span class="muted">${doc().width} × ${doc().height} px</span>` },
   ]);
@@ -4177,20 +4182,23 @@ function openExportDialog() {
     });
     prepare();
   }
-  fmt.addEventListener('change', () => { q.disabled = fmt.value.startsWith('image/png'); if (canShareFiles) prepare(); });
+  fmt.addEventListener('change', () => { q.disabled = fmt.value.startsWith('image/png') || fmt.value === PSD_TYPE; if (canShareFiles) prepare(); });
   q.addEventListener('input', () => { body.querySelector('#eQv').textContent = q.value; if (canShareFiles) prepare(); });
   body.querySelector('#eName').addEventListener('input', () => { if (canShareFiles) prepare(); });
   showModal({ title: 'Export image', body, okLabel: canShareFiles ? 'Download' : 'Export', ok: () => {
     exportImage(fmt.value, q.value / 100, body.querySelector('#eName').value || 'image');
   } });
 }
-const EXPORT_EXT = { 'image/png': 'png', 'image/png16': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
+const EXPORT_EXT = { 'image/png': 'png', 'image/png16': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', [PSD_TYPE]: 'psd' };
+let lastExportNotes = [];
 /**
  * 'image/png16' writes a 16-bit PNG (png.js). 16-bit documents are composited in float (deep.js) and
  * dithered down for 8-bit formats so smooth gradients don't band.
  */
 async function renderExport(type, quality) {
   const d = doc(), bg = type === 'image/jpeg' ? '#ffffff' : null;
+  if (type === PSD_TYPE) { const r = await documentToPSD(d); lastExportNotes = r.notes; return r.blob; }
+  lastExportNotes = [];
   if (type === 'image/png16' || is16()) {
     const deep = compositeDeepDoc({ background: bg });
     if (type === 'image/png16') return new Blob([encodePNG({ width: deep.width, height: deep.height, data: deep.data, depth: 16 })], { type: 'image/png' });
@@ -4209,7 +4217,9 @@ async function exportImage(type, quality, name) {
     try { handle = await pickSave(`${name}.${ext}`, EXPORT_TYPES[type]); } catch (err) { status(`Export: ${err.message}`); }
     if (!handle) { status('Export cancelled.'); return; }
   }
-  const blob = await renderExport(type, quality);
+  let blob;
+  try { blob = await renderExport(type, quality); } catch (err) { reportError('Export failed', err); return; }
+  if (lastExportNotes.length) toast(lastExportNotes.join(' '), 8000);
   if (handle) {
     try { await writeFile(handle, blob); addRecent(handle, 'image'); status(`Exported ${handle.name} (${(blob.size / 1024).toFixed(0)} KB)`); return; }
     catch (err) { toast(`Could not write ${handle.name} (${err.message}) — downloading instead.`, 5000); }
@@ -4257,12 +4267,15 @@ function placeImage(img, name) {
   l.canvas.getContext('2d').drawImage(img, 0, 0, w, h);
   addLayer(l, 'Place image');
 }
-async function openFile(file, mode = 'open') {
+async function openFile(file, mode = 'open', { interactive = true } = {}) {
   try {
     if (/\.(json|tintwork)$/i.test(file.name) || file.type === 'application/json') {
       await loadProject(JSON.parse(await file.text()), file.name);
       return;
     }
+    // layered PSD and camera RAW always open as a document (placing them would flatten the layers / skip develop)
+    if (isPsdName(file.name) || file.type === PSD_TYPE) { if (mode === 'place' && doc()) toast('PSD files open as a new document so their layers are kept.', 4000); await openPSD(file, interactive); return; }
+    if (isRawName(file.name)) { if (mode === 'place' && doc()) toast('Camera RAW files open as a new document.', 4000); await openRAW(file, interactive); return; }
     if (!file.type.startsWith('image/') && !/\.png$/i.test(file.name)) { status(`Unsupported file: ${file.name}`); return; }
     if (mode !== 'place' || !doc()) {
       if (file.type === 'image/png' || /\.png$/i.test(file.name)) {
@@ -4283,6 +4296,330 @@ async function openFile(file, mode = 'open') {
     else documentFromImage(img, file.name);
     status(`${mode === 'place' && doc() ? 'Placed' : 'Opened'} ${file.name} (${img.naturalWidth || img.width}×${img.naturalHeight || img.height})`);
   } catch (err) { reportError(`${file.name} could not be opened`, err); }
+}
+// ---------------------------------------------------------------------------
+// v1.1: layered PSD / PSB import and export, camera RAW develop (decoding runs in codec-worker.js)
+// ---------------------------------------------------------------------------
+const OPEN_ACCEPT = ['image/*', ...PSD_EXTS.map((e) => `.${e}`), ...RAW_EXTS.map((e) => `.${e}`)].join(',');
+const RAW_LAST_KEY = 'tintwork.rawLast';
+const rawLastSettings = () => { try { return { ...RAW_DEFAULTS, ...JSON.parse(localStorage.getItem(RAW_LAST_KEY) || '{}') }; } catch { return { ...RAW_DEFAULTS }; } };
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+/** Can this document be 16 bits/channel with `layers` full-size pixel layers? */
+const deepFits = (w, h, layers = 1) => w * h * 8 * Math.max(1, layers) <= (DEEP_LIMIT_MB * 1048576) / 2;
+/** Mask canvas (white, alpha = value) of size w × h at (x, y) from PSD mask data. */
+function psdMaskCanvas(m, x, y, w, h) {
+  const c = makeCanvas(w, h), cx = ctxOf(c), img = cx.createImageData(c.width, c.height), a = img.data, def = m.defaultColor ?? 0;
+  for (let i = 0; i < a.length; i += 4) { a[i] = a[i + 1] = a[i + 2] = 255; a[i + 3] = def; }
+  if (m.data && m.width && m.height) {
+    const ox = m.left - x, oy = m.top - y;
+    for (let yy = Math.max(0, oy); yy < Math.min(c.height, oy + m.height); yy++) {
+      for (let xx = Math.max(0, ox); xx < Math.min(c.width, ox + m.width); xx++) a[(yy * c.width + xx) * 4 + 3] = m.data[(yy - oy) * m.width + (xx - ox)];
+    }
+  }
+  cx.putImageData(img, 0, 0);
+  return { canvas: c, enabled: !m.disabled, rev: ++globalRev };
+}
+/** Build a document from readPSD() output. Returns the notes about what was approximated or flattened. */
+function documentFromPSD(psd, name) {
+  const W = psd.width, H = psd.height, notes = [...(psd.warnings || [])];
+  const flat = { text: [], smart: [], fill: [], shape: [], effects: [] }, blends = [], dropped = [], approxAdj = [];
+  let layers = [];
+  const pixelCount = (psd.layers || []).filter((r) => r.pixels).length;
+  let deep = psd.depth > 8;
+  if (deep && !deepFits(W, H, Math.max(1, pixelCount))) { deep = false; notes.push(`The file is ${psd.depth} bits/channel but too large to edit at 16 bits/channel on this device; it was opened as 8-bit.`); }
+  const setPixels = (l, r) => {
+    const w = r.width, h = r.height;
+    if (!(w && h && r.pixels)) return;
+    if (psd.depth > 8) {
+      const d = createDeep(w, h, r.pixels);
+      if (deep) { setDeep(l, d); return; }
+      ctxOf(l.canvas).putImageData(deepToImageData(d), 0, 0); return;
+    }
+    ctxOf(l.canvas).putImageData(new ImageData(new Uint8ClampedArray(r.pixels.buffer, r.pixels.byteOffset, w * h * 4), w, h), 0, 0);
+  };
+  const useful = (psd.layers || []).some((r) => (r.pixels && r.width && r.height) || r.kind === 'adjust' || r.section);
+  if (useful) {
+    const stack = [], top = () => stack[stack.length - 1]?.id ?? null;
+    const blendOf = (key, l) => {
+      const b = blendFromKey(key);
+      if (b.blend === 'pass-through' && !isGroup(l)) return 'source-over';
+      if (b.approx) blends.push(`${l.name} (${b.name} → ${BLEND_MODES.find((m) => m[0] === b.blend)?.[1] || b.blend})`);
+      return b.blend;
+    };
+    for (const r of psd.layers) {
+      if (r.section === 3) { // end-of-group marker: the group's contents follow, the group record closes it
+        const g = createLayer('Group', 1, 1, { kind: 'group', blend: 'pass-through', collapsed: false, editMask: true, parent: top() });
+        stack.push(g); continue;
+      }
+      if (r.section === 1 || r.section === 2) {
+        const g = stack.pop() || createLayer('Group', 1, 1, { kind: 'group', blend: 'pass-through', collapsed: false, editMask: true, parent: top() });
+        Object.assign(g, { name: r.name || 'Group', opacity: r.opacity, visible: r.visible, collapsed: r.section === 2 });
+        g.blend = blendOf(r.sectionBlend || r.blendKey, g);
+        if (r.mask && r.mask.data) g.mask = psdMaskCanvas(r.mask, 0, 0, W, H);
+        if (r.clipping) g.clip = true;
+        if (r.effects) flat.effects.push(g.name);
+        layers.push(g); continue;
+      }
+      const parent = top();
+      if (r.kind === 'adjust') {
+        const a = decodeAdjustment(r.adjKey, r.adjData);
+        if (!a) { dropped.push(`${r.name} (${PSD_ADJ_NAMES[r.adjKey] || r.adjKey})`); continue; }
+        if (a.approx) approxAdj.push(r.name);
+        const l = createLayer(r.name || ADJ_LAYER[a.type], 1, 1, { kind: 'adjust', adj: { type: a.type, params: a.params }, editMask: true, parent, opacity: r.opacity, visible: r.visible });
+        l.blend = blendOf(r.blendKey, l);
+        l.mask = r.mask && r.mask.data ? psdMaskCanvas(r.mask, 0, 0, W, H) : { canvas: makeMaskCanvas(W, H, true), enabled: true, rev: ++globalRev };
+        if (r.clipping) l.clip = true;
+        layers.push(l); continue;
+      }
+      const w = Math.max(1, r.width), h = Math.max(1, r.height);
+      const l = createLayer(r.name || 'Layer', w, h, { x: r.left, y: r.top, parent, opacity: r.opacity * (r.effects ? 1 : r.fillOpacity), visible: r.visible });
+      l.blend = blendOf(r.blendKey, l);
+      if (r.fillOpacity < 1 && r.effects) notes.push(`${r.name}: fill opacity ${Math.round(r.fillOpacity * 100)}% was ignored (the layer has effects, which were flattened).`);
+      setPixels(l, r);
+      if (r.mask && r.mask.data) l.mask = psdMaskCanvas(r.mask, l.x, l.y, l.canvas.width, l.canvas.height);
+      if (r.clipping) l.clip = true;
+      if (flat[r.kind]) flat[r.kind].push(l.name);
+      if (r.effects) flat.effects.push(l.name);
+      layers.push(l);
+    }
+    while (stack.length) layers.push(stack.pop()); // unbalanced file: close the open groups
+  }
+  if (!layers.length) { // no readable layers: the flattened image
+    if (!psd.composite) throw new Error('The PSD file has no readable layers and no flattened image');
+    const l = createLayer('Background', W, H);
+    setPixels(l, { width: W, height: H, pixels: psd.composite.data });
+    layers = [l];
+    if (psd.layers == null && !notes.some((t) => /flattened/i.test(t))) notes.push('Opened the flattened image (the layers could not be read).');
+  }
+  const d = { width: W, height: H, layers, activeId: layers[layers.length - 1].id, selection: null, name, ...(deep ? { depth: 16 } : {}), ...(psd.dpi ? { dpi: psd.dpi } : {}) };
+  normalizeTree(d);
+  state.doc = d;
+  const list = (title, a) => (a.length ? [`${title}: ${a.slice(0, 12).join(', ')}${a.length > 12 ? `, and ${a.length - 12} more` : ''}.`] : []);
+  notes.push(...list('Text layers opened as pixels (from the stored layer image)', flat.text), ...list('Smart objects opened as pixels', flat.smart),
+    ...list('Fill layers opened as pixels', flat.fill), ...list('Shape / vector layers opened as pixels', flat.shape),
+    ...list('Layer effects not imported (pixels only, effects dropped)', flat.effects), ...list('Blend modes approximated', blends),
+    ...list('Adjustment layers with no Tintwork equivalent (left out; the layers below are unaffected)', dropped),
+    ...list('Adjustments approximated (Tintwork uses its own formulas or only the master channel)', approxAdj));
+  d.importNotes = notes;
+  afterDocChange('Open PSD');
+  return notes;
+}
+const PSD_ADJ_NAMES = ADJ_KEYS;
+async function openPSD(file, interactive = true) {
+  const t0 = performance.now(); status(`Reading ${file.name}…`);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (!isPsdBytes(bytes)) { toast(`${file.name} is not a PSD file.`, 5000); return; }
+  const psd = await readPSDAsync(bytes);
+  const g = guardSize(psd.width, psd.height, Math.max(1, (psd.layers || []).filter((r) => r.pixels).length), psd.depth > 8);
+  if (g.level === 'refuse') {
+    if (psd.layers && psd.composite && guardSize(psd.width, psd.height, 1).level !== 'refuse') { psd.layers = null; psd.warnings.push(`Too many layers for this device's memory (${g.msg}); opened the flattened image instead.`); }
+    else { toast(`${file.name}: ${g.msg}`, 6500); return; }
+  } else if (g.level === 'warn') toast(g.msg, 6000);
+  const notes = documentFromPSD(psd, file.name);
+  const d = doc(), n = d.layers.length;
+  lastImport = { kind: 'psd', ms: Math.round(performance.now() - t0), notes };
+  status(`Opened ${file.name} (${d.width}×${d.height}, ${plural(n, 'layer')}, ${d.depth === 16 ? 16 : 8} bits/channel)${notes.length ? ` · ${plural(notes.length, 'note')}` : ''}`);
+  if (notes.length && interactive) openInfo(`Opened ${file.name}`, `<p>Some parts of the file were converted:</p><ul class="import-notes">${notes.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ul>`);
+}
+let lastImport = null;
+/** Layered PSD of the open document (groups, masks, blend modes, opacity, clipping, adjustments + composite). */
+async function documentToPSD(d = doc()) {
+  const W = d.width, H = d.height, deep16 = d.depth === 16, warn = { styles: [], adj: [], approx: [], groupFx: [] }, out = [];
+  const mask8 = (m) => { const a = ctxOf(m.canvas).getImageData(0, 0, m.canvas.width, m.canvas.height).data, o = new Uint8Array(m.canvas.width * m.canvas.height); for (let i = 0; i < o.length; i++) o[i] = a[i * 4 + 3]; return o; };
+  const maskRec = (l, x, y) => (l.mask ? { top: y, left: x, width: l.mask.canvas.width, height: l.mask.canvas.height, data: mask8(l.mask), defaultColor: 0, disabled: !l.mask.enabled } : null);
+  const keyOf = (b) => (BLEND_TO_PSD[b] || 'norm');
+  const pixelsOf = (l, canvas) => {
+    if (deep16 && !l.kind && canvas === l.canvas) return new Uint16Array(deepOf(l).data);
+    const a = ctxOf(canvas).getImageData(0, 0, canvas.width, canvas.height).data;
+    if (!deep16) return new Uint8Array(a.buffer);
+    const o = new Uint16Array(a.length); for (let i = 0; i < a.length; i++) o[i] = a[i] * 257; return o;
+  };
+  const emit = (pid) => {
+    for (const l of childrenOf(d, pid)) {
+      const base = { name: l.name, opacity: l.opacity, visible: l.visible !== false, clipping: !!l.clip, id: l.id };
+      if (isGroup(l)) {
+        out.push({ name: '</Layer group>', section: 3, opacity: 1, visible: true, blendKey: 'norm' });
+        emit(l.id);
+        if (hasActiveStyles(l.styles)) warn.groupFx.push(l.name);
+        const bk = l.blend === 'pass-through' ? 'pass' : keyOf(l.blend);
+        out.push({ ...base, section: l.collapsed ? 2 : 1, blendKey: bk, sectionBlend: bk, mask: maskRec(l, l.x, l.y) });
+      } else if (l.kind === 'adjust') {
+        const type = l.adj.type, enc = encodeAdjustment(type, l.adj.params);
+        if (!enc) { warn.adj.push(`${l.name} (${ADJ_LAYER[type] || type})`); continue; }
+        if (type === 'grayscale' || type === 'brightnessContrast') warn.approx.push(l.name);
+        out.push({ ...base, blendKey: keyOf(l.blend), adjKey: enc[0], adjData: enc[1], mask: maskRec(l, l.x, l.y) });
+      } else {
+        let canvas = l.canvas, x = l.x, y = l.y, mask = maskRec(l, l.x, l.y);
+        if (hasActiveStyles(l.styles)) { // effects are baked into the pixels (the mask is applied first, as Tintwork draws it)
+          const r = renderStyled(renderSource(l), l.styles);
+          if (r) { canvas = r.canvas; x = l.x + r.x; y = l.y + r.y; mask = null; }
+          warn.styles.push(l.name);
+        }
+        out.push({ ...base, blendKey: keyOf(l.blend), top: y, left: x, width: canvas.width, height: canvas.height, pixels: pixelsOf(l, canvas), mask });
+      }
+    }
+  };
+  emit(null);
+  let flatData;
+  if (deep16) flatData = new Uint16Array(compositeDeepDoc().data);
+  else { const c = makeCanvas(W, H); composite(c, { sync: true }); flatData = new Uint8Array(ctxOf(c).getImageData(0, 0, W, H).data.buffer); c.width = 0; }
+  const { bytes } = await writePSDAsync({ width: W, height: H, depth: deep16 ? 16 : 8, dpi: d.dpi || 72, layers: out, composite: flatData });
+  const notes = [];
+  if (warn.styles.length) notes.push(`Layer styles baked into the pixels: ${warn.styles.join(', ')}.`);
+  if (warn.groupFx.length) notes.push(`Group styles left out (the composite keeps them): ${warn.groupFx.join(', ')}.`);
+  if (warn.adj.length) notes.push(`Adjustment layers with no PSD equivalent left out of the layers (the composite keeps them): ${warn.adj.join(', ')}.`);
+  if (warn.approx.length) notes.push(`Adjustments that other apps compute slightly differently: ${warn.approx.join(', ')}.`);
+  if (d.layers.some((l) => l.kind === 'text' || l.kind === 'smart')) notes.push('Text and live-filter layers are saved as pixels.');
+  return { blob: new Blob([bytes], { type: PSD_TYPE }), notes };
+}
+/** Flattened single-layer PSD from a canvas (batch outputs at another size). */
+async function flatPSD(canvas) {
+  const data = new Uint8Array(ctxOf(canvas).getImageData(0, 0, canvas.width, canvas.height).data.buffer);
+  const { bytes } = await writePSDAsync({ width: canvas.width, height: canvas.height, depth: 8, layers: [{ name: 'Background', top: 0, left: 0, width: canvas.width, height: canvas.height, opacity: 1, visible: true, blendKey: 'norm', pixels: data.slice() }], composite: data });
+  return new Blob([bytes], { type: PSD_TYPE });
+}
+
+// ---- camera RAW ----
+let rawUI = null; // open develop dialog (tests read it through window.tintwork)
+/** Open a camera RAW file: develop dialog (or the last settings in batch), then a 16 bits/channel document. */
+async function openRAW(file, interactive = true) {
+  const t0 = performance.now(); status(`Decoding ${file.name}…`);
+  const bytes = new Uint8Array(await file.arrayBuffer()), tRead = performance.now();
+  const settings = interactive ? { ...RAW_DEFAULTS } : rawLastSettings();
+  let sess;
+  try { sess = await openRawSession(bytes, settings); }
+  catch (err) { toast(`${file.name} could not be read as a camera RAW file (${err.message}).`, 7000); console.error(err); return; }
+  const timing = { read: Math.round(tRead - t0), decode: sess.decodeMs, kind: 'raw', format: sess.info.format };
+  try {
+    if (!sess.decoded) {
+      if (!sess.info.jpeg) { toast(`${file.name}: Tintwork cannot decode this ${sess.info.format} file (${sess.reason}) and it has no embedded preview.`, 8000); return; }
+      await openRawJpeg(file, sess, `Tintwork cannot decode the sensor data of this ${sess.info.format} file (${sess.reason}).`, interactive);
+      return;
+    }
+    if (!interactive) { await developToDocument(file, sess, settings, timing, t0); return; }
+    await rawDialog(file, sess, timing, t0);
+  } finally { sess.close(); }
+}
+async function openRawJpeg(file, sess, why, interactive) {
+  const j = await sess.jpeg();
+  const blob = new Blob([j.bytes], { type: j.mimeType || 'image/jpeg' });
+  let img; try { img = await createImageBitmap(blob, { imageOrientation: 'from-image' }); } catch { img = await loadImage(URL.createObjectURL(blob)); }
+  const w = img.width, h = img.height, fit = fitPixels(w, h), l = createLayer('Camera JPEG', fit.w, fit.h);
+  const cx = ctxOf(l.canvas); cx.imageSmoothingQuality = 'high'; cx.drawImage(img, 0, 0, fit.w, fit.h); img.close?.();
+  state.doc = { width: fit.w, height: fit.h, layers: [l], activeId: l.id, selection: null, name: file.name, rawPreview: true };
+  afterDocChange('Open camera JPEG');
+  const msg = `${why} Opened the camera’s embedded JPEG instead: ${fit.w}×${fit.h}, 8 bits/channel, with the camera’s own processing. RAW develop settings do not apply to it.`;
+  doc().importNotes = [msg]; lastImport = { kind: 'raw-jpeg', notes: [msg] };
+  status(`Opened the embedded JPEG of ${file.name} (${fit.w}×${fit.h}, 8-bit)`);
+  if (interactive) openInfo('Opened the camera JPEG', `<p>${escapeHtml(msg)}</p>`); else toast(msg, 7000);
+}
+async function developToDocument(file, sess, settings, timing, t0) {
+  const maxPixels = Math.min(MAX_PIXELS, Math.floor((DEEP_LIMIT_MB * 1048576) / 2 / 8));
+  const tDev = performance.now();
+  const r = await sess.develop(settings, maxPixels);
+  const tBuild = performance.now();
+  const l = createLayer('Background', r.width, r.height);
+  ctxOf(l.canvas).putImageData(new ImageData(r.data8, r.width, r.height), 0, 0); touch(l);
+  l.deep = createDeep(r.width, r.height, r.data16); l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0;
+  state.doc = { width: r.width, height: r.height, layers: [l], activeId: l.id, selection: null, name: file.name, depth: 16, raw: { format: sess.info.format, settings: { ...settings } } };
+  afterDocChange('Open RAW');
+  try { localStorage.setItem(RAW_LAST_KEY, JSON.stringify(settings)); } catch { /* private mode */ }
+  await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res))); // first frame on screen
+  const now = performance.now();
+  Object.assign(timing, { develop: Math.round(tBuild - tDev), worker: r.ms, build: Math.round(now - tBuild), total: Math.round(now - t0), width: r.width, height: r.height, mp: +(r.width * r.height / 1e6).toFixed(1) });
+  lastImport = { ...timing, notes: r.scaled ? [`Developed at ${r.width}×${r.height} to fit this device's memory.`] : [] };
+  if (r.scaled) toast(`Developed at ${r.width}×${r.height} to stay within this device's memory.`, 6000);
+  status(`Opened ${file.name} (${sess.info.format}, ${r.width}×${r.height}, 16 bits/channel) in ${(timing.total / 1000).toFixed(1)} s`);
+}
+const TEMP_MIN = 2000, TEMP_MAX = 50000;
+const tempToPos = (T) => Math.round(((500 - 1e6 / Math.min(TEMP_MAX, Math.max(TEMP_MIN, T))) / 480) * 1000); // mired scale: even steps for the eye
+const posToTemp = (p) => Math.round(1e6 / (500 - (p / 1000) * 480) / 10) * 10;
+function rawDialog(file, sess, timing, t0) {
+  return new Promise((resolve) => {
+    const info = sess.info, s = { ...RAW_DEFAULTS, temp: info.asShot.temp, tint: info.asShot.tint };
+    const body = document.createElement('div'); body.className = 'raw-dev';
+    const slider = (key, label, min, max, step, val, fmt = (v) => v) =>
+      `<label class="field"><span>${label}</span><input type="range" data-k="${key}" min="${min}" max="${max}" step="${step}" value="${val}" aria-label="${label}" /><output data-o="${key}">${fmt(val)}</output></label>`;
+    const ev = (v) => `${v > 0 ? '+' : ''}${(+v).toFixed(2)}`;
+    body.innerHTML = `<div class="raw-view"><canvas id="rawCanvas" aria-label="Develop preview"></canvas><div class="raw-meta muted small">${escapeHtml(info.describe || info.format)}</div></div>
+      <div class="raw-controls">
+        <div class="raw-sec">White balance</div>
+        <label class="field two"><span>Preset</span><select id="rawWb"><option value="as-shot">As shot</option><option value="auto">Auto</option><option value="custom">Custom</option></select></label>
+        <label class="field"><span>Temperature</span><input type="range" id="rawTempR" min="0" max="1000" step="1" value="${tempToPos(s.temp)}" aria-label="Temperature" /><input type="number" id="rawTemp" min="${TEMP_MIN}" max="${TEMP_MAX}" step="50" value="${s.temp}" aria-label="Temperature in kelvin" /></label>
+        ${slider('tint', 'Tint', -150, 150, 1, s.tint)}
+        <div class="raw-sec">Tone</div>
+        ${slider('exposure', 'Exposure (EV)', -5, 5, 0.05, s.exposure, ev)}
+        ${slider('highlights', 'Highlight recovery', 0, 100, 1, s.highlights)}
+        ${slider('shadows', 'Shadows', -100, 100, 1, s.shadows)}
+        ${slider('contrast', 'Contrast', -100, 100, 1, s.contrast)}
+        <div class="raw-sec">Noise reduction</div>
+        ${slider('nrLuma', 'Luminance', 0, 100, 1, s.nrLuma)}
+        ${slider('nrColor', 'Color', 0, 100, 1, s.nrColor)}
+        <div class="raw-sec">Lens</div>
+        <label class="field two"><span>Corrections</span><span><input type="checkbox" id="rawLens" ${info.lens ? 'checked' : 'disabled'} /> <span class="muted small">${info.lens ? `From the file: ${[info.lens.distortion && 'distortion', info.lens.vignette && 'vignetting'].filter(Boolean).join(' and ')}` : 'No lens correction data in this file'}</span></span></label>
+        ${slider('vignette', 'Vignette fix', -100, 100, 1, s.vignette)}
+        <p class="muted small" id="rawOut">Opens as ${info.width} × ${info.height} px, 16 bits/channel.${info.knownCamera ? '' : ' Camera colour data unknown: colours are approximate.'}${info.incomplete ? ' Some sensor data was missing and is shown black.' : ''}</p>
+        <div class="raw-buttons"><button type="button" id="rawReset">Reset</button>${info.jpeg ? `<button type="button" id="rawJpeg" title="Open the camera's own ${info.jpeg.width}×${info.jpeg.height} JPEG rendering instead (8-bit)">Use camera JPEG</button>` : ''}<span class="muted small" id="rawMs"></span></div>
+      </div>`;
+    const cv = body.querySelector('#rawCanvas'), $q = (sel) => body.querySelector(sel);
+    const draw = (p) => {
+      if (cv.width !== p.width || cv.height !== p.height) { cv.width = p.width; cv.height = p.height; }
+      cv.getContext('2d').putImageData(new ImageData(p.data, p.width, p.height), 0, 0);
+      if (s.wb !== 'custom') { s.temp = p.temp; s.tint = p.tint; $q('#rawTemp').value = p.temp; $q('#rawTempR').value = tempToPos(p.temp); $q('[data-k=tint]').value = p.tint; $q('[data-o=tint]').textContent = p.tint; }
+      $q('#rawMs').textContent = `preview ${p.ms} ms`;
+      ui.previews++;
+    };
+    let busy = false, again = false, done = false;
+    const refresh = async () => {
+      if (busy) { again = true; return; }
+      busy = true;
+      try { do { again = false; const p = await sess.preview({ ...s }); if (done) return; draw(p); } while (again); }
+      catch (err) { if (!done) $q('#rawMs').textContent = `Preview failed: ${err.message}`; }
+      finally { busy = false; ui.idle = !again; }
+    };
+    const ui = rawUI = { settings: s, info, previews: 0, idle: true, body, refresh: () => { ui.idle = false; refresh(); } };
+    const changed = () => { ui.idle = false; refresh(); };
+    body.addEventListener('input', (e) => {
+      const t = e.target;
+      if (t.dataset.k) { s[t.dataset.k] = +t.value; const o = $q(`[data-o=${t.dataset.k}]`); if (o) o.textContent = t.dataset.k === 'exposure' ? ev(t.value) : t.value; if (t.dataset.k === 'tint') { s.wb = 'custom'; $q('#rawWb').value = 'custom'; } }
+      else if (t.id === 'rawTempR') { s.temp = posToTemp(+t.value); $q('#rawTemp').value = s.temp; s.wb = 'custom'; $q('#rawWb').value = 'custom'; }
+      else if (t.id === 'rawTemp') { s.temp = Math.min(TEMP_MAX, Math.max(TEMP_MIN, +t.value || 5500)); $q('#rawTempR').value = tempToPos(s.temp); s.wb = 'custom'; $q('#rawWb').value = 'custom'; }
+      else return;
+      changed();
+    });
+    body.addEventListener('change', (e) => {
+      if (e.target.id === 'rawWb') { s.wb = e.target.value; changed(); }
+      else if (e.target.id === 'rawLens') { s.lens = e.target.checked; changed(); }
+    });
+    $q('#rawReset').onclick = () => {
+      Object.assign(s, RAW_DEFAULTS);
+      body.querySelectorAll('[data-k]').forEach((el) => { el.value = s[el.dataset.k]; const o = $q(`[data-o=${el.dataset.k}]`); if (o) o.textContent = el.dataset.k === 'exposure' ? ev(s.exposure) : s[el.dataset.k]; });
+      $q('#rawWb').value = 'as-shot'; if (info.lens) $q('#rawLens').checked = true; changed();
+    };
+    const finish = () => { if (!done) { done = true; rawUI = null; resolve(); } };
+    $q('#rawJpeg')?.addEventListener('click', async () => {
+      done = true; rawUI = null; closeModal();
+      try { await openRawJpeg(file, sess, 'You chose the camera’s own rendering.', false); } catch (err) { reportError('The embedded JPEG could not be opened', err); }
+      resolve();
+    });
+    draw(sess.firstPreview);
+    showModal({
+      title: `Develop ${file.name}`, body, okLabel: 'Open',
+      ok: () => {
+        const okBtn = $('#modalOk'); okBtn.disabled = true; okBtn.textContent = 'Developing…';
+        (async () => {
+          try { await developToDocument(file, sess, { ...s }, timing, t0); }
+          catch (err) { reportError(`${file.name} could not be developed`, err); }
+          finally { okBtn.disabled = false; done = true; rawUI = null; closeModal(); resolve(); }
+        })();
+        return false;
+      },
+      onClose: () => { if (!done) status('Open cancelled.'); finish(); },
+    });
+    $('#modal').classList.add('wide');
+    const unwide = new MutationObserver(() => { if ($('#modal').classList.contains('hidden')) { $('#modal').classList.remove('wide'); unwide.disconnect(); } });
+    unwide.observe($('#modal'), { attributes: true, attributeFilter: ['class'] });
+  });
 }
 for (const id of ['#fileInput', '#cameraInput']) $(id).addEventListener('change', async (e) => { const fs = [...e.target.files]; e.target.value = ''; for (const f of fs) await openFile(f, fileMode); });
 
@@ -5689,7 +6026,7 @@ const DEFAULT_VARIANTS = [
   { mode: 'long', long: 1080, type: 'image/webp', quality: 80 },
 ];
 function savedVariants() { try { const v = JSON.parse(localStorage.getItem(EXPORT_SETS_KEY) || 'null'); return Array.isArray(v) && v.length ? v : DEFAULT_VARIANTS.map((x) => ({ ...x })); } catch { return DEFAULT_VARIANTS.map((x) => ({ ...x })); } }
-const VARIANT_TYPES = [['image/jpeg', 'JPEG'], ['image/png', 'PNG'], ['image/webp', 'WebP']];
+const VARIANT_TYPES = [['image/jpeg', 'JPEG'], ['image/png', 'PNG'], ['image/webp', 'WebP'], [PSD_TYPE, 'PSD']];
 /** Variant list editor (shared by the export and batch dialogs). */
 function variantEditor(list) {
   const el = document.createElement('div'); el.className = 'variant-editor';
@@ -5698,7 +6035,7 @@ function variantEditor(list) {
       <td><select data-f="mode"><option value="original">Original</option><option value="long">Long edge</option><option value="width">Width</option><option value="scale">Scale %</option><option value="preset">Preset</option></select></td>
       <td>${v.mode === 'preset' ? `<select data-f="preset">${presetOptionsHTML(v.preset || 'sq', { free: false })}</select>` : v.mode === 'original' ? '' : `<input type="number" data-f="${v.mode === 'long' ? 'long' : v.mode === 'width' ? 'w' : 'pct'}" min="1" max="16384" value="${v.mode === 'long' ? v.long ?? 2048 : v.mode === 'width' ? v.w ?? 1200 : v.pct ?? 50}" style="width:72px"/>`}</td>
       <td><select data-f="type">${VARIANT_TYPES.map(([t, n]) => `<option value="${t}" ${v.type === t ? 'selected' : ''}>${n}</option>`).join('')}</select></td>
-      <td><input type="number" data-f="quality" min="1" max="100" value="${v.quality ?? 90}" style="width:56px" ${v.type === 'image/png' ? 'disabled' : ''}/></td>
+      <td><input type="number" data-f="quality" min="1" max="100" value="${v.quality ?? 90}" style="width:56px" ${v.type === 'image/png' || v.type === PSD_TYPE ? 'disabled' : ''}/></td>
       <td><button type="button" data-rm="${i}" title="Remove" ${list.length < 2 ? 'disabled' : ''}>✕</button></td></tr>`).join('')}</tbody></table>
       <button type="button" id="varAdd">＋ Add size</button>`;
     el.querySelectorAll('tr[data-i]').forEach((tr) => { tr.querySelector('[data-f=mode]').value = list[+tr.dataset.i].mode; });
@@ -5726,6 +6063,8 @@ async function renderVariant(v, base = null) {
     const r = centredRatioRect(d.width, d.height, px.w, px.h); sx = r.x; sy = r.y; sw = r.w; sh = r.h;
     if (p.rw != null) { w = sw; h = sh; } else { w = px.w; h = px.h; }
   } else ({ w, h } = variantSize(d.width, d.height, v));
+  // PSD at full size keeps the layers; any other size or crop is a flattened single-layer PSD
+  if (type === PSD_TYPE && w === d.width && h === d.height && sw === d.width && sh === d.height) return { blob: (await documentToPSD(d)).blob, w, h, ext: 'psd' };
   if (!src) { src = makeCanvas(d.width, d.height); composite(src, { background: type === 'image/jpeg' ? '#ffffff' : null, sync: true }); }
   // high-quality downscale: halve while more than 2× too big, then one smooth draw
   let cur = src, cx = sx, cy = sy, cw = sw, chh = sh;
@@ -5736,6 +6075,7 @@ async function renderVariant(v, base = null) {
   const out = makeCanvas(w, h), x = out.getContext('2d'); x.imageSmoothingQuality = 'high';
   if (type === 'image/jpeg') { x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); }
   x.drawImage(cur, cx, cy, cw, chh, 0, 0, w, h); if (cur !== src) cur.width = 0;
+  if (type === PSD_TYPE) { const b = await flatPSD(out); out.width = 0; return { blob: b, w, h, ext: 'psd' }; }
   let blob = await new Promise((res) => out.toBlob(res, type, q)); out.width = 0;
   if (!blob) throw new Error(`${type} encoding is not supported in this browser`);
   if (blob.type !== type) toast(`${type.split('/')[1].toUpperCase()} is not supported here; saved as ${blob.type.split('/')[1].toUpperCase()}.`, 4000);
@@ -5817,7 +6157,7 @@ async function runBatch(sources, { actionId = null, lookId = null, intensity = 1
     try {
       const file = s instanceof Blob ? s : await s.getFile();
       if (home && doc() !== home && tabs.some((t) => t.doc === home)) switchTab(tabs.findIndex((t) => t.doc === home));
-      const before = doc(); await openFile(file, 'open');
+      const before = doc(); await openFile(file, 'open', { interactive: false });
       if (!doc() || doc() === before) throw new Error('could not open this file');
       opened = doc();
       if (actionId) { const r = await playAction(actionId, opened); if (!r.ok) throw new Error(r.errors[0] || 'action failed'); }
@@ -5835,7 +6175,7 @@ async function runBatch(sources, { actionId = null, lookId = null, intensity = 1
 }
 async function collectFolderImages(dir, recurse = false, out = []) {
   for await (const [name, h] of dir.entries()) {
-    if (h.kind === 'file' && /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(name)) out.push(h);
+    if (h.kind === 'file' && (/\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(name) || isRawName(name) || isPsdName(name))) out.push(h);
     else if (recurse && h.kind === 'directory') await collectFolderImages(h, true, out);
   }
   return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -5853,7 +6193,7 @@ function openBatchDialog() {
   body.append(variantEditor(list));
   const info = () => { body.querySelector('#bSrcInfo').textContent = sources.length ? `${sources.length} image${sources.length === 1 ? '' : 's'}` : 'No images chosen'; };
   body.querySelector('#bSrcDir').onclick = async () => { try { const dir = await window.showDirectoryPicker({ id: 'tintwork-batch-in', mode: 'read' }); sources = await collectFolderImages(dir); info(); } catch (err) { if (err?.name !== 'AbortError') toast(err.message, 4000); } };
-  body.querySelector('#bSrcFiles').onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = 'image/*'; inp.onchange = () => { sources = [...inp.files]; info(); }; inp.click(); };
+  body.querySelector('#bSrcFiles').onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = OPEN_ACCEPT; inp.onchange = () => { sources = [...inp.files]; info(); }; inp.click(); };
   showModal({ title: 'Batch process', body, okLabel: 'Run batch', ok: () => {
     if (!sources.length) { toast('Choose a folder or some images first.'); return false; }
     const opts = { actionId: body.querySelector('#bAct').value || null, lookId: body.querySelector('#bLook').value || null, intensity: +body.querySelector('#bInt').value || 100, variants: list, pattern: body.querySelector('#bPattern').value || '{name}-edited' };
@@ -5898,6 +6238,9 @@ function openLayerToDocDialog() {
 }
 
 window.tintwork = {
+  // v1.1
+  openPSD, openRAW, documentFromPSD, documentToPSD, flatPSD, get rawUI() { return rawUI; }, get lastImport() { return lastImport; }, get lastExportNotes() { return lastExportNotes; },
+  readPSDAsync, writePSDAsync, openRawSession, isRawName, isPsdName, RAW_DEFAULTS, PSD_TYPE, DEEP_LIMIT_MB,
   // v0.9
   tabs, switchTab, closeTab, cycleTab, copyLayerToDoc, tabDirty, stashTab,
   presets: { allPresets, presetById, presetPixels, centredRatioRect, constrainRect, saveCustomPreset, deleteCustomPreset, customPresets }, setCropPreset, applyCropTool, resizeToPreset, cropAspect,
