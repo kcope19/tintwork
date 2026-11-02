@@ -144,19 +144,23 @@ export function pipeline(meta, model, s, autoW = null) {
 }
 
 // ---- lens corrections (DNG opcodes) -------------------------------------------------------------------------------
-/** Lens data from opcodes that the decoder left for the editor: { warp, vignette } (null when absent or identity). */
+/**
+ * Lens data from the DNG opcodes: { warp, vignette, baked } (null when absent or identity). `warp` / `vignette` are
+ * left for the editor to apply; `baked` is a FixVignetteRadial the decoder already applied (undone when the user
+ * turns lens corrections off).
+ */
 export function lensInfo(meta) {
-  let warp = null, vignette = null;
+  let warp = null, vignette = null, baked = null;
   for (const o of meta.opcodes || []) {
-    if (o.applied) continue;
-    if (o.name === 'WarpRectilinear' && o.params?.planes?.length) {
+    if (o.name === 'WarpRectilinear' && o.params?.planes?.length && !o.applied) {
       const id = o.params.planes.every((p) => p.kr[0] === 1 && !p.kr[1] && !p.kr[2] && !p.kr[3] && !p.kt[0] && !p.kt[1]);
       if (!id) warp = { center: o.params.center || [0.5, 0.5], planes: o.params.planes };
-    } else if (o.name === 'FixVignetteRadial' && o.params?.k) {
-      if (o.params.k.some((k) => k)) vignette = { center: o.params.center || [0.5, 0.5], k: o.params.k };
+    } else if (o.name === 'FixVignetteRadial' && o.params?.k?.some((k) => k)) {
+      const v = { center: o.params.center || [0.5, 0.5], k: o.params.k };
+      if (o.applied) baked = v; else vignette = v;
     }
   }
-  return { warp, vignette };
+  return { warp, vignette, baked };
 }
 
 // ---- sources ----------------------------------------------------------------------------------------------------
@@ -207,7 +211,7 @@ function orientMap(o, W, H) {
   }
 }
 /**
- * Develop a source into RGBA. opts: { pipe, orientation, lens: { warp, vignette, frame } | null, vignette (manual, -1..1),
+ * Develop a source into RGBA. opts: { pipe, orientation, lens: { warp, vignette, invertVignette, frame } | null, vignette (manual, -1..1),
  *   factor (source pixels are this many full-resolution pixels), out16: bool, out8: bool }
  * frame: { fullW, fullH, offX, offY } = the uncropped image the opcode coordinates refer to and where the source sits in it.
  */
@@ -222,7 +226,7 @@ export function develop(src, opts) {
   const manV = opts.vignette || 0;
   // lens geometry in full-resolution pixels of the opcode frame
   const fr = lens?.frame || { fullW: W * factor, fullH: H * factor, offX: 0, offY: 0 };
-  const warp = lens?.warp, vig = lens?.vignette;
+  const warp = lens?.warp, vig = lens?.vignette, vInv = !!lens?.invertVignette;
   const geo = (cen) => { const px = cen[0] * fr.fullW, py = cen[1] * fr.fullH; return { px, py, m: Math.hypot(Math.max(px, fr.fullW - px), Math.max(py, fr.fullH - py)) }; };
   const wg = warp ? geo(warp.center) : null, vg = vig ? geo(vig.center) : null;
   const mg = { px: (W * factor) / 2, py: (H * factor) / 2, m: Math.hypot(W * factor, H * factor) / 2 };
@@ -254,7 +258,7 @@ export function develop(src, opts) {
             sx = wg.px + wg.m * (dx * f + tx); sy = wg.py + wg.m * (dy * f + ty);
           }
           let v = sample((sx - fr.offX + 0.5) / factor - 0.5, (sy - fr.offY + 0.5) / factor - 0.5, c);
-          if (vg) { const dx = (sx - vg.px) / vg.m, dy = (sy - vg.py) / vg.m, r2 = dx * dx + dy * dy, k = vig.k; v *= 1 + r2 * (k[0] + r2 * (k[1] + r2 * (k[2] + r2 * (k[3] + r2 * k[4])))); }
+          if (vg) { const dx = (sx - vg.px) / vg.m, dy = (sy - vg.py) / vg.m, r2 = dx * dx + dy * dy, k = vig.k; const gain = 1 + r2 * (k[0] + r2 * (k[1] + r2 * (k[2] + r2 * (k[3] + r2 * k[4])))); v = vInv ? v / gain : v * gain; }
           if (manV) { const dx = (sx - fr.offX - mg.px) / mg.m, dy = (sy - fr.offY - mg.py) / mg.m; v *= 1 + manV * (dx * dx + dy * dy); }
           ch[c] = v;
         }
@@ -350,4 +354,32 @@ export function describe(meta) {
   const c = meta.camera || {}, e = meta.exposure || {};
   const shutter = e.exposureTime ? (e.exposureTime >= 1 ? `${e.exposureTime}s` : `1/${Math.round(1 / e.exposureTime)}s`) : null;
   return [c.canonicalMake && c.canonicalModel ? `${c.canonicalMake} ${c.canonicalModel}` : c.name || meta.format, meta.lens?.model, e.iso ? `ISO ${e.iso}` : null, shutter, e.fNumber ? `f/${e.fNumber}` : null, e.focalLength ? `${e.focalLength} mm` : null].filter(Boolean).join(' · ');
+}
+
+/**
+ * Last-resort preview finder for files the RAW decoder cannot even open: walks every JPEG start-of-image
+ * marker in the container, follows the marker segments to the end of the image, and returns the largest
+ * complete baseline/progressive JPEG with its size. Original code; works on TIFF-based and ISO-BMFF RAWs alike.
+ */
+export function findEmbeddedJpeg(bytes) {
+  const b = bytes, n = b.length; let best = null;
+  for (let i = 0; i < n - 4; i++) {
+    if (b[i] !== 0xff || b[i + 1] !== 0xd8 || b[i + 2] !== 0xff) continue;
+    let p = i + 2, w = 0, h = 0, ok = false;
+    while (p + 4 <= n && b[p] === 0xff) {
+      const m = b[p + 1];
+      if (m === 0xff) { p++; continue; }
+      if (m === 0xd9) { ok = true; p += 2; break; }
+      const len = (b[p + 2] << 8) | b[p + 3];
+      if (len < 2 || p + 2 + len > n) break;
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) { h = (b[p + 5] << 8) | b[p + 6]; w = (b[p + 7] << 8) | b[p + 8]; }
+      p += 2 + len;
+      if (m === 0xda) { // entropy-coded data: skip to the next real marker
+        while (p + 1 < n && !(b[p] === 0xff && b[p + 1] !== 0 && !(b[p + 1] >= 0xd0 && b[p + 1] <= 0xd7))) p++;
+      }
+    }
+    if (ok && w && h && (!best || w * h > best.width * best.height)) best = { start: i, end: p, width: w, height: h };
+    if (ok) i = p - 1;
+  }
+  return best ? { data: bytes.subarray(best.start, best.end), width: best.width, height: best.height, mimeType: 'image/jpeg' } : null;
 }
