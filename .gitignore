@@ -1,6 +1,7 @@
+.DS_Store
+.scratch/
 node_modules/
+scripts/.dbg.mjs
 test-assets/export.*
 test-assets/project.tintwork.json
-.DS_Store
-scripts/.dbg.mjs
-.scratch/
+test-assets/raw-samples/

@@ -1,0 +1,113 @@
+{
+ "source": "https://raw.pixls.us/ (Raw Samples Database, each file dedicated to the public domain under CC0 1.0 by its contributor)",
+ "samples": [
+  {
+   "make": "Adobe DNG Converter",
+   "model": "Canon EOS 5D Mark III",
+   "mode": "16bit 16bit Lossless JPEG compression (3:2)",
+   "mp": 23.38,
+   "url": "https://raw.pixls.us/getfile.php/1024/nice/Adobe DNG Converter - Canon EOS 5D Mark III - 16bit 16bit Lossless JPEG compression (3:2).DNG",
+   "file": "Adobe DNG Converter - Canon EOS 5D Mark III - 16bit 16bit Lossless JPEG compression (3:2).DNG",
+   "sha256": "3118116735d4f6dd01fd9d6a80ee9aac52a2c2debdc6dcd112bd5e3059044a55",
+   "mb": 22.13,
+   "license": "CC0-1.0",
+   "local": "adobe-canon-eos-5d-mark-iii.dng"
+  },
+  {
+   "make": "Google",
+   "model": "Pixel 4a",
+   "mode": "16bit (4:3)",
+   "mp": 12.19,
+   "url": "https://raw.pixls.us/getfile.php/4176/nice/Google - Pixel 4a - 16bit (4:3).dng",
+   "file": "Google - Pixel 4a - 16bit (4:3).dng",
+   "sha256": "11b38186ee3455376291bcdb3049728a3f9dcd94b9e82ff76855d9f3430e44be",
+   "mb": 12.96,
+   "license": "CC0-1.0",
+   "local": "google-pixel-4a.dng"
+  },
+  {
+   "make": "Canon",
+   "model": "EOS 200D",
+   "mode": "RAW (3:2)",
+   "mp": 25.5,
+   "url": "https://raw.pixls.us/getfile.php/2428/nice/Canon - EOS 200D - RAW (3:2).CR2",
+   "file": "Canon - EOS 200D - RAW (3:2).CR2",
+   "sha256": "ffed1191fc4d832f847274a4ec1c5e34e50083a5aeedee3d5dd8a24f707e9ede",
+   "mb": 28.02,
+   "license": "CC0-1.0",
+   "local": "canon-eos-200d.cr2"
+  },
+  {
+   "make": "Canon",
+   "model": "EOS M50",
+   "mode": "3:2",
+   "mp": 24,
+   "url": "https://raw.pixls.us/getfile.php/4656/nice/Canon - EOS M50 - 3:2.CR3",
+   "file": "Canon - EOS M50 - 3:2.CR3",
+   "sha256": "27a88fdae82516ba136e12c2cc9b934f25dbaaac24d64ab4e5517f8524463594",
+   "mb": 14.16,
+   "license": "CC0-1.0",
+   "local": "canon-eos-m50.cr3"
+  },
+  {
+   "make": "Nikon",
+   "model": "D3300",
+   "mode": "12bit 12bit compressed (Lossy (type 2)) (3:2)",
+   "mp": 24.16,
+   "url": "https://raw.pixls.us/getfile.php/1734/nice/Nikon - D3300 - 12bit 12bit compressed (Lossy (type 2)) (3:2).NEF",
+   "file": "Nikon - D3300 - 12bit 12bit compressed (Lossy (type 2)) (3:2).NEF",
+   "sha256": "97dfc95aecc00383d6da6197cb759bacb1e43c86071b4ca2d94748e498620f2f",
+   "mb": 18.05,
+   "license": "CC0-1.0",
+   "local": "nikon-d3300.nef"
+  },
+  {
+   "make": "Sony",
+   "model": "ILCE-6000",
+   "mode": "12bit 12bit compressed (3:2)",
+   "mp": 24.34,
+   "url": "https://raw.pixls.us/getfile.php/1971/nice/Sony - ILCE-6000 - 12bit 12bit compressed (3:2).ARW",
+   "file": "Sony - ILCE-6000 - 12bit 12bit compressed (3:2).ARW",
+   "sha256": "ce8b4957281a817d52a07a691e2468567b6c78223bd0b514ffc1c65b002b8d89",
+   "mb": 24.44,
+   "license": "CC0-1.0",
+   "local": "sony-ilce-6000.arw"
+  },
+  {
+   "make": "Fujifilm",
+   "model": "X-T2",
+   "mode": "14bit 14bit compressed (3:2)",
+   "mp": 24.42,
+   "url": "https://raw.pixls.us/getfile.php/865/nice/Fujifilm - X-T2 - 14bit 14bit compressed (3:2).RAF",
+   "file": "Fujifilm - X-T2 - 14bit 14bit compressed (3:2).RAF",
+   "sha256": "f756ad5be551a8b3e1b503a8a6f7e8e637fba519c0b0f8c79dd58e94b0287602",
+   "mb": 22.26,
+   "license": "CC0-1.0",
+   "local": "fujifilm-x-t2.raf"
+  },
+  {
+   "make": "Olympus",
+   "model": "E-M10 Mark IV",
+   "mode": "16bit (4:3)",
+   "mp": 20.3,
+   "url": "https://raw.pixls.us/getfile.php/4126/nice/Olympus - E-M10 Mark IV - 16bit (4:3).ORF",
+   "file": "Olympus - E-M10 Mark IV - 16bit (4:3).ORF",
+   "sha256": "ce03e936cb2e8131343e7045a3249f78477bd2ae944e121ace72058b89fef509",
+   "mb": 17.89,
+   "license": "CC0-1.0",
+   "local": "olympus-e-m10-mark-iv.orf"
+  },
+  {
+   "make": "Panasonic",
+   "model": "DC-G90",
+   "mode": "4:3",
+   "mp": 20.23,
+   "url": "https://raw.pixls.us/getfile.php/4151/nice/Panasonic - DC-G90 - 4:3.RW2",
+   "file": "Panasonic - DC-G90 - 4:3.RW2",
+   "sha256": "41de770701618b7276871fd1566da08782bf1009977c5bea91c0cc300bb8ed65",
+   "mb": 22.96,
+   "license": "CC0-1.0",
+   "local": "panasonic-dc-g90.rw2"
+  }
+ ]
+}
