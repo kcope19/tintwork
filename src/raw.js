@@ -1,13 +1,37 @@
-// Camera RAW develop maths (original code). Pure functions: runs in the codec worker and in Node tests.
+// Camera RAW develop maths (original code). Pure functions: runs in the codec / develop workers and in Node tests.
+import { curveFn } from './pixels.js';
 // Input is FlashRaw's demosaiced, as-shot white-balanced linear sRGB (3 channels, sensor orientation),
 // either Float32 or half-float bits. Output is RGBA (16-bit and/or 8-bit), oriented, display-encoded sRGB.
 
 export const DEFAULT_SETTINGS = Object.freeze({
   wb: 'as-shot', temp: 5500, tint: 0, // wb: 'as-shot' | 'auto' | 'custom'
   exposure: 0, highlights: 20, shadows: 0, contrast: 0,
+  vibrance: 0, saturation: 0, curve: null, // curve: { rgb, r, g, b } point lists in 0..255 (null = straight)
+  sharpen: 25, sharpRadius: 1, sharpDetail: 25, sharpMask: 0,
   nrLuma: 0, nrColor: 25, lens: true, vignette: 0,
+  caAuto: false, caRed: 0, caBlue: 0, // lateral chromatic aberration: automatic estimate + manual red/cyan, blue/yellow
 });
-export const RANGES = { temp: [2000, 50000], tint: [-150, 150], exposure: [-5, 5], highlights: [0, 100], shadows: [-100, 100], contrast: [-100, 100], nrLuma: [0, 100], nrColor: [0, 100], vignette: [-100, 100] };
+export const RANGES = {
+  temp: [2000, 50000], tint: [-150, 150], exposure: [-5, 5], highlights: [0, 100], shadows: [-100, 100], contrast: [-100, 100],
+  vibrance: [-100, 100], saturation: [-100, 100], sharpen: [0, 150], sharpRadius: [0.5, 3], sharpDetail: [0, 100], sharpMask: [0, 100],
+  nrLuma: [0, 100], nrColor: [0, 100], vignette: [-100, 100], caRed: [-100, 100], caBlue: [-100, 100],
+};
+/** Lateral CA slider ±100 = ±0.4 % radial scale of the red or blue channel against green. */
+export const CA_UNIT = 0.004;
+/** Settings with every key valid (unknown keys dropped, numbers clamped): used for presets read from storage. */
+export function cleanSettings(s) {
+  const out = { ...DEFAULT_SETTINGS };
+  for (const k of Object.keys(DEFAULT_SETTINGS)) {
+    const v = s?.[k]; if (v === undefined) continue;
+    if (k === 'wb') { if (['as-shot', 'auto', 'custom'].includes(v)) out.wb = v; }
+    else if (k === 'curve') { out.curve = v && typeof v === 'object' ? Object.fromEntries(['rgb', 'r', 'g', 'b'].map((c) => [c, Array.isArray(v[c]) && v[c].length >= 2 ? v[c].map(([x, y]) => [+x || 0, +y || 0]) : [[0, 0], [255, 255]]])) : null; }
+    else if (typeof DEFAULT_SETTINGS[k] === 'boolean') out[k] = !!v;
+    else if (Number.isFinite(+v)) { const r = RANGES[k]; out[k] = r ? Math.min(r[1], Math.max(r[0], +v)) : +v; }
+  }
+  return out;
+}
+const isStraight = (p) => !p || (p.length === 2 && p[0][0] === 0 && p[0][1] === 0 && p[1][0] === 255 && p[1][1] === 255);
+export const curveIsIdentity = (c) => !c || ['rgb', 'r', 'g', 'b'].every((k) => isStraight(c[k]));
 
 // ---- small linear algebra ---------------------------------------------------------------------------------
 const mul3 = (a, b) => { const o = new Array(9); for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) o[i * 3 + j] = a[i * 3] * b[j] + a[i * 3 + 1] * b[3 + j] + a[i * 3 + 2] * b[6 + j]; return o; };
@@ -140,7 +164,17 @@ export function pipeline(meta, model, s, autoW = null) {
     const y = x < 0.5 ? 0.5 * Math.pow(2 * x, p) : 1 - 0.5 * Math.pow(2 * (1 - x), p);
     lut[i] = Math.min(65535, Math.max(0, y * 65535));
   }
-  return { C, gain, knee, cK, shadows: set.shadows / 100, lut, wb: w, settings: set };
+  // point curve (display space, like the Curves adjustment: channel curve first, then the RGB curve)
+  let luts = [lut, lut, lut];
+  if (!curveIsIdentity(set.curve)) {
+    const fm = curveFn(set.curve.rgb), k = 255 / 65535;
+    luts = ['r', 'g', 'b'].map((c) => {
+      const fc = isStraight(set.curve[c]) ? null : curveFn(set.curve[c]), o = new Float32Array(LUT_SIZE + 1);
+      for (let i = 0; i <= LUT_SIZE; i++) { let v = lut[i] * k; if (fc) v = fc(v); v = fm(v); o[i] = Math.min(65535, Math.max(0, v / k)); }
+      return o;
+    });
+  }
+  return { C, gain, knee, cK, shadows: set.shadows / 100, lut, luts, vib: set.vibrance / 100, sat: 1 + set.saturation / 100, wb: w, settings: set };
 }
 
 // ---- lens corrections (DNG opcodes) -------------------------------------------------------------------------------
@@ -210,53 +244,73 @@ function orientMap(o, W, H) {
     default: return [1, 0, 0, 0, 1, 0];
   }
 }
+/** Full source size of a (possibly cropped-out) source region. */
+const fullOf = (src) => [src.fullW || src.width, src.fullH || src.height];
 /**
- * Develop a source into RGBA. opts: { pipe, orientation, lens: { warp, vignette, invertVignette, frame } | null, vignette (manual, -1..1),
- *   factor (source pixels are this many full-resolution pixels), out16: bool, out8: bool }
- * frame: { fullW, fullH, offX, offY } = the uncropped image the opcode coordinates refer to and where the source sits in it.
+ * Resampling geometry shared by the develop loop and the band planner: maps a stored-image position (full-resolution
+ * pixels of the opcode frame) to where channel c is read from, after the lens warp and the lateral CA scale.
  */
-export function develop(src, opts) {
-  const { pipe, orientation = 1, lens = null, factor = 1 } = opts;
-  const W = src.width, H = src.height, d = src.data, half = src.half ? halfTable() : null;
-  const [OW, OH] = orientedSize(W, H, orientation), N = OW * OH;
-  const o16 = opts.out16 ? new Uint16Array(N * 4) : null, o8 = opts.out8 ? new Uint8ClampedArray(N * 4) : null;
-  const [ax, bx, cx, ay, by, cy] = orientMap(orientation, W, H);
-  const C = pipe.C, c0 = C[0], c1 = C[1], c2 = C[2], c3 = C[3], c4 = C[4], c5 = C[5], c6 = C[6], c7 = C[7], c8 = C[8];
-  const knee = pipe.knee, cK = pipe.cK, sh = pipe.shadows, lut = pipe.lut, LS = LUT_SIZE, ig = 1 / pipe.gain;
-  const manV = opts.vignette || 0;
-  // lens geometry in full-resolution pixels of the opcode frame
-  const fr = lens?.frame || { fullW: W * factor, fullH: H * factor, offX: 0, offY: 0 };
-  const warp = lens?.warp, vig = lens?.vignette, vInv = !!lens?.invertVignette;
+function geometry(src, opts) {
+  const { lens = null, factor = 1 } = opts, [FW, FH] = fullOf(src);
+  const fr = lens?.frame || { fullW: FW * factor, fullH: FH * factor, offX: 0, offY: 0 };
+  const warp = lens?.warp, vig = lens?.vignette;
   const geo = (cen) => { const px = cen[0] * fr.fullW, py = cen[1] * fr.fullH; return { px, py, m: Math.hypot(Math.max(px, fr.fullW - px), Math.max(py, fr.fullH - py)) }; };
   const wg = warp ? geo(warp.center) : null, vg = vig ? geo(vig.center) : null;
-  const mg = { px: (W * factor) / 2, py: (H * factor) / 2, m: Math.hypot(W * factor, H * factor) / 2 };
   const wp = warp ? [0, 1, 2].map((c) => warp.planes[Math.min(c, warp.planes.length - 1)]) : null;
-  const sample = (x, y, c) => { // bilinear, clamped, one channel
-    x = Math.min(W - 1, Math.max(0, x)); y = Math.min(H - 1, Math.max(0, y));
+  const ca = opts.ca || null, ks = ca ? [1 + ca[0], 1, 1 + ca[1]] : null;
+  const cc = wg || geo([0.5, 0.5]);
+  /** out[0], out[1] = stored position (opcode frame) for output-frame position X, Y and channel c */
+  const at = (X, Y, c, out) => {
+    let sx = X, sy = Y;
+    if (wp) {
+      const p = wp[c], dx = (X - wg.px) / wg.m, dy = (Y - wg.py) / wg.m, r2 = dx * dx + dy * dy;
+      const f = p.kr[0] + r2 * (p.kr[1] + r2 * (p.kr[2] + r2 * p.kr[3]));
+      const tx = p.kt[0] * 2 * dx * dy + p.kt[1] * (r2 + 2 * dx * dx), ty = p.kt[0] * (r2 + 2 * dy * dy) + p.kt[1] * 2 * dx * dy;
+      sx = wg.px + wg.m * (dx * f + tx); sy = wg.py + wg.m * (dy * f + ty);
+    }
+    if (ks && c !== 1) { sx = cc.px + (sx - cc.px) * ks[c]; sy = cc.py + (sy - cc.py) * ks[c]; }
+    out[0] = sx; out[1] = sy;
+  };
+  return { fr, at, vg, vig, inv: !!lens?.invertVignette, factor, moves: !!(wp || ks) };
+}
+/**
+ * Develop a source into RGBA. opts: { pipe, orientation, lens: { warp, vignette, invertVignette, frame } | null, vignette (manual, -1..1),
+ *   ca: [red, blue] radial scale offsets | null, factor (source pixels are this many full-resolution pixels), rows: [first, end) output rows,
+ *   out16: bool, out8: bool }
+ * frame: { fullW, fullH, offX, offY } = the uncropped image the opcode coordinates refer to and where the source sits in it.
+ * src may be a region of a larger source: { x0, y0, width, height, fullW, fullH, data, half }.
+ */
+export function develop(src, opts) {
+  const { pipe, orientation = 1, factor = 1 } = opts;
+  const W = src.width, H = src.height, d = src.data, half = src.half ? halfTable() : null, X0 = src.x0 || 0, Y0 = src.y0 || 0;
+  const [FW, FH] = fullOf(src), [OW, OH] = orientedSize(FW, FH, orientation);
+  const r0 = opts.rows ? opts.rows[0] : 0, r1 = opts.rows ? opts.rows[1] : OH, N = OW * (r1 - r0);
+  const o16 = opts.out16 ? new Uint16Array(N * 4) : null, o8 = opts.out8 ? new Uint8ClampedArray(N * 4) : null;
+  const [ax, bx, cx, ay, by, cy] = orientMap(orientation, FW, FH);
+  const C = pipe.C, c0 = C[0], c1 = C[1], c2 = C[2], c3 = C[3], c4 = C[4], c5 = C[5], c6 = C[6], c7 = C[7], c8 = C[8];
+  const knee = pipe.knee, cK = pipe.cK, sh = pipe.shadows, LS = LUT_SIZE;
+  const [lr, lg, lb] = pipe.luts || [pipe.lut, pipe.lut, pipe.lut], vib = pipe.vib || 0, sat = pipe.sat ?? 1, color = vib !== 0 || sat !== 1;
+  const manV = opts.vignette || 0, G = geometry(src, opts), fr = G.fr, vg = G.vg, vig = G.vig, vInv = G.inv;
+  const mg = { px: (FW * factor) / 2, py: (FH * factor) / 2, m: Math.hypot(FW * factor, FH * factor) / 2 };
+  const sample = (x, y, c) => { // bilinear, clamped to the region, one channel (x, y in full-source pixels)
+    x = Math.min(W - 1, Math.max(0, x - X0)); y = Math.min(H - 1, Math.max(0, y - Y0));
     const x0 = x | 0, y0 = y | 0, x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1), fx = x - x0, fy = y - y0;
     const g = (xx, yy) => { const v = d[(yy * W + xx) * 3 + c]; return half ? half[v] : v; };
     return (g(x0, y0) * (1 - fx) + g(x1, y0) * fx) * (1 - fy) + (g(x0, y1) * (1 - fx) + g(x1, y1) * fx) * fy;
   };
-  const slow = !!(warp || vig || manV);
+  const slow = !!(G.moves || vig || manV), pos = [0, 0], ch = [0, 0, 0];
   let r, g, b;
-  for (let oy = 0; oy < OH; oy++) {
-    let x = ax * 0 + bx * oy + cx, y = ay * 0 + by * oy + cy;
-    for (let ox = 0, o = oy * OW * 4; ox < OW; ox++, o += 4, x += ax, y += ay) {
+  for (let oy = r0; oy < r1; oy++) {
+    let x = bx * oy + cx, y = by * oy + cy;
+    for (let ox = 0, o = (oy - r0) * OW * 4; ox < OW; ox++, o += 4, x += ax, y += ay) {
       if (!slow) {
-        const i = (y * W + x) * 3;
+        const i = ((y - Y0) * W + (x - X0)) * 3;
         if (half) { r = half[d[i]]; g = half[d[i + 1]]; b = half[d[i + 2]]; } else { r = d[i]; g = d[i + 1]; b = d[i + 2]; }
       } else {
         // full-resolution position in the opcode frame
         const X = (x + 0.5) * factor - 0.5 + fr.offX, Y = (y + 0.5) * factor - 0.5 + fr.offY;
-        const ch = [0, 0, 0];
         for (let c = 0; c < 3; c++) {
-          let sx = X, sy = Y;
-          if (wp) {
-            const p = wp[c], dx = (X - wg.px) / wg.m, dy = (Y - wg.py) / wg.m, r2 = dx * dx + dy * dy;
-            const f = p.kr[0] + r2 * (p.kr[1] + r2 * (p.kr[2] + r2 * p.kr[3]));
-            const tx = p.kt[0] * 2 * dx * dy + p.kt[1] * (r2 + 2 * dx * dx), ty = p.kt[0] * (r2 + 2 * dy * dy) + p.kt[1] * 2 * dx * dy;
-            sx = wg.px + wg.m * (dx * f + tx); sy = wg.py + wg.m * (dy * f + ty);
-          }
+          G.at(X, Y, c, pos); const sx = pos[0], sy = pos[1];
           let v = sample((sx - fr.offX + 0.5) / factor - 0.5, (sy - fr.offY + 0.5) / factor - 0.5, c);
           if (vg) { const dx = (sx - vg.px) / vg.m, dy = (sy - vg.py) / vg.m, r2 = dx * dx + dy * dy, k = vig.k; const gain = 1 + r2 * (k[0] + r2 * (k[1] + r2 * (k[2] + r2 * (k[3] + r2 * k[4])))); v = vInv ? v / gain : v * gain; }
           if (manV) { const dx = (sx - fr.offX - mg.px) / mg.m, dy = (sy - fr.offY - mg.py) / mg.m; v *= 1 + manV * (dx * dx + dy * dy); }
@@ -265,40 +319,225 @@ export function develop(src, opts) {
         r = ch[0]; g = ch[1]; b = ch[2];
       }
       // white balance + exposure
-      let R = c0 * r + c1 * g + c2 * b, G = c3 * r + c4 * g + c5 * b, B = c6 * r + c7 * g + c8 * b;
+      let R = c0 * r + c1 * g + c2 * b, Gc = c3 * r + c4 * g + c5 * b, B = c6 * r + c7 * g + c8 * b;
       // clipped highlights: neutralise where every channel was near the sensor limit (avoids pink / cyan casts)
       const lo = Math.min(r, g, b);
-      if (lo > 0.75) { const t = smooth(0.75, 1, lo), m = Math.max(R, G, B); R += (m - R) * t; G += (m - G) * t; B += (m - B) * t; }
+      if (lo > 0.75) { const t = smooth(0.75, 1, lo), m = Math.max(R, Gc, B); R += (m - R) * t; Gc += (m - Gc) * t; B += (m - B) * t; }
       // shadows: lift or deepen the darker tones (multiplicative, so black stays black)
-      if (sh) { const Y = 0.2126 * R + 0.7152 * G + 0.0722 * B, k = Math.pow(2, sh * 1.3 * (1 - smooth(0, 0.25, Y))); R *= k; G *= k; B *= k; }
+      if (sh) { const Y = 0.2126 * R + 0.7152 * Gc + 0.0722 * B, k = Math.pow(2, sh * 1.3 * (1 - smooth(0, 0.25, Y))); R *= k; Gc *= k; B *= k; }
       // highlight shoulder on the brightest channel (keeps hue)
-      const m = Math.max(R, G, B);
-      if (m > knee) { const e = m - knee, f = (cK === Infinity ? Math.min(1, m) : knee + e / (1 + e / cK)) / m; R *= f; G *= f; B *= f; }
+      const m = Math.max(R, Gc, B);
+      if (m > knee) { const e = m - knee, f = (cK === Infinity ? Math.min(1, m) : knee + e / (1 + e / cK)) / m; R *= f; Gc *= f; B *= f; }
+      // saturation and vibrance (vibrance favours muted colours; negative vibrance mutes the strongest first)
+      if (color) {
+        const mx = Math.max(R, Gc, B), mn = Math.min(R, Gc, B), cs = mx > 1e-6 ? (mx - mn) / mx : 0, Y = 0.2126 * R + 0.7152 * Gc + 0.0722 * B;
+        const k = sat * (1 + vib * (vib > 0 ? 1 - cs : cs));
+        R = Y + (R - Y) * k; Gc = Y + (Gc - Y) * k; B = Y + (B - Y) * k;
+      }
       // output curve
-      R = R <= 0 ? 0 : R >= 1 ? LS : R * LS; G = G <= 0 ? 0 : G >= 1 ? LS : G * LS; B = B <= 0 ? 0 : B >= 1 ? LS : B * LS;
-      const ri = R | 0, gi = G | 0, bi = B | 0;
-      const vr = lut[ri] + (lut[ri + 1 > LS ? LS : ri + 1] - lut[ri]) * (R - ri), vg2 = lut[gi] + (lut[gi + 1 > LS ? LS : gi + 1] - lut[gi]) * (G - gi), vb = lut[bi] + (lut[bi + 1 > LS ? LS : bi + 1] - lut[bi]) * (B - bi);
+      R = R <= 0 ? 0 : R >= 1 ? LS : R * LS; Gc = Gc <= 0 ? 0 : Gc >= 1 ? LS : Gc * LS; B = B <= 0 ? 0 : B >= 1 ? LS : B * LS;
+      const ri = R | 0, gi = Gc | 0, bi = B | 0;
+      const vr = lr[ri] + (lr[ri + 1 > LS ? LS : ri + 1] - lr[ri]) * (R - ri), vg2 = lg[gi] + (lg[gi + 1 > LS ? LS : gi + 1] - lg[gi]) * (Gc - gi), vb = lb[bi] + (lb[bi + 1 > LS ? LS : bi + 1] - lb[bi]) * (B - bi);
       if (o16) { o16[o] = vr + 0.5; o16[o + 1] = vg2 + 0.5; o16[o + 2] = vb + 0.5; o16[o + 3] = 65535; }
       if (o8) { o8[o] = vr / 257 + 0.5; o8[o + 1] = vg2 / 257 + 0.5; o8[o + 2] = vb / 257 + 0.5; o8[o + 3] = 255; }
     }
   }
-  void ig;
-  return { width: OW, height: OH, data16: o16, data8: o8 };
+  return { width: OW, height: r1 - r0, fullHeight: OH, data16: o16, data8: o8 };
+}
+
+// ---- whole pipeline on a band of output rows (develop → noise reduction → sharpening) ---------------------------
+/** Rows of context a band needs above and below so NR and sharpening match a whole-image run (multiple of 4). */
+export const BAND_HALO = 48;
+/**
+ * Develop output rows [rows[0], rows[1]) including noise reduction and sharpening. The band is computed with `halo`
+ * extra rows on each side (clamped to the image) so the neighbourhood filters see the same pixels as a whole-image run.
+ * opts as develop() plus { settings, scale (output pixels per full-resolution pixel, < 1 for previews), bits: 8 | 16,
+ *   nrScale (optional: the scale noise reduction works at; the quick half-resolution pass uses 1 for a cheaper chroma blur) }.
+ */
+export function developRows(src, opts) {
+  const [FW, FH] = fullOf(src), [, OH] = orientedSize(FW, FH, opts.orientation || 1);
+  const [a, b] = opts.rows || [0, OH], halo = opts.rows ? (opts.halo ?? BAND_HALO) : 0;
+  const h0 = Math.max(0, a - halo), h1 = Math.min(OH, b + halo), bits = opts.bits || 16, set = opts.settings || DEFAULT_SETTINGS, scale = opts.scale ?? 1;
+  const out = develop(src, { ...opts, rows: [h0, h1], out16: bits === 16, out8: bits === 8 });
+  const px = bits === 16 ? out.data16 : out.data8, w = out.width, hh = out.height;
+  const t0 = now();
+  denoise(px, w, hh, set.nrLuma, set.nrColor, opts.nrScale ?? scale);
+  const t1 = now();
+  sharpen(px, w, hh, set, scale);
+  const t2 = now();
+  const cut = (arr) => (h0 === a && h1 === b ? arr : arr.slice((a - h0) * w * 4, (b - h0) * w * 4));
+  return { width: w, height: b - a, rows: [a, b], fullHeight: OH, data: cut(px), bits, ms: { nr: t1 - t0, sharpen: t2 - t1 } };
+}
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+/**
+ * Split a develop into bands of output rows and work out which part of the source each band reads (its rows plus the
+ * halo, through orientation, lens warp and CA). Returns [{ rows, rect: { x0, y0, x1, y1 } }] with even-aligned rects.
+ */
+export function planBands(src, opts, n) {
+  const [FW, FH] = fullOf(src), o = opts.orientation || 1, [OW, OH] = orientedSize(FW, FH, o), factor = opts.factor || 1;
+  const halo = opts.halo ?? BAND_HALO, [ax, bx, cx, ay, by, cy] = orientMap(o, FW, FH);
+  const G = geometry(src, opts), fr = G.fr, pos = [0, 0];
+  n = Math.max(1, Math.min(n, Math.floor(OH / 16) || 1));
+  const step = Math.ceil(OH / n / 4) * 4, bands = [];
+  for (let a = 0; a < OH; a += step) {
+    const b = Math.min(OH, a + step), h0 = Math.max(0, a - halo), h1 = Math.min(OH, b + halo);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const visit = (ox, oy) => {
+      const x = ax * ox + bx * oy + cx, y = ay * ox + by * oy + cy;
+      if (!G.moves) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); return; }
+      const X = (x + 0.5) * factor - 0.5 + fr.offX, Y = (y + 0.5) * factor - 0.5 + fr.offY;
+      for (let c = 0; c < 3; c++) {
+        G.at(X, Y, c, pos);
+        const sx = (pos[0] - fr.offX + 0.5) / factor - 0.5, sy = (pos[1] - fr.offY + 0.5) / factor - 0.5;
+        x0 = Math.min(x0, sx); x1 = Math.max(x1, sx); y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
+      }
+    };
+    // the boundary of the band maps onto the boundary of what it reads (the warp is a smooth radial map)
+    const sx = Math.max(1, Math.floor(OW / 64)), sy = Math.max(1, Math.floor((h1 - h0) / 16));
+    for (let ox = 0; ox < OW; ox += sx) { visit(ox, h0); visit(ox, h1 - 1); }
+    for (let oy = h0; oy < h1; oy += sy) { visit(0, oy); visit(OW - 1, oy); }
+    visit(OW - 1, h0); visit(OW - 1, h1 - 1);
+    const pad = G.moves ? 4 : 1;
+    const rx0 = Math.max(0, Math.floor(x0) - pad) & ~1, ry0 = Math.max(0, Math.floor(y0) - pad) & ~1;
+    let rx1 = Math.min(FW, Math.ceil(x1) + pad + 1), ry1 = Math.min(FH, Math.ceil(y1) + pad + 1);
+    if ((rx1 - rx0) & 1 && rx1 < FW) rx1++; if ((ry1 - ry0) & 1 && ry1 < FH) ry1++;
+    bands.push({ rows: [a, b], rect: { x0: rx0, y0: ry0, x1: rx1, y1: ry1 } });
+  }
+  return bands;
+}
+/** Copy a rectangle out of a 3-channel source as a region source (keeps the full size for orientation and lens maths). */
+export function extractRegion(src, rect) {
+  const [FW, FH] = fullOf(src), W = src.width, bx = src.x0 || 0, byy = src.y0 || 0, w = rect.x1 - rect.x0, h = rect.y1 - rect.y0;
+  const data = new src.data.constructor(w * h * 3);
+  if (rect.x0 === bx && w === W) data.set(src.data.subarray((rect.y0 - byy) * W * 3, (rect.y1 - byy) * W * 3));
+  else for (let y = 0; y < h; y++) { const s = ((rect.y0 - byy + y) * W + (rect.x0 - bx)) * 3; data.set(src.data.subarray(s, s + w * 3), y * w * 3); }
+  return { x0: rect.x0, y0: rect.y0, width: w, height: h, fullW: FW, fullH: FH, data, half: !!src.half };
+}
+/** 2×2 box-downscale of a region source (x0, y0 even), Float32 result: the half-resolution first pass. */
+export function halveRegion(src) {
+  const [FW, FH] = fullOf(src), W = src.width, x0 = src.x0 || 0, y0 = src.y0 || 0, half = src.half ? halfTable() : null, d = src.data;
+  const w = Math.floor(W / 2), h = Math.floor(src.height / 2), out = new Float32Array(w * h * 3);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) for (let c = 0; c < 3; c++) {
+    const i = ((2 * y) * W + 2 * x) * 3 + c, j = i + W * 3;
+    out[(y * w + x) * 3 + c] = half ? (half[d[i]] + half[d[i + 3]] + half[d[j]] + half[d[j + 3]]) * 0.25 : (d[i] + d[i + 3] + d[j] + d[j + 3]) * 0.25;
+  }
+  return { x0: x0 / 2, y0: y0 / 2, width: w, height: h, fullW: Math.floor(FW / 2), fullH: Math.floor(FH / 2), data: out, half: false };
+}
+
+// ---- lateral chromatic aberration estimate ---------------------------------------------------------------------
+/**
+ * Estimate lateral CA: how much the red and the blue channel are magnified against green (radial scale offsets,
+ * e.g. 0.001 = 0.1 %). Looks at strongly textured patches away from the centre and finds, for each channel, the
+ * radial scale that best lines its edges up with green (normalised cross-correlation, coarse-to-fine search).
+ */
+export function estimateCA(src, { cells = 20, patch = 12, range = CA_UNIT * 1.5 } = {}) {
+  const W = src.width, H = src.height, d = src.data, half = src.half ? halfTable() : null;
+  const val = (x, y, c) => { const v = d[(y * W + x) * 3 + c]; return half ? half[v] : v; };
+  const bil = (x, y, c) => {
+    const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
+    return (val(x0, y0, c) * (1 - fx) + val(x0 + 1, y0, c) * fx) * (1 - fy) + (val(x0, y0 + 1, c) * (1 - fx) + val(x0 + 1, y0 + 1, c) * fx) * fy;
+  };
+  const cxp = (W - 1) / 2, cyp = (H - 1) / 2, rmax = Math.hypot(cxp, cyp);
+  // candidate patches: radial gradient energy of green, outer 65 % of the radius, not clipped
+  const cand = [], gx = Math.floor(W / cells), gy = Math.floor(H / cells);
+  for (let j = 0; j < cells; j++) for (let i = 0; i < cells; i++) {
+    const px = Math.floor((i + 0.5) * gx), py = Math.floor((j + 0.5) * gy), r = Math.hypot(px - cxp, py - cyp) / rmax;
+    if (r < 0.35 || px < patch + 8 || py < patch + 8 || px > W - patch - 8 || py > H - patch - 8) continue;
+    const ux = (px - cxp) / (r * rmax), uy = (py - cyp) / (r * rmax);
+    let e = 0, clip = false;
+    for (let y = -patch; y < patch; y += 2) for (let x = -patch; x < patch; x += 2) {
+      const a = val(px + x, py + y, 1); if (a > 0.95) clip = true;
+      const g = (val(px + x + 1, py + y, 1) - val(px + x - 1, py + y, 1)) * ux + (val(px + x, py + y + 1, 1) - val(px + x, py + y - 1, 1)) * uy;
+      e += g * g;
+    }
+    if (!clip && e > 0) cand.push({ px, py, e });
+  }
+  cand.sort((a, b) => b.e - a.e);
+  const use = cand.slice(0, 48); if (use.length < 4) return { red: 0, blue: 0, patches: use.length };
+  const green = use.map(({ px, py }) => { const g = []; for (let y = -patch; y < patch; y++) for (let x = -patch; x < patch; x++) g.push(val(px + x, py + y, 1)); return norm(g); });
+  const score = (c, a) => {
+    let s = 0;
+    use.forEach(({ px, py }, k) => {
+      const v = [], G = green[k];
+      for (let y = -patch; y < patch; y++) for (let x = -patch; x < patch; x++) v.push(bil(cxp + (px + x - cxp) * (1 + a), cyp + (py + y - cyp) * (1 + a), c));
+      const n = norm(v); let cc = 0; for (let i = 0; i < n.length; i++) cc += n[i] * G[i];
+      s += cc * cc * use[k].e; // squared correlation (edges may flip sign between channels), weighted by texture
+    });
+    return s;
+  };
+  const best = (c) => {
+    let lo = -range, hi = range, a = 0, stepN = 24;
+    for (let pass = 0; pass < 3; pass++) {
+      let top = -Infinity; const st = (hi - lo) / stepN;
+      for (let t = lo; t <= hi + 1e-12; t += st) { const sc = score(c, t); if (sc > top) { top = sc; a = t; } }
+      lo = a - st; hi = a + st; stepN = 8;
+    }
+    return a;
+  };
+  return { red: best(0), blue: best(2), patches: use.length };
+}
+function norm(v) {
+  let m = 0; for (const x of v) m += x; m /= v.length;
+  let s = 0; for (const x of v) s += (x - m) * (x - m); s = Math.sqrt(s) || 1;
+  return v.map((x) => (x - m) / s);
+}
+/** Radial scale offsets [red, blue] for the develop pass from the settings (+ the automatic estimate when enabled). */
+export function caScales(set, auto) {
+  const r = (set.caRed || 0) / 100 * CA_UNIT + (set.caAuto && auto ? auto.red : 0), b = (set.caBlue || 0) / 100 * CA_UNIT + (set.caAuto && auto ? auto.blue : 0);
+  return r || b ? [r, b] : null;
+}
+
+// ---- sharpening (on the developed RGBA, display space; luminance only) -------------------------------------------
+/**
+ * Unsharp mask on luminance. amount 0..150 (%), radius in full-resolution pixels (scaled for previews), detail 0..100
+ * (low values hold back halos on strong edges), masking 0..100 (limits sharpening to edges, sparing smooth areas).
+ */
+export function sharpen(rgba, w, h, set, scale = 1) {
+  const amount = (set.sharpen || 0) / 100; if (!(amount > 0)) return;
+  const n = w * h, max = rgba instanceof Uint16Array ? 65535 : 255, Y = new Float32Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) Y[i] = 0.2126 * rgba[j] + 0.7152 * rgba[j + 1] + 0.0722 * rgba[j + 2];
+  const bl = Y.slice(), tmp = new Float32Array(n), sigma = (set.sharpRadius || 1) * scale;
+  if (sigma < 0.8) { blur121(bl, w, h, tmp); } else { const rb = Math.max(1, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2)); for (let k = 0; k < 3; k++) boxBlur(bl, w, h, rb, tmp); }
+  const D = (set.sharpDetail ?? 25) / 100, L = max * (0.02 + 0.6 * D * D), M = (set.sharpMask || 0) / 100, T = M * M * 0.08 * max;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x; let dd = Y[i] - bl[i];
+    dd = dd * L / (L + Math.abs(dd)) * (1 + D); // soft limit: halos on big edges are held back unless detail is high
+    let k = amount;
+    if (T > 0) { // edge mask from the blurred luminance gradient
+      const xl = x ? i - 1 : i, xr = x < w - 1 ? i + 1 : i, yu = y ? i - w : i, yd = y < h - 1 ? i + w : i;
+      const gx = bl[xr] - bl[xl], gy = bl[yd] - bl[yu]; k *= smooth(T * 0.5, T * 1.5, Math.sqrt(gx * gx + gy * gy));
+    }
+    if (!k) continue;
+    const j = i * 4, add = dd * k;
+    const r = rgba[j] + add, g = rgba[j + 1] + add, b = rgba[j + 2] + add;
+    rgba[j] = r < 0 ? 0 : r > max ? max : r + 0.5; rgba[j + 1] = g < 0 ? 0 : g > max ? max : g + 0.5; rgba[j + 2] = b < 0 ? 0 : b > max ? max : b + 0.5;
+  }
+}
+function blur121(p, w, h, tmp) {
+  for (let y = 0; y < h; y++) { const o = y * w; for (let x = 0; x < w; x++) tmp[o + x] = (p[o + Math.max(0, x - 1)] + 2 * p[o + x] + p[o + Math.min(w - 1, x + 1)]) * 0.25; }
+  for (let y = 0; y < h; y++) { const u = Math.max(0, y - 1) * w, c = y * w, dn = Math.min(h - 1, y + 1) * w; for (let x = 0; x < w; x++) p[c + x] = (tmp[u + x] + 2 * tmp[c + x] + tmp[dn + x]) * 0.25; }
 }
 
 // ---- noise reduction (on the developed RGBA; 16- or 8-bit) -------------------------------------------------------
 function boxBlur(p, w, h, r, tmp) {
   if (r < 1) return;
-  const n = 2 * r + 1;
-  for (let y = 0; y < h; y++) { // horizontal → tmp
-    const o = y * w; let s = 0;
+  const n = 2 * r + 1, inv = 1 / n;
+  for (let y = 0; y < h; y++) { // horizontal → tmp (clamped at the ends, unclamped in between)
+    const o = y * w, e = o + w - 1; let s = 0;
     for (let x = -r; x <= r; x++) s += p[o + Math.min(w - 1, Math.max(0, x))];
-    for (let x = 0; x < w; x++) { tmp[o + x] = s / n; s += p[o + Math.min(w - 1, x + r + 1)] - p[o + Math.max(0, x - r)]; }
+    const a = Math.min(w, r), b = Math.max(a, w - r - 1);
+    let x = 0;
+    for (; x < a; x++) { tmp[o + x] = s * inv; s += p[Math.min(e, o + x + r + 1)] - p[o + Math.max(0, x - r)]; }
+    for (; x < b; x++) { tmp[o + x] = s * inv; s += p[o + x + r + 1] - p[o + x - r]; }
+    for (; x < w; x++) { tmp[o + x] = s * inv; s += p[Math.min(e, o + x + r + 1)] - p[o + Math.max(0, x - r)]; }
   }
-  for (let x = 0; x < w; x++) { // vertical → p
-    let s = 0;
-    for (let y = -r; y <= r; y++) s += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
-    for (let y = 0; y < h; y++) { p[y * w + x] = s / n; s += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x]; }
+  // vertical → p, a whole row at a time (column sums kept per x: cache-friendly on wide images)
+  const s = new Float64Array(w);
+  for (let y = -r; y <= r; y++) { const o = Math.min(h - 1, Math.max(0, y)) * w; for (let x = 0; x < w; x++) s[x] += tmp[o + x]; }
+  for (let y = 0; y < h; y++) {
+    const o = y * w, a = Math.min(h - 1, y + r + 1) * w, b = Math.max(0, y - r) * w;
+    for (let x = 0; x < w; x++) { p[o + x] = s[x] * inv; s[x] += tmp[a + x] - tmp[b + x]; }
   }
 }
 /**

@@ -20,13 +20,65 @@ function buffersOf(obj, out = []) { // transferable buffers inside a result (ded
   for (const v of Array.isArray(obj) ? obj : Object.values(obj)) buffersOf(v, out);
   return out;
 }
+// ---- develop band workers ---------------------------------------------------------------------------------------
+const POOL_SIZE = Math.min(8, Math.max(1, (self.navigator?.hardwareConcurrency || 2) - 1));
+let pool = null, jobSeq = 0;
+function workers() {
+  if (pool) return pool;
+  pool = [];
+  try {
+    if (typeof Worker === 'function') for (let i = 0; i < POOL_SIZE; i++) {
+      const w = new Worker(new URL('./develop-worker.js', import.meta.url), { type: 'module', name: `tintwork-develop-${i + 1}` });
+      const jobs = new Map();
+      w.onmessage = (e) => { const m = e.data, j = jobs.get(m.id); if (!j) return; if (m.stage === 'half') j.onHalf?.(m.res); else { jobs.delete(m.id); m.stage === 'error' ? j.reject(new Error(m.error)) : j.resolve(m.res); } };
+      w.onerror = (e) => { e.preventDefault?.(); for (const j of jobs.values()) j.reject(new Error(e.message || 'develop worker failed')); jobs.clear(); };
+      pool.push({ w, jobs });
+    }
+  } catch { pool = []; }
+  return pool;
+}
+/**
+ * Develop the whole image (or preview) in bands across the worker pool. Every band reads only the part of the source
+ * it needs (rows + halo, mapped through orientation, lens warp and CA). onHalf(band) streams half-resolution bands.
+ */
+async function developBands(src, opts, { half = false, onHalf = null } = {}) {
+  const P = workers();
+  if (!P.length) { // no nested workers: same maths, one thread
+    const r = R.developRows(src, opts);
+    return { width: r.width, height: r.height, data: r.data, data8: r.bits === 16 ? R.to8(r.data) : null, bands: 1, ms: r.ms };
+  }
+  const bands = R.planBands(src, opts, P.length), [FW, FH] = [src.fullW || src.width, src.fullH || src.height];
+  const [OW, OH] = R.orientedSize(FW, FH, opts.orientation || 1), bits = opts.bits || 16;
+  const data = bits === 16 ? new Uint16Array(OW * OH * 4) : new Uint8ClampedArray(OW * OH * 4), data8 = bits === 16 ? new Uint8ClampedArray(OW * OH * 4) : null;
+  const ms = { nr: 0, sharpen: 0, develop: 0, band: 0, extract: 0, assemble: 0 }, t0 = performance.now();
+  await Promise.all(bands.map((b, i) => new Promise((resolve, reject) => {
+    const te = performance.now(), region = R.extractRegion(src, b.rect), id = ++jobSeq, slot = P[i % P.length]; ms.extract += performance.now() - te;
+    slot.jobs.set(id, { resolve, reject, onHalf });
+    slot.w.postMessage({ id, region, opts: { ...opts, rows: b.rows }, half }, [region.data.buffer]);
+  }).then((r) => {
+    const ta = performance.now();
+    data.set(r.data, r.rows[0] * OW * 4); if (data8) data8.set(r.data8, r.rows[0] * OW * 4);
+    ms.assemble += performance.now() - ta;
+    for (const k of ['nr', 'sharpen', 'develop']) ms[k] = Math.max(ms[k], r.ms[k] || 0);
+    ms.band = Math.max(ms.band, r.ms.total || 0);
+  })));
+  ms.wall = performance.now() - t0;
+  return { width: OW, height: OH, data, data8, bands: bands.length, ms };
+}
+const lensFor = (s, set) => (set.lens === false ? s.lensOff : s.lensOpts);
+function caFor(s, set) {
+  if (set.caAuto && !s.ca) { const t = performance.now(); s.ca = R.estimateCA(s.src); s.ca.ms = Math.round(performance.now() - t); }
+  return R.caScales(set, s.ca);
+}
+function devOpts(s, set, pipe, factor, scale, bits) {
+  return { pipe, orientation: s.orientation, factor, lens: lensFor(s, set), vignette: (set.vignette || 0) / 100, ca: caFor(s, set), settings: set, scale, bits };
+}
 async function previewOf(s, settings) {
   const pipe = R.pipeline(s.meta, s.model, settings, s.autoW);
   const t = performance.now();
-  const out = R.develop(s.small, { pipe, orientation: s.orientation, factor: s.small.factor, lens: settings.lens === false ? s.lensOff : s.lensOpts, vignette: (settings.vignette || 0) / 100, out8: true });
-  R.denoise(out.data8, out.width, out.height, settings.nrLuma, settings.nrColor, 1 / s.small.factor);
+  const out = await developBands(s.small, devOpts(s, settings, pipe, s.small.factor, 1 / s.small.factor, 8));
   const tt = settings.wb === 'custom' ? { temp: settings.temp, tint: settings.tint } : s.model.tempTintFor(pipe.wb);
-  return { width: out.width, height: out.height, data: out.data8, temp: tt.temp, tint: tt.tint, ms: Math.round(performance.now() - t) };
+  return { width: out.width, height: out.height, data: out.data, temp: tt.temp, tint: tt.tint, ms: Math.round(performance.now() - t), ca: s.ca ? { red: s.ca.red / R.CA_UNIT * 100, blue: s.ca.blue / R.CA_UNIT * 100 } : null };
 }
 
 const handlers = {
@@ -34,6 +86,7 @@ const handlers = {
   async psdWrite({ doc }) { return { bytes: writePSD(doc) }; },
   /** Open a RAW file: decode the sensor data (or report why not), build the develop preview. */
   async rawOpen({ session, bytes, settings }) {
+    workers(); // start the develop workers now: they load while the sensor data decodes
     const fr = await engine(), t0 = performance.now(), src = new Uint8Array(bytes);
     let raw;
     try { raw = await fr.FlashRaw.open(src.slice()); }
@@ -77,7 +130,7 @@ const handlers = {
     return { preview: await previewOf(s, { ...R.DEFAULT_SETTINGS, ...settings }) };
   },
   /** Full-resolution develop to 16 bits/channel (with an 8-bit copy for the canvas). */
-  async rawDevelop({ session, settings, maxPixels }) {
+  async rawDevelop({ session, settings, maxPixels, half }, progress) {
     const s = sessions.get(session); if (!s?.src) throw new Error('RAW session closed');
     const set = { ...R.DEFAULT_SETTINGS, ...settings }, t = performance.now();
     let src = s.src, factor = 1;
@@ -86,12 +139,16 @@ const handlers = {
       src = R.downscale(src, Math.floor(Math.max(src.width, src.height) / k)); factor = src.factor;
     }
     const pipe = R.pipeline(s.meta, s.model, set, s.autoW);
-    const out = R.develop(src, { pipe, orientation: s.orientation, factor, lens: set.lens === false ? s.lensOff : s.lensOpts, vignette: (set.vignette || 0) / 100, out16: true });
-    const t1 = performance.now();
-    R.denoise(out.data16, out.width, out.height, set.nrLuma, set.nrColor, 1 / factor);
-    const t2 = performance.now();
-    const data8 = R.to8(out.data16);
-    return { width: out.width, height: out.height, data16: out.data16, data8, scaled: factor > 1, ms: { develop: Math.round(t1 - t), nr: Math.round(t2 - t1), total: Math.round(performance.now() - t) } };
+    const opts = devOpts(s, set, pipe, factor, 1 / factor, 16);
+    const [OW, OH] = R.orientedSize(src.width, src.height, s.orientation), hw = Math.floor(src.width / 2), hh = Math.floor(src.height / 2), [HW, HH] = R.orientedSize(hw, hh, s.orientation);
+    let firstHalf = 0;
+    const out = await developBands(src, opts, {
+      half: !!half,
+      onHalf: half ? (b) => { firstHalf ||= performance.now() - t; progress({ stage: 'half', width: HW, height: HH, rows: b.rows, data: b.data, ms: Math.round(performance.now() - t) }, [b.data.buffer]); } : null,
+    });
+    const total = Math.round(performance.now() - t);
+    return { width: OW, height: OH, data16: out.data, data8: out.data8, scaled: factor > 1, bands: out.bands,
+      ms: { ...Object.fromEntries(Object.entries(out.ms).map(([k, v]) => [k, Math.round(v)])), half: Math.round(firstHalf), total, ca: s.ca?.ms } };
   },
   async rawJpeg({ session }) {
     const s = sessions.get(session); if (!s) throw new Error('RAW session closed');
@@ -109,7 +166,7 @@ const handlers = {
 self.onmessage = async (e) => {
   const { id, op, ...args } = e.data;
   try {
-    const res = await handlers[op](args);
+    const res = await handlers[op](args, (p, transfer) => self.postMessage({ id, progress: p }, transfer || []));
     self.postMessage({ id, ok: true, res }, buffersOf(res));
   } catch (err) {
     self.postMessage({ id, ok: false, error: err?.message || String(err), name: err?.name });

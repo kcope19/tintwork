@@ -5,7 +5,8 @@ function getWorker() {
   if (worker) return worker;
   worker = new Worker(new URL('./codec-worker.js', import.meta.url), { type: 'module' });
   worker.onmessage = (e) => {
-    const { id, ok, res, error, name } = e.data, p = pending.get(id); if (!p) return;
+    const { id, ok, res, error, name, progress } = e.data, p = pending.get(id); if (!p) return;
+    if (progress) { try { p.onProgress?.(progress); } catch (err) { console.error(err); } return; }
     pending.delete(id);
     if (ok) p.resolve(res); else { const err = new Error(error); err.name = name || 'Error'; p.reject(err); }
   };
@@ -16,9 +17,9 @@ function getWorker() {
   };
   return worker;
 }
-function call(op, args = {}, transfer = []) {
+function call(op, args = {}, transfer = [], onProgress = null) {
   return new Promise((resolve, reject) => {
-    const id = ++seq; pending.set(id, { resolve, reject });
+    const id = ++seq; pending.set(id, { resolve, reject, onProgress });
     getWorker().postMessage({ id, op, ...args }, transfer);
   });
 }
@@ -44,7 +45,8 @@ export async function openRawSession(bytes, settings) {
   return {
     ...res, session, firstPreview: res.preview,
     preview: (s) => call('rawPreview', { session, settings: s }).then((r) => r.preview),
-    develop: (s, maxPixels) => call('rawDevelop', { session, settings: s, maxPixels }),
+    /** Full-resolution develop; onHalf({ width, height, rows, data }) receives half-resolution bands as they finish. */
+    develop: (s, maxPixels, onHalf = null) => call('rawDevelop', { session, settings: s, maxPixels, half: !!onHalf }, [], onHalf),
     jpeg: () => call('rawJpeg', { session }),
     close: () => call('rawClose', { session }).catch(() => {}),
   };
