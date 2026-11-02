@@ -6,6 +6,30 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.1: camera RAW and layered PSD (researched 2026-11-02)
+
+Compared with Photoshop + Camera Raw, Lightroom Classic and Affinity Photo 2 (Develop persona, PSD import/export).
+
+| Feature | Photoshop / Camera Raw | Lightroom Classic | Affinity Photo | Tintwork 1.1 |
+|---|---|---|---|---|
+| RAW formats | Very broad camera list, updated with each release [46][47] | Same engine as Camera Raw [46] | Broad, own engine (Apple's engine optional on Mac) [62] | 🟡 DNG, CR2, CR3, NEF, ARW, RAF, ORF, RW2 verified on 9 sample cameras; 17 more extensions accepted by the decoder, untested |
+| Develop before editing | Camera Raw dialog/filter, non-destructive, re-openable [47] | Develop module, fully non-destructive | Develop persona, one-way into pixel layers [62][63] | 🟡 Develop dialog, one-way into a 16-bit pixel layer (like Affinity); last settings remembered for batch |
+| White balance | As shot, auto, presets, temp/tint, eyedropper [46] | Same | Temp/tint, eyedropper [63] | 🟡 As shot, auto, custom temperature/tint; no eyedropper or presets |
+| Tone | Exposure, contrast, highlights, shadows, whites, blacks, curves [46] | Same | Exposure, black point, brightness, shadows/highlights, curve [62] | 🟡 Exposure, highlight recovery, shadows, contrast; no curve, whites/blacks, clarity, vibrance |
+| Noise reduction | Manual + AI denoise | Manual + AI denoise | Luminance/colour + assistant presets [62] | 🟡 Luminance and colour (bilateral), no detail/sharpening controls, no AI |
+| Lens correction | Profile database (distortion, vignette, CA), auto from EXIF, amount sliders [64][65] | Same | Profile-based, manual distortion/CA/defringe/vignette [62][66] | 🟡 Distortion and vignetting from DNG opcodes (on/off) and a manual vignette slider; no profile database, so most CR2/NEF/ARW files get no automatic distortion fix; no CA/defringe |
+| Local edits / masks in RAW | Brushes, gradients, AI masks | Same | Brush/gradient overlays | ❌ (edit after Open with layers and masks) |
+| Bit depth after develop | 8/16/32-bit | n/a (export 8/16-bit) | 16/32-bit | ✅ 16-bit |
+| Embedded JPEG fallback | n/a (always decodes supported cameras) | Shows embedded preview while loading | n/a | ✅ Automatic, with a notice, when the sensor data or container cannot be decoded; also on demand |
+| PSD/PSB open: layers, groups, masks, blend modes, opacity | ✅ native | ❌ flattened composite only, and only if saved with Maximize Compatibility [67][68] | ✅ most layer work, PSB too [69][70] | ✅ incl. groups (pass-through), clipping, group masks, 8/16-bit, PSB |
+| PSD open: adjustment layers | ✅ | ❌ | ✅ mapped to equivalents [69][70] | 🟡 brightness/contrast, levels, curves, exposure, hue/saturation, invert; others skipped with a notice |
+| PSD open: text / smart objects / layer styles | ✅ editable | ❌ | 🟡 text optionally editable, smart objects editable when enabled, styles imported [69][71] | 🟡 rasterized from stored pixels with a notice; effects dropped |
+| PSD export | ✅ | ❌ (writes PSD only via Edit in Photoshop) [72] | ✅ PSD (accuracy or editability presets), no PSB; live filters rasterized [71][73] | ✅ layers, groups, masks, clipping, blend modes, opacity, matching adjustments, composite, 8/16-bit; styles baked; no PSB |
+| Fallback for unreadable layers | n/a | Uses the composite [67] | — | ✅ opens the composite with a notice |
+
+### Summary
+Tintwork now covers the everyday RAW path (open → white balance → exposure/tone → noise → 16-bit layered editing) and PSD as an interchange format, which puts it ahead of Lightroom for layered PSD files and roughly level with Affinity Photo on what survives a round trip (both rasterize parts of the file and both lack PSB export). It trails all three on RAW depth: no lens-profile database, no local adjustments or curves in develop, no AI denoise, no editable text or smart objects from PSD, and a single-threaded develop (about 4 s for a 24 MP file end to end on this box versus near-instant previews in the desktop apps).
+
 ## v1.0 "core complete" summary (2026-11-01)
 
 Tintwork 1.0 is a free, local-first, browser-based layered editor. The tables below for v0.5–v0.9 hold the detail and sources; this is the overall picture.
@@ -182,6 +206,18 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 59. Adobe, "Export files in different sizes": https://helpx.adobe.com/photoshop/desktop/save-and-export/export-files-to-different-formats/export-files-in-different-sizes.html
 60. MakeUseOf, "How to Automate and Batch Process Images in Affinity Photo": https://www.makeuseof.com/how-to-automate-batch-process-images-affinity-photo/
 61. Affinity forum, "export large amount of images in different sizes and folders": https://forum.affinity.serif.com/index.php?/topic/205542-is-this-possible-in-2024-with-photo-or-designer-to-export-large-amount-of-images-in-different-sizes-and-folders/, and Affinity Photo "Batch Processing" (official video): https://www.youtube.com/watch?v=4qrQjD_0LyI
+62. Affinity, "Everything you need to know about editing RAW images and working with RAW files": https://www.affinity.studio/blog/editing-raw-images-and-working-with-raw-files
+63. Affinity Photo, "RAW Development" (official video): https://www.youtube.com/watch?v=XCcZiELzrqc
+64. Adobe, "Correct lens distortions in Camera Raw": https://helpx.adobe.com/camera-raw/desktop/using/correct-lens-distortions-camera-raw.html
+65. Adobe, "Supported lenses" (Camera Raw, updated 2026-09-29): https://helpx.adobe.com/camera-raw/desktop/dng-and-file-formats/supported-lenses.html
+66. Digital Camera World, "How to process RAW files in Affinity Photo": https://www.digitalcameraworld.com/photography/photo-editing/how-to-process-raw-files-in-affinity-photo
+67. Ask Tim Grey, "Maximize Compatibility for Lightroom Classic": https://asktimgrey.com/2024/04/19/maximize-compatibility-for-lightroom-classic/
+68. Ask Tim Grey, "Import Error for Compatibility": https://asktimgrey.com/2025/07/11/import-error-for-compatibility/
+69. Affinity, "How to open a PSD file in Affinity": https://www.affinity.studio/blog/how-to-open-a-psd-file
+70. Affinity Photo, "PSD/PSB import, export and smart object functionality" (official video): https://www.youtube.com/watch?v=rYcE65H8GA0
+71. Beyond Photo Tips, "How Well Does Affinity Handle Adobe PSD files?": https://www.beyondphototips.com/affinity-photo-adobe-psd-files/
+72. Adobe, "Edit Lightroom Classic photos in Photoshop": https://helpx.adobe.com/lightroom-classic/help/editing-photoshop.html
+73. CreativePro, "Affinity for Photoshop Users": https://creativepro.com/affinity-photoshop-users/
 
 ### Benchmark caveat
 `scripts/bench.mjs` ran on a Linux box with no GPU. Headless Chromium used SwiftShader (software) for both WebGL2 and WebGPU and WebKit used software GL, so GPU timings there are slower than the CPU worker and are not representative of real hardware (see README).
@@ -191,4 +227,5 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 - ~~v0.7: groups, clipping masks, layer styles, warp and perspective, liquify, built-in benchmark~~ (done)
 - ~~v0.8: auto enhance, auto white balance, straighten, looks and presets~~ (done)
 - ~~v0.9: multiple document tabs, crop presets, batch export, actions~~ (done)
-- v1.0: onboarding, help, accessibility, error handling, iPhone memory tuning
+- ~~v1.0: onboarding, help, accessibility, error handling, iPhone memory tuning~~ (done)
+- ~~v1.1: camera RAW develop, PSD/PSB import and layered PSD export~~ (done)

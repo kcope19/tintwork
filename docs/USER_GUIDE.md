@@ -5,7 +5,7 @@ Tintwork is a layered photo editor that runs entirely in your browser. Nothing i
 ## Getting started
 
 - **Welcome screen**: open an image, start a blank canvas, pick a size preset (Full HD, square, 4:5, A4, 24 MP) or reopen a recent file. It appears whenever no document is open.
-- **Open** (Ctrl+O): JPEG, PNG (8- and 16-bit), WebP, GIF, BMP and Tintwork projects. You can also drag files onto the window or paste an image (Ctrl+V). Opening several files gives each its own tab.
+- **Open** (Ctrl+O): JPEG, PNG (8- and 16-bit), WebP, GIF, BMP, Tintwork projects, layered PSD/PSB files and camera RAW files (DNG, CR2, CR3, NEF, ARW, RAF, ORF, RW2 and more). You can also drag files onto the window or paste an image (Ctrl+V). Opening several files gives each its own tab.
 - **New canvas** (Ctrl+N): width, height and background (white, background color or transparent).
 - **Recent files** (File ▸ Open recent): Chrome and Edge remember files you opened or saved.
 - **Install**: in Chrome or Edge use the install icon in the address bar to run Tintwork in its own window, offline.
@@ -70,9 +70,28 @@ Tintwork is a layered photo editor that runs entirely in your browser. Nothing i
 - **Autosave**: every open document is saved in the browser a few seconds after each change. If the browser or the tab closes unexpectedly, the next start offers to **Restore** it.
 - **Actions and batch**: record steps in the Actions menu and replay them on a folder of images with File ▸ Batch process.
 
+## Camera RAW files
+
+Opening a RAW file (File ▸ Open, drag and drop, Open recent, or double-clicking a file once Tintwork is installed) shows the **Develop** dialog with a live preview:
+
+- **White balance**: *As shot* uses the camera's setting, *Auto* measures the photo, *Custom* lets you set **Temperature** (kelvin) and **Tint**. Moving either slider switches to Custom.
+- **Tone**: **Exposure** (in stops), **Highlight recovery**, **Shadows** and **Contrast**.
+- **Noise reduction**: **Luminance** smooths grain, **Color** removes coloured speckles. Both are a little slower to apply at full size.
+- **Lens**: when the file carries correction data (most DNG files from phones and many converters), **Corrections** fixes distortion and corner darkening. Untick it to see the uncorrected image. **Vignette fix** brightens or darkens the corners by hand.
+- **Reset** returns to the defaults; **Use camera JPEG** opens the small, already processed JPEG stored inside the file instead.
+- **Open** develops the full image into a new 16 bits/channel document. Decoding and developing run in the background, so the window stays responsive; a 24 MP file usually takes a few seconds.
+
+If Tintwork cannot decode a file's sensor data (an unusual camera or compression), it opens the camera's embedded JPEG instead and says so. That image is 8-bit and the develop settings do not apply. Batch processing develops RAW files with the settings you last used.
+
+## Layered PSD files
+
+- **Open** a `.psd` or `.psb` file to get its layers, names, opacity, visibility, blend modes, groups, clipping and layer masks, and adjustment layers that Tintwork also has (brightness/contrast, levels, curves, exposure, hue/saturation, invert). 16-bit files stay 16-bit.
+- Some parts are converted: text, smart objects and fill or shape layers become pixel layers using the pixels stored in the file, and layer effects are left off. Blend modes Tintwork does not have use the closest match, and adjustment types it does not have are skipped. A notice lists everything that was converted. If the layers cannot be read, the flattened image stored in the file opens instead.
+- **Export** (File ▸ Export layered PSD…, or PSD in the Export dialog) writes layers, groups, masks, clipping, blend modes, opacity, matching adjustment layers and a flattened copy for other apps. Layer styles are baked into their layer's pixels, text and live layers are written as pixels, and 3D LUT and white balance layers are left out (a notice says which). Batch processing can write PSD too.
+
 ## 16-bit editing
 
-Open a 16-bit PNG or choose Image ▸ Mode: 16 bits/channel. Painting, adjustments, filters, transforms, groups, masks and every layer style keep 16-bit precision. Export to PNG keeps 16 bits; JPEG and WebP are 8-bit.
+Open a 16-bit PNG, a 16-bit PSD or a camera RAW file, or choose Image ▸ Mode: 16 bits/channel. Painting, adjustments, filters, transforms, groups, masks and every layer style keep 16-bit precision. Export to PNG or PSD keeps 16 bits; JPEG and WebP are 8-bit.
 
 ## Large images and memory
 

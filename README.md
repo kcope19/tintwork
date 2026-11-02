@@ -7,6 +7,18 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.1 (camera RAW and layered PSD)
+
+![RAW develop](screenshots/11x-raw-develop.png)
+
+- **Camera RAW**: open DNG, CR2, CR3, NEF, ARW, RAF, ORF and RW2 (plus other formats the decoder recognises: PEF, SRW, 3FR, IIQ, X3F, ERF, MEF, MOS, MRW, NRW, SR2, SRF, KDC, DCR, RWL, CRW, FFF) through File ▸ Open, drag and drop, Open recent, batch, or Windows file associations once the PWA is installed. A **Develop** dialog shows a live preview with white balance (as shot, auto, custom temperature/tint), exposure, highlight recovery, shadows, contrast, luminance and colour noise reduction, and lens correction (distortion and vignetting from DNG opcodes, on/off) plus a manual vignette slider. **Open** develops into a 16 bits/channel document. Decoding and developing run in a Web Worker.
+- **RAW fallback**: if the sensor data cannot be decoded, the camera's embedded JPEG opens instead with a clear notice (also available on demand as **Use camera JPEG**). If the container itself cannot be parsed, Tintwork scans the file for the largest complete embedded JPEG.
+- **PSD/PSB import**: layers, names, opacity, visibility, blend modes, groups (with pass-through), clipping, layer and group masks, matching adjustment layers (brightness/contrast, levels, curves, exposure, hue/saturation, invert), 8- and 16-bit. Text, smart objects and fill/shape layers are rasterized from their stored pixels, effects are dropped, and unsupported blend modes or adjustments are approximated or skipped; a notice lists every conversion (screenshot `11x-psd-import-notes.png`). Unreadable layer data falls back to the flattened composite.
+- **PSD export** (File ▸ Export layered PSD…, PSD in the Export dialog and in batch): layers, groups, masks, clipping, blend modes, opacity, matching adjustment layers and a composite, 8- or 16-bit. Layer styles are baked into pixels; LUT and white-balance layers are skipped with a notice (screenshot `11x-psd-layers.png`).
+- **Timing** (headless Chromium, CPU, this Linux box, single worker): a 24 MP Sony ARW opens to the develop dialog in about 0.9 s and to the full 16-bit document on screen in about 3 s after **Open** (total about 4 s: decode ~0.55 s, develop ~1.1 s, colour noise reduction ~1.2 s, canvas ~0.3 s). Every sample camera (9 files, 16–24 MP) opens in 2.3–4.6 s.
+- New code: `src/psd.js` (PSD/PSB reader and writer, original), `src/raw.js` (develop pipeline, original), `src/codec-worker.js` and `src/codecs.js` (worker and client). RAW decoding uses the vendored **FlashRaw 0.1.0** WebAssembly decoder (MIT OR Apache-2.0, `vendor/flashraw/`, licence files included).
+- Tests: `npm run test:v11` (PSD round trips against an independent writer, a synthesized lens-corrected DNG, the JPEG fallback, per-format decode and the 24 MP timing). Run `npm run fetch-raw` once to download the CC0 sample RAW files (about 185 MB, git-ignored); without them the sample checks are skipped.
+
 ## What's new in v1.0 ("core complete")
 
 ![Workspace](screenshots/10x-workspace.png)
@@ -259,7 +271,7 @@ http(s) rather than opened as a `file://` URL because it uses ES modules.
 
 ```bash
 npx playwright install chromium webkit   # one time
-npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile, v0.7, v0.8, v0.9 and v1.0 tests
+npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile, v0.7, v0.8, v0.9, v1.0 and v1.1 tests
 npm run test:platform    # scripts/desktop-platform-test.mjs: Windows/Mac keyboard labels and shortcuts
 npm run bench            # scripts/bench.mjs: GPU vs CPU timings and banding
 npm run test:desktop     # scripts/smoke-test.mjs (Chromium)
@@ -267,6 +279,8 @@ npm run test:v07         # scripts/v07-test.mjs: groups, clipping, styles, warp/
 npm run test:v08         # scripts/v08-test.mjs: pass-through groups per engine, 16-bit groups/styles/warp, multi-select/align, white balance, auto enhance, auto straighten, looks, LUTs
 npm run test:v09         # scripts/v09-test.mjs: GPU 3D LUT per engine, tabs (history, close prompt, layer drag), presets, actions, export sizes, batch + cancel, 16-bit effects, auto options
 npm run test:v10         # scripts/v10-test.mjs: open → edit → save → reopen → export + autosave recovery, welcome, user guide, error catcher, memory guardrails, accessibility, dirty-rect and proxy rendering, 16-bit inner effects
+npm run fetch-raw        # one time: downloads the CC0 RAW samples listed in test-assets/raw-samples.json
+npm run test:v11         # scripts/v11-test.mjs: PSD/PSB import/export round trips, RAW develop dialog, lens opcodes, JPEG fallback, per-format decode, 24 MP timing
 node scripts/perf.mjs cpu --json out.json  # 24 MP timings: open, pan/zoom, layer toggle, adjustment drag, brush, export
 npm run test:mobile      # scripts/mobile-test.mjs (WebKit iPhone 14 + Chromium Pixel 7, touch input)
 ```
@@ -366,6 +380,10 @@ src/webgpu.js         WebGPU compute engine
 src/presets.js        crop / resize / print size presets and ratio maths
 src/batch.js          export naming patterns, output sizes, ZIP writer
 src/platform.js       Mac vs Windows/Linux modifiers, key labels, reserved shortcuts
+src/psd.js            PSD/PSB reader and writer (layers, groups, masks, adjustments, 8/16-bit)
+src/raw.js            RAW develop pipeline (white balance, tone, noise reduction, lens opcodes)
+src/codec-worker.js   Web Worker for RAW decode/develop and PSD read/write; src/codecs.js is its client
+vendor/flashraw/      bundled RAW decoder (WebAssembly, MIT OR Apache-2.0)
 vendor/fflate/        bundled deflate library (MIT)
 docs/COMPARISON.md    living comparison with paid editors
 docs/USER_GUIDE.md    user guide (built into src/user-guide.js by scripts/build-guide.mjs)
@@ -385,6 +403,8 @@ test-assets/          generated test image (export outputs are git-ignored)
 
 ## Known limitations
 
+- RAW: develop runs in one worker thread (about 2–3 s for 24 MP with colour noise reduction on). Lens correction uses DNG opcodes only, so most proprietary RAW files (CR2, NEF, ARW…) have no automatic distortion fix; there are no lens-profile databases, chromatic-aberration or defringe controls, no local adjustments and no sharpening in the dialog. Colours for cameras the decoder has no matrix for are approximate. The decoder's WebAssembly file is cached for offline use only after the first RAW file is opened.
+- PSD: text, smart objects, fill/shape layers and effects do not survive import as editable objects; vector masks, artboards and layer comps are ignored; CMYK files are converted without a colour profile, 32-bit files are converted to 16-bit (values above 1.0 clipped), and Lab, duotone, indexed, bitmap and multichannel files are refused. Export writes PSD only (no PSB), 8 or 16 bits, with layer styles baked.
 - On documents over 2.5 MP, adjustment layers and live filters are computed in the worker. While a slider is dragged a reduced-resolution preview is shown; the full result replaces it a moment after you stop. The very first render of a new adjustment layer shows the image unadjusted until the worker finishes.
 - Live filters cover Gaussian blur, sharpen, noise and vignette only, and there is one filter mask per layer. Transforming a selection on a live layer converts it to pixels. Text layers are rasterized when converted.
 - Warp has no custom grid sizes, split lines or Bézier handles, and perspective is a single plane. Warp and perspective ignore the selection and act on the whole layer. Transforming a group or several layers converts text and smart layers inside to pixels and ignores the selection. Resampling is bilinear (canvas smoothing), so repeated transforms of a pixel layer soften it; live layers keep their original pixels, but those originals are resampled too.
@@ -424,6 +444,7 @@ Milestones to 1.0 (Windows desktop, Chrome and Edge first; Mac and iPhone kept w
 - ~~**v0.8**: multi-layer selection, group transforms, pass-through and 16-bit fixes, auto enhance, auto white balance, straighten, looks and LUTs~~ (done).
 - ~~**v0.9**: multi-document tabs, crop presets, multi-size and batch export, actions~~ (done).
 - ~~**v1.0**: onboarding, help, accessibility, error handling, memory tuning, full tests, user guide~~ (done).
+- ~~**v1.1**: camera RAW develop, PSD/PSB import and layered PSD export~~ (done).
 
 Longer-term items:
 
@@ -435,11 +456,11 @@ Longer-term items:
 5. **History snapshots**: named snapshots, a history brush, and IndexedDB-backed history so large documents don't run out of memory.
 6. ~~**Curves** with a point editor~~ (v0.3). ~~white balance, LUT import (.cube)~~ (v0.8). Next: per-channel levels/curves, color balance, vibrance.
 7. **Performance**: ~~Web Worker for filters~~ (done in v0.2), ~~WebGL2 GPU pipeline, 16-bit~~ (v0.5). ~~WebGPU compute engine as the primary path on Chrome/Edge~~ (v0.6). Next: OffscreenCanvas, tiled rendering for very large images.
-8. **RAW support** via a WASM decoder (e.g. LibRaw compiled to WASM), EXIF reading and orientation, 16-bit pipeline.
+8. ~~**RAW support** via a WASM decoder, orientation, 16-bit pipeline~~ (v1.1). Next: camera colour profiles beyond the decoder's matrices, lens profiles for files without opcodes, multi-threaded develop.
 9. **Plugin system**: a sandboxed filter/tool API (worker-based, ImageData in/out), a manifest format and a plugin manager.
 10. **Packaging**: installable PWA with offline cache and file handling, and desktop builds (Tauri or Electron) with native open/save dialogs.
 11. Multiple documents (tabs), ~~autosave and recovery~~ (v0.3), ~~recovery slots with history~~ (v0.4), pen pressure, custom brushes, guides, rulers and snapping.
 
 ## License
 
-MIT, original code. Bundled fonts in `fonts/` are under the SIL Open Font License 1.1 (see each `OFL.txt`). The name "Tintwork" is a working title for this project.
+MIT, original code. Bundled libraries: fflate (MIT) and FlashRaw (MIT OR Apache-2.0), see `vendor/README.md`. Bundled fonts in `fonts/` are under the SIL Open Font License 1.1 (see each `OFL.txt`). The name "Tintwork" is a working title for this project.
