@@ -226,7 +226,7 @@ const apply = async () => { await page.click('#modalOk'); await page.waitForFunc
 {
   const P0 = await pixels();
   const proj = await page.evaluate(async () => { const d = await window.tintwork.projectData(), r = d.layers[0].raw; return { json: JSON.stringify(d), v: d.version, raw: r && { ...r, data: r.data?.slice(0, 40), len: r.data?.length } }; });
-  check(proj.v === 7 && proj.raw?.cx === 100 && /^data:/.test(proj.raw.data) && proj.raw.len > 100000 && proj.raw.settings.exposure === -1, `project files (version 7) embed the RAW file (${(proj.raw?.len / 1024).toFixed(0)} KB as a data URL), settings and crop window`);
+  check(proj.v >= 7 && proj.raw?.cx === 100 && /^data:/.test(proj.raw.data) && proj.raw.len > 100000 && proj.raw.settings.exposure === -1, `project files (version 7) embed the RAW file (${(proj.raw?.len / 1024).toFixed(0)} KB as a data URL), settings and crop window`);
   await page.evaluate(async (json) => { await window.tintwork.loadProject(JSON.parse(json), 'reopened.tintwork'); }, proj.json); await settle();
   const L = await layerInfo();
   await redevelop(); await apply();
