@@ -9,6 +9,20 @@ any third-party branding, assets or proprietary code.
 
 ![Workspace](screenshots/04-layer-blend-brush.png)
 
+## What's new in v0.7 (layers structure, warping, benchmark)
+
+![Groups, clipping masks and layer styles](screenshots/7x-groups-clipping-styles.png)
+
+- **Layer groups**: nested groups (Layer ▸ New group, **Ctrl+G** to group the active layer, **Ctrl+Shift+G** to ungroup). Groups can be collapsed and have their own opacity, blend mode and mask. The default mode is **Pass through**, which blends the children with the layers below; any other mode composites the group first. Groups are saved in projects (project format v6; older projects still open).
+- **Clipping masks** (**Ctrl+Alt+G** or Layer ▸ Create / release clipping mask): a clipped layer shows only where the layer below it is opaque. Several clipped layers can share one base. The panel indents them and shows an arrow.
+- **Layer styles** (Layer ▸ Layer style…, or click the **fx** badge): drop shadow, inner shadow, stroke (outside, inside or centre), outer glow, inner glow and colour overlay. Each effect has its own switch and settings, with a live preview; Cancel restores the old style. Effects are listed under the layer, where each can be hidden or removed. Styles are saved in projects and render the same on the CPU, WebGL2 and WebGPU (screenshot `7x-layer-styles-dialog.png`).
+- **Warp and perspective** (Edit ▸ Warp / Edit ▸ Perspective): drag the corner handles (perspective) or a 3×3, 4×4 or 5×5 control-point grid (warp). A low-resolution preview follows the mouse; **Enter** applies and **Esc** cancels. The layer mask is warped along with the layer. The final render uses WebGPU or WebGL2 when available and falls back to the CPU (screenshot `7x-warp.png`).
+- **Liquify tool (K)**: push, bloat, pinch and restore, with size and strength. It works directly on the canvas, with a fast preview while you drag, and each stroke is one undo step.
+- **Built-in benchmark** (Help ▸ Run performance benchmark…): runs the same operations (Gaussian blur, curves, a 10-layer composite cold and warm, a mesh warp) on every available engine (CPU, WebGL2, WebGPU) at 12 and 24 MP (1 MP as a quick check) with synthetic images. The table marks the fastest engine and lists the adapter name and vendor, flagging software adapters as not representative. **Copy results** puts a plain-text report on the clipboard. Open documents are not touched (screenshot `7x-benchmark.png`).
+- **Automatic engine choice** now runs a quick probe (1 MP blur, curves and composite on each engine) and picks the fastest, instead of a fixed rule. View ▸ Rendering engine… shows the probe times and can measure again.
+- **16-bit fixes**: dodge/burn and red eye now compute and store 16 bits per channel in 16-bit documents (touched pixels used to drop to 8-bit).
+- Fix: running the WebGPU engine check could wipe open layers in some GPU drivers (seen with SwiftShader); the presentation check now runs once per session and the benchmark never uses it.
+
 ## What's new in v0.6 (Windows desktop, Chrome and Edge first)
 
 ![Gradient and shapes](screenshots/6x-gradient-shapes.png)
@@ -208,10 +222,11 @@ http(s) rather than opened as a `file://` URL because it uses ES modules.
 
 ```bash
 npx playwright install chromium webkit   # one time
-npm test                 # desktop smoke test, desktop platform test (Chromium + WebKit), then mobile tests
+npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile and v0.7 tests
 npm run test:platform    # scripts/desktop-platform-test.mjs: Windows/Mac keyboard labels and shortcuts
 npm run bench            # scripts/bench.mjs: GPU vs CPU timings and banding
 npm run test:desktop     # scripts/smoke-test.mjs (Chromium)
+npm run test:v07         # scripts/v07-test.mjs: groups, clipping, styles, warp/perspective/liquify, benchmark, 16-bit dodge/burn/red eye on each engine
 npm run test:mobile      # scripts/mobile-test.mjs (WebKit iPhone 14 + Chromium Pixel 7, touch input)
 ```
 
@@ -303,6 +318,10 @@ src/autosave.js       IndexedDB autosave / recovery (slots, bounded history)
 src/gpu.js            WebGL2 engine: compositing, blend modes, masks, filter shaders, texture budget
 src/deep.js           16-bit (Uint16) layer data: blending, compositing, adjustments
 src/png.js            PNG decoder/encoder (8 and 16 bit)
+src/layerfx.js        layer styles (shadows, glows, stroke, colour overlay) via distance fields
+src/mesh.js           warp/perspective meshes, CPU mesh renderer, liquify displacement field
+src/bench.js          in-app benchmark and the automatic engine probe
+src/webgpu.js         WebGPU compute engine
 src/platform.js       Mac vs Windows/Linux modifiers, key labels, reserved shortcuts
 vendor/fflate/        bundled deflate library (MIT)
 docs/COMPARISON.md    living comparison with paid editors
@@ -323,11 +342,11 @@ test-assets/          generated test image (export outputs are git-ignored)
 
 - On documents over 2.5 MP, adjustment layers and live filters are computed in the worker, so the previous result shows briefly after each edit.
 - Live filters cover Gaussian blur, sharpen, noise and vignette only, and there is one filter mask per layer. Transforming a selection on a live layer converts it to pixels. Text layers are rasterized when converted.
-- Free transform has no perspective or warp yet (moved to the next milestone). Resampling is bilinear (canvas smoothing), so repeated transforms of a pixel layer soften it; live layers keep their original pixels, but those originals are resampled too.
+- Warp has no custom grid sizes, split lines or Bézier handles, and perspective is a single plane. Warp and perspective ignore the selection and act on the whole layer. Free transform does not work on a whole group yet (the Move tool does). Resampling is bilinear (canvas smoothing), so repeated transforms of a pixel layer soften it; live layers keep their original pixels, but those originals are resampled too.
 - Color range uses one sample color (no add/subtract eyedroppers or localized clusters), and its preview is downscaled. Refine edge has no hair/edge detection or color decontamination.
 - Autosave keeps the last 20 undo steps per document and 5 documents. iOS Safari may evict website storage after several days without use, so autosave is not a backup; save a project file.
 - Bundled fonts are Latin-subset only, with 400/700 weights (Bebas Neue and Pacifico 400 only). There is no per-character styling, paragraph boxes or text on a path, and transforms and filters rasterize a text layer.
-- Masks are pixel-only (there are no vector masks or clipping masks). Of the adjustments, only Gaussian blur and invert apply to a mask.
+- Masks are pixel-only (there are no vector masks). Of the adjustments, only Gaussian blur and invert apply to a mask.
 - The clone stamp samples the active layer only, as it was when the stroke started. There is no "sample all layers" option for clone or heal.
 - History stores full layer snapshots (shared when unchanged), so very large images with many steps use a lot of memory.
 - Reading and writing pixels (`getImageData`/`putImageData`) still happens on the main thread, which costs roughly 0.1 s per step on a 12 MP image. Brush strokes, the magic wand and selection outlines are computed on the main thread too.
@@ -337,7 +356,12 @@ test-assets/          generated test image (export outputs are git-ignored)
 - GPU and CPU differ slightly: blur is a true Gaussian on the GPU and a 3-box approximation on the CPU (mean difference under 1 level), and noise uses a different random pattern. Linear-light blur and sharpen run on the CPU only.
 - The GPU path runs on the main thread. On software GL it is slower than the CPU worker, so automatic mode avoids it there.
 - WebGPU: headless/software adapters use the readback output (slower). Direct canvas output is only used on real GPUs, and it has not been benchmarked on Windows hardware from this box. WebGL2 has no brush path, so brushes fall back to the CPU there. WebGPU brush stamping is an async engine call and only pays off on a real GPU.
-- Shapes are raster layers (not editable vector shapes). Gradients have no editor for multi-stop presets, no angle or diamond types, and no gradient fill layer. Dodge/burn and red eye work on 8-bit pixels: in a 16-bit document, touched pixels drop to 8-bit precision, as with other brushes.
+- Shapes are raster layers (not editable vector shapes). Gradients have no editor for multi-stop presets, no angle or diamond types, and no gradient fill layer.
+- Groups: a pass-through group with opacity below 100% or a mask is rendered isolated (like Normal). Only one layer can be selected at a time, so Ctrl+G groups the active layer.
+- Layer styles: no bevel/emboss, satin, gradient/pattern overlay, contours or style presets, and one instance per effect. Shadow and glow blend modes apply within the layer's effects, not against the layers below. Groups, styles, warp and liquify composite at 8 bits in 16-bit documents; warp drops a layer to 8-bit precision, while liquify keeps untouched pixels at 16 bits.
+- Liquify: no twirl, freeze mask or face-aware tools; restore only undoes distortion within the current stroke (use undo for earlier strokes).
+- GPU and CPU warp results can differ by about one level at edge pixels.
+- The benchmark on this box runs on SwiftShader (software); its GPU numbers are not representative of real Windows GPUs.
 - Deferred by request: mouse side-button mapping, deep accessibility and input customization.
 - Brush has no pressure sensitivity, spacing or texture settings yet.
 - Single open document at a time (tabs are not implemented).
@@ -345,8 +369,8 @@ test-assets/          generated test image (export outputs are git-ignored)
 ## Roadmap
 
 Milestones to 1.0 (Windows desktop, Chrome and Edge first; Mac and iPhone kept working):
-- ~~**v0.6**: WebGPU engine (with WebGL2 then CPU fallback), File System Access, installable PWA, Windows conventions, mouse precision, shapes, gradients, dodge/burn, red-eye~~ (done). Warp and perspective transform move to v0.7.
-- **v0.7**: groups, clipping masks, layer styles, warp and perspective transform.
+- ~~**v0.6**: WebGPU engine (with WebGL2 then CPU fallback), File System Access, installable PWA, Windows conventions, mouse precision, shapes, gradients, dodge/burn, red-eye~~ (done).
+- ~~**v0.7**: groups, clipping masks, layer styles, warp and perspective transform, liquify, built-in benchmark~~ (done).
 - **v0.8**: auto enhance, auto white balance, straighten, looks and presets.
 - **v0.9**: multi-document tabs, crop presets, batch export.
 - **v1.0**: onboarding, help, accessibility, error handling, memory tuning, full tests, user guide.
@@ -354,7 +378,7 @@ Milestones to 1.0 (Windows desktop, Chrome and Edge first; Mac and iPhone kept w
 Longer-term items:
 
 
-1. ~~Layer masks~~ (done in v0.2). Next: clipping masks and vector masks.
+1. ~~Layer masks~~ (done in v0.2), ~~clipping masks~~ (v0.7). Next: vector masks.
 2. ~~Lasso, polygonal lasso, magic wand, add/subtract/intersect, feather~~ (done in v0.2). ~~Ellipse, select-and-move pixels~~ (v0.3). ~~Color range, refine edge, free transform of selections~~ (v0.4). Next: a quick-mask editing mode, and saved selections.
 3. **Non-destructive editing**: ~~adjustment layers, editable text layers~~ (v0.3), ~~live filters, adjustment blend modes~~ (v0.4). Next: clipping masks, more live filters.
 4. **Retouching**: ~~clone stamp~~ (done in v0.2), ~~healing brush, spot healing~~ (v0.3), ~~dodge/burn, red eye~~ (v0.6), smudge.

@@ -51,8 +51,10 @@ export const lastOpPath = () => lastPath;
 let lastKind = '';
 export const lastOpKind = () => lastKind;
 
-export async function process(name, img, params = {}, info = {}, mask = null) {
-  if (accel && accel.supports(name, img.width, img.height)) {
+/** Same as process() but always on the CPU (worker, else inline) — used by the benchmark and the engine probe. */
+export function processCpu(name, img, params = {}, info = {}) { return process(name, img, params, info, null, true); }
+export async function process(name, img, params = {}, info = {}, mask = null, cpuOnly = false) {
+  if (!cpuOnly && accel && accel.supports(name, img.width, img.height)) {
     try {
       const out = await accel.processImageData(name, img, params, info);
       if (mask) blendMasked(img.data, out.data, mask);
@@ -60,7 +62,7 @@ export async function process(name, img, params = {}, info = {}, mask = null) {
       return out;
     } catch (err) { console.warn('GPU op failed, using CPU', err); }
   }
-  lastPath = 'cpu';
+  if (!cpuOnly) lastPath = 'cpu';
   const data = new Uint8ClampedArray(img.data);
   const { width, height } = img;
   const inline = () => {

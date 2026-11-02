@@ -350,6 +350,46 @@ export function createEngine(opts = {}) {
   const fits = (bytes) => used + bytes <= budget || bytes <= budget * 0.9;
   const accumFormat = (W, H) => (fits(W * H * 8 * 3 + W * H * 4) ? 'rgba16f' : fits(W * H * 4 * 4) ? 'rgba8' : null);
 
+  // ---- textured triangle meshes (perspective / warp / liquify) -------------------------------------
+  let meshProg = null;
+  function meshProgram() {
+    if (meshProg) return meshProg;
+    const VSM = `#version 300 es
+layout(location = 0) in vec3 aP; layout(location = 1) in vec2 aT;
+uniform vec4 uO; uniform vec2 uS; out vec2 vT;
+void main() { gl_Position = vec4(((aP.x - uO.x) / uO.z * 2.0 - 1.0) * aP.z, ((aP.y - uO.y) / uO.w * 2.0 - 1.0) * aP.z, 0.0, aP.z); vT = aT / uS; }`;
+    const FSM = `#version 300 es
+precision highp float; in vec2 vT; uniform sampler2D uSrc; out vec4 o; void main() { o = texture(uSrc, vT); }`;
+    const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gpuError('shader', `mesh: ${gl.getShaderInfoLog(s)}`); return s; };
+    const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, VSM)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, FSM)); gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw gpuError('shader', `mesh: ${gl.getProgramInfoLog(p)}`);
+    meshProg = { p, uO: gl.getUniformLocation(p, 'uO'), uS: gl.getUniformLocation(p, 'uS'), uSrc: gl.getUniformLocation(p, 'uSrc'), vao: gl.createVertexArray(), vb: gl.createBuffer(), ib: gl.createBuffer() };
+    return meshProg;
+  }
+  function warpMesh(img, outW, outH, mesh, ox = 0, oy = 0) {
+    const w = img.width, h = img.height; checkSize(w, h); checkSize(outW, outH);
+    const s8 = scratch(w, h, 'rgba8'); upload(s8, img.data, true);
+    const a = scratch(w, h, 'rgba16f'); run('prep', a, w, h, { uSrc: s8, uStraight: true }); release(s8);
+    const out = scratch(outW, outH, 'rgba16f');
+    try {
+      const M = meshProgram(), nv = mesh.pos.length / 3, verts = new Float32Array(nv * 5);
+      for (let i = 0; i < nv; i++) { verts.set(mesh.pos.subarray(i * 3, i * 3 + 3), i * 5); verts[i * 5 + 3] = mesh.uv[i * 2]; verts[i * 5 + 4] = mesh.uv[i * 2 + 1]; }
+      const idx = mesh.idx instanceof Uint32Array ? mesh.idx : new Uint32Array(mesh.idx);
+      gl.useProgram(M.p); gl.bindVertexArray(M.vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, M.vb); gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STREAM_DRAW);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 20, 0);
+      gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 12);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, M.ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STREAM_DRAW);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo(out)); gl.viewport(0, 0, outW, outH);
+      gl.disable(gl.BLEND); gl.disable(gl.SCISSOR_TEST); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, a.tex); gl.uniform1i(M.uSrc, 0);
+      gl.uniform4f(M.uO, ox, oy, outW, outH); gl.uniform2f(M.uS, w, h);
+      gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_INT, 0); stats.passes++;
+      gl.bindVertexArray(vao);
+      return new ImageData(readStraight(out, false), outW, outH);
+    } finally { release(a, out); }
+  }
+
   const engine = {
     info, stats, canvas, gl,
     get lost() { return lost || gl.isContextLost(); },
@@ -398,6 +438,8 @@ export function createEngine(opts = {}) {
         return fmt;
       } finally { release(A, Bt); }
     },
+    /** Render a textured triangle mesh (see mesh.js) of straight ImageData into a new outW×outH ImageData at offset (ox, oy). */
+    warpMesh,
     /** Run filters [{ name, params }] on a canvas (premultiplied); returns a new canvas. */
     filterCanvas(src, chain, info2 = {}) {
       const w = src.width, h = src.height; checkSize(w, h);

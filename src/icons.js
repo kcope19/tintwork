@@ -11,6 +11,7 @@ export const ICONS = {
   gradient: svg('<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M7 4.5v15M10.5 4.5v15" stroke-dasharray="1.6 1.6"/><path d="M14 4.5v15" stroke-dasharray="1 2.6"/>'),
   shape: svg('<rect x="3.5" y="10" width="10" height="10" rx="1"/><circle cx="15.5" cy="8.5" r="5"/>'),
   tone: svg('<circle cx="9" cy="9" r="5.5"/><path d="M13 13l7.5 7.5"/><path d="M6.5 9a2.5 2.5 0 012.5-2.5"/>'),
+  liquify: svg('<path d="M4 4c4 0 4 4 8 4s4-4 8-4"/><path d="M4 12c4 0 4 4 8 4s4-4 8-4"/><path d="M4 20c3 0 5-2 8-2s5 2 8 2"/>'),
   redeye: svg('<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="3"/><path d="M12 10.5v3M10.5 12h3"/>'),
   text: svg('<path d="M5 6V4h14v2M12 4v16M9 20h6"/>'),
   eyedropper: svg('<path d="M14.5 5.5l4 4M17 3a2.1 2.1 0 013 3l-2 2-3-3z"/><path d="M15 7l-9 9-1.5 4.5L9 19l9-9"/>'),

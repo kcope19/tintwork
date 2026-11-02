@@ -1,17 +1,18 @@
 {
   "name": "tintwork",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Tintwork: an original browser-based layered image editor (Canvas 2D)",
   "scripts": {
     "start": "serve -l 5173 .",
     "dev": "serve -l 5173 .",
-    "test": "node scripts/smoke-test.mjs && node scripts/desktop-platform-test.mjs && node scripts/windows-test.mjs && node scripts/mobile-test.mjs",
+    "test": "node scripts/smoke-test.mjs && node scripts/desktop-platform-test.mjs && node scripts/windows-test.mjs && node scripts/mobile-test.mjs && node scripts/v07-test.mjs",
     "test:windows": "node scripts/windows-test.mjs",
     "test:platform": "node scripts/desktop-platform-test.mjs",
     "bench": "node scripts/bench.mjs all",
     "screenshots": "node scripts/smoke-test.mjs",
     "test:desktop": "node scripts/smoke-test.mjs",
     "test:mobile": "node scripts/mobile-test.mjs",
+    "test:v07": "node scripts/v07-test.mjs",
     "serve": "node scripts/serve.mjs 8080",
     "icons": "node scripts/make-icons.mjs"
   },

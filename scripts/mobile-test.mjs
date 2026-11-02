@@ -241,7 +241,7 @@ async function runDevice({ tag, browserType, device, realTouch, stubShare }) {
       await window.tintwork.openFile(new File([blob], 'big-20mp.jpg', { type: 'image/jpeg' }));
     });
     const big = await T(() => ({ w: window.tintwork.doc.width, h: window.tintwork.doc.height, toast: document.querySelector('#toast')?.textContent || '' }));
-    check(big.w * big.h <= 16_000_000 && Math.abs(big.w / big.h - 4 / 3) < 0.01 && /scaled/.test(big.toast), `20 MP photo capped to ${big.w}×${big.h} with a warning`);
+    check(big.w * big.h <= 16_000_000 && Math.abs(big.w / big.h - 4 / 3) < 0.01 && /scaled/.test(big.toast), `20 MP photo capped to ${big.w}×${big.h} with a warning (toast: ${big.toast})`);
     await page.waitForTimeout(200);
     await shot('big-image-warning');
   }

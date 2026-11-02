@@ -25,12 +25,12 @@ await page.evaluate(() => window.tintwork.engineReady);
 
 // --- WebGPU engine ------------------------------------------------------------------------------------------
 const eng = await page.evaluate(async () => {
-  const t = window.tintwork, r = { auto: t.engine?.kind || 'cpu', reason: t.gfx.webgpuReason || '' };
+  const t = window.tintwork; await t.gfx.ready; const e0 = t.gfx.engine, r = { auto: e0 ? (e0.kind || 'webgl') : 'cpu', reason: t.gfx.webgpuReason || '', probe: t.gfx.probe?.choice, ms: JSON.stringify(t.gfx.probe?.ms || {}) };
   const e = await t.setEnginePref('webgpu'); r.kind = e?.kind; r.present = e?.present; r.renderer = e?.info?.renderer;
   t.newDocument(320, 220, 'white', 'gpu-doc'); await t.compositeSettled(); r.docinfo = document.querySelector('#docinfo').textContent;
   return r;
 });
-check(eng.auto === 'cpu' && /software|slow/.test(eng.reason), `auto engine skips the software WebGPU adapter here (${eng.auto}: ${eng.reason})`);
+check(eng.probe === eng.auto && (eng.auto === 'webgpu' || /probe/.test(eng.reason)), `automatic engine = fastest in the speed probe (${eng.auto}; probe ms ${eng.ms})`);
 check(eng.kind === 'webgpu' && ['canvas', 'readback'].includes(eng.present), `forced WebGPU engine starts (${eng.renderer}, output ${eng.present})`);
 check(/WebGPU/.test(eng.docinfo), `status bar names the engine ("${eng.docinfo.trim().slice(0, 80)}")`);
 

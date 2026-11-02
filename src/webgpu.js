@@ -223,7 +223,9 @@ export const webgpuAvailable = () => typeof navigator !== 'undefined' && !!navig
  * Can a WebGPU canvas be presented and drawn into a 2D canvas here? Uses its own throwaway adapter/device,
  * because a failing presentation path can destroy the device (seen in headless SwiftShader builds).
  */
-export async function probeCanvasPresent() {
+let presentProbe = null; // the answer does not change within a page: probe once (a failing probe can disturb the GPU process)
+export function probeCanvasPresent() { return (presentProbe ||= probeCanvasPresentOnce()); }
+async function probeCanvasPresentOnce() {
   if (!webgpuAvailable()) return false;
   try {
     const a = await navigator.gpu.requestAdapter(); if (!a) return false;
@@ -262,6 +264,7 @@ export async function createWebGPUEngine(opts = {}) {
     api: 'webgpu', renderer, vendor: ai.vendor || '', maxTextureSize: maxTex, tile, halfFloat: true, float32: true, float32Linear: false,
     software: !!adapter.isFallbackAdapter || /swiftshader|llvmpipe|software|basic render/i.test(renderer), webgpu: true,
     maxBufferMB: Math.round(device.limits.maxBufferSize / 1048576),
+    adapter: { vendor: ai.vendor || '', architecture: ai.architecture || '', device: ai.device || '', description: ai.description || '', fallback: !!adapter.isFallbackAdapter },
   };
   let budget = (opts.budgetMB || 2048) * 1048576, used = 0, lost = false, destroyed = false, deviceError = null;
   const stats = { uploads: 0, passes: 0, composites: 0, ops: 0, evictions: 0, dabs: 0 };
@@ -582,6 +585,55 @@ struct U { offX: i32, offY: i32, dither: u32, pad: u32 };
       if (!async) { try { toContext(b, ctx, x, y); } finally { release(b); } return n; }
       return toContextAsync(b, ctx, x, y).then(() => n).finally(() => release(b));
   }
+  // ---- textured triangle meshes (perspective / warp / liquify) -------------------------------------
+  // Vertex = [x, y, q, u, v]; clip w = q gives perspective-correct uv (exact for homographies).
+  const MESH_WGSL = `
+struct U { sw: f32, sh: f32, ow: f32, oh: f32, ox: f32, oy: f32, p0: f32, p1: f32 };
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var smp: sampler;
+@group(0) @binding(2) var<uniform> u: U;
+struct VO { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs(@location(0) p: vec3f, @location(1) t: vec2f) -> VO {
+  var o: VO;
+  let nx = (p.x - u.ox) / u.ow * 2.0 - 1.0;
+  let ny = 1.0 - (p.y - u.oy) / u.oh * 2.0;
+  o.pos = vec4f(nx * p.z, ny * p.z, 0.0, p.z);
+  o.uv = t / vec2f(u.sw, u.sh);
+  return o;
+}
+@fragment fn fs(i: VO) -> @location(0) vec4f { return textureSampleLevel(src, smp, i.uv, 0.0); }
+`;
+  let meshPipe = null;
+  async function meshCore(img, outW, outH, mesh, ox, oy) {
+    const { width: w, height: h } = img; checkSize(w, h); checkSize(outW, outH);
+    if (!meshPipe) {
+      const module = device.createShaderModule({ code: MESH_WGSL, label: 'mesh' });
+      meshPipe = device.createRenderPipeline({
+        layout: 'auto', label: 'mesh',
+        vertex: { module, entryPoint: 'vs', buffers: [{ arrayStride: 20, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }, { shaderLocation: 1, offset: 12, format: 'float32x2' }] }] },
+        fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
+        primitive: { topology: 'triangle-list' },
+      });
+    }
+    const s8 = scratch(w, h, 'rgba8unorm'); writeTex(s8, img.data, 4);
+    const a = scratch(w, h, 'rgba16float'); run('prep', a, { src: s8 }, { straightIn: 1 }); release(s8);
+    const t = scratch(outW, outH, 'rgba16float'); let o = null;
+    try {
+      const nv = mesh.pos.length / 3, verts = new Float32Array(nv * 5);
+      for (let i = 0; i < nv; i++) { verts.set(mesh.pos.subarray(i * 3, i * 3 + 3), i * 5); verts[i * 5 + 3] = mesh.uv[i * 2]; verts[i * 5 + 4] = mesh.uv[i * 2 + 1]; }
+      const vb = device.createBuffer({ size: Math.max(16, verts.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }); device.queue.writeBuffer(vb, 0, verts); garbage.push(vb);
+      const idx = mesh.idx instanceof Uint32Array ? mesh.idx : new Uint32Array(mesh.idx);
+      const ib = device.createBuffer({ size: Math.max(16, idx.byteLength), usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST }); device.queue.writeBuffer(ib, 0, idx); garbage.push(ib);
+      const ub = uniformBuf([['sw', 'f32'], ['sh', 'f32'], ['ow', 'f32'], ['oh', 'f32'], ['ox', 'f32'], ['oy', 'f32'], ['p0', 'f32'], ['p1', 'f32']], { sw: w, sh: h, ow: outW, oh: outH, ox, oy });
+      const bg = device.createBindGroup({ layout: meshPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: a.view }, { binding: 1, resource: linSampler }, { binding: 2, resource: { buffer: ub } }] });
+      const rp = encoder().beginRenderPass({ colorAttachments: [{ view: t.view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }] });
+      rp.setPipeline(meshPipe); rp.setBindGroup(0, bg); rp.setVertexBuffer(0, vb); rp.setIndexBuffer(ib, 'uint32'); rp.drawIndexed(idx.length); rp.end();
+      stats.passes++;
+      o = scratch(outW, outH, 'rgba8unorm'); run('straight', o, { src: t }, { dither: 0 });
+      const bytes = await readback(o);
+      return new ImageData(new Uint8ClampedArray(bytes.buffer), outW, outH);
+    } finally { release(a, t, o); }
+  }
   const engine = {
     kind: 'webgpu', info, stats, canvas, device,
     get lost() { return lost; },
@@ -613,6 +665,8 @@ struct U { offX: i32, offY: i32, dither: u32, pad: u32 };
     filterCanvasAsync(src, chain, info2 = {}) { return filterCore(src, chain, info2, true); },
     stampDabs(target, rect, dabs, alphas, o = {}) { needSync(); return dabsCore(target, rect, dabs, alphas, o, false); },
     stampDabsAsync(target, rect, dabs, alphas, o = {}) { return dabsCore(target, rect, dabs, alphas, o, true); },
+    /** Render a textured triangle mesh of straight ImageData `img` into an outW×outH image whose (0,0) is at (ox, oy). Resolves to ImageData. */
+    warpMesh(img, outW, outH, mesh, ox = 0, oy = 0) { return meshCore(img, outW, outH, mesh, ox, oy); },
     /** One op on straight 8-bit ImageData; resolves to a new ImageData. */
     async processImageData(name, img, params = {}, info2 = {}) {
       const { width: w, height: h } = img; checkSize(w, h);

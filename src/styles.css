@@ -290,3 +290,32 @@ input[type=text], input[type=number], textarea { -webkit-user-select: text; user
   #menubar { padding-left: max(10px, env(titlebar-area-x, 0px)); padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 10px); app-region: drag; -webkit-app-region: drag; min-height: env(titlebar-area-height, 34px); }
   #menubar button, #menubar input, #menubar select, #menubar .menu-items { app-region: no-drag; -webkit-app-region: no-drag; }
 }
+
+/* v0.7 layer tree: groups, clipping, styles */
+#layerList li.dragbelow { box-shadow: inset 0 -2px 0 var(--accent2); }
+#layerList li.drop-into { background: #4aa3ff22; box-shadow: inset 0 0 0 1px var(--accent2); }
+#layerList li.group-row .name { font-weight: 600; }
+#layerList li.hidden-by-group { opacity: .55; }
+#layerList .twisty { width: 18px; height: 22px; padding: 0; margin-right: -4px; background: none; border: none; color: var(--muted); font-size: 12px; }
+#layerList .twisty:hover { color: var(--text); }
+#layerList .clip-arrow { color: var(--accent2); font-size: 14px; margin-right: -4px; }
+#layerList .fx-badge { padding: 0 5px; height: 18px; font: italic 600 11px/18px serif; border-radius: 3px; border: 1px solid var(--line); background: var(--bg2); color: var(--text); }
+#layerList .fx-badge.off { opacity: .45; }
+#layerList li.fx-row.off .name { text-decoration: line-through; opacity: .6; }
+.fx-dialog { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; max-height: 64vh; overflow: auto; }
+.fx-box { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px 6px; margin: 0; }
+.fx-box legend { padding: 0 4px; font-weight: 600; }
+.fx-box.off .field { opacity: .55; }
+.mesh-handle { cursor: grab; }
+
+/* v0.7 benchmark dialog */
+.bench { max-width: 760px; }
+.bench-actions { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+.bench-info { margin: 6px 0; padding-left: 18px; font-size: 12px; }
+.bench-info .warn { color: #ffb347; }
+.bench-table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+.bench-table th, .bench-table td { border-bottom: 1px solid #2c2e35; padding: 4px 8px; text-align: right; }
+.bench-table th:first-child, .bench-table td:first-child { text-align: left; }
+.bench-table td.best { color: #8fe388; font-weight: 600; }
+.bench-text { width: 100%; height: 160px; margin-top: 8px; font: 11px/1.4 ui-monospace, monospace; }
+.bench .field.two > span label { display: inline-block; margin-right: 12px; white-space: nowrap; }
