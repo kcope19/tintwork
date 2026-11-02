@@ -6,6 +6,22 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.3: re-developable RAW, split view, preset files, defringe, threaded decode (researched 2026-11-02)
+
+Compared with Photoshop + Camera Raw (RAW as a Smart Object), Lightroom Classic (Develop module) and Affinity Photo 2 (RAW layers).
+
+| Feature | Photoshop / Camera Raw | Lightroom Classic | Affinity Photo | Tintwork 1.3 |
+|---|---|---|---|---|
+| Re-open develop settings later | ✅ Open as Smart Object, then double-click the layer to re-edit in Camera Raw; the RAW file is embedded [79][80] | ✅ fully non-destructive catalogue edits | ✅ Output "RAW Layer (Embedded)" or "(Linked)"; double-click to re-develop [81] | ✅ RAW layers keep the file and settings (embedded in project v7 and autosave); double-click or Layer ▸ Re-develop RAW…. 🟡 Embedded only (no linked mode). Refused after a resize or rotate, and replaces pixel edits on that layer (confirmation asked). |
+| Split before/after | ✅ several views | ✅ left/right and top/bottom split, side by side, `\` toggle [82] | ✅ split view | ✅ Left/right split with a draggable divider (`Y`), plus the `\` toggle. ❌ No top/bottom or side-by-side views. |
+| Preset files | ✅ XMP presets | ✅ Import XMP (or a ZIP of them) [83] | ✅ per-panel presets [78] | ✅ JSON export/import of all presets. ❌ It cannot read XMP presets from other apps. |
+| Purple / green defringe | ✅ Purple and Green Amount with hue-range sliders, eyedropper, Alt preview [64][84] | ✅ same engine | ✅ defringe in Lens [77] | ✅ Purple and green amount with hue from/to, edge-aware. ❌ No eyedropper, no Alt preview mask, no local brush. |
+| RAW decode speed | Native, multi-threaded | Same | Native | ✅ Multi-threaded wasm (8 threads, about 0.3–0.5 s for 24 MP) when the host sends COOP/COEP [85][86][87]. 🟡 Single-threaded (about 0.6–0.9 s) on hosts without those headers. |
+| Memory-aware processing | OS-managed, scratch disks | Cache settings | OS-managed | 🟡 The worker and band plan follows `navigator.deviceMemory`. Peak about 1.3–1.7 GB for a 24 MP open; there is no scratch disk. |
+
+### Summary
+v1.3 removes the biggest remaining workflow gap of v1.2: develop is no longer one-way. A RAW layer behaves like Affinity's embedded RAW layer, or a Camera Raw Smart Object without the Smart Object container: the settings come back, the original sensor data is re-developed, and crops survive. The develop dialog now has the comparison tools people expect (split view) and portable presets. Defringe matches the Camera Raw slider model, without its eyedropper and preview helpers. On hosts that send COOP/COEP, decoding is roughly twice as fast. The remaining differences are linked RAW layers, re-developing through transforms (which needs a true smart-object container), XMP preset compatibility, local adjustments, lens-profile databases and AI denoise.
+
 ## v1.2: RAW develop speed, detail, colour, presets (researched 2026-11-02)
 
 Compared with Camera Raw / Lightroom Classic (Detail panel, presets, Sync/Previous) and Affinity Photo 2 (Develop persona).
@@ -242,6 +258,15 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 76. Chris Wright Photography, "The Problem with RAW Editors" (Affinity Photo 2.6 develop workflow): https://chriswright.photography/the-problem-with-raw-editors/
 77. Beyond Photo Tips, "Can Affinity Photo Open RAW Files?" (Develop persona tabs: Lens CA reduction and defringe, Details refinement): https://www.beyondphototips.com/can-affinity-photo-open-raw-files/
 78. Design Bundles, "How to Create Presets in Affinity Photo" (Develop persona presets): https://designbundles.net/design-school/how-to-create-presets-in-affinity-photo
+79. Adobe, "Introduction to Camera Raw" (Shift + Open Image opens the RAW as a Smart Object; double-click it to adjust settings): https://helpx.adobe.com/camera-raw/desktop/get-started/overview-and-setup/introduction-camera-raw.html
+80. Adobe, "Nondestructive editing in Photoshop" (opening Camera Raw files as Smart Objects): https://helpx.adobe.com/photoshop/using/nondestructive-editing.html
+81. The App Whisperer, "How to develop RAW files non-destructively with Affinity Photo 2" (RAW Layer Embedded / Linked): https://theappwhisperer.com/2023/02/how-to-develop-raw-files-non-destructively-with-affinity-photo-2/
+82. Adobe, "Work with the Develop module in Lightroom Classic" (Before/After views, split views, backslash): https://helpx.adobe.com/lightroom-classic/desktop/process-and-develop-photos/develop-module-tools.html
+83. Adobe, "Lightroom Classic Presets FAQ" (importing Develop presets): https://helpx.adobe.com/lightroom-classic/desktop/kb/presets-faq.html
+84. X. Gavaldà blog (repost of the Camera Raw release notes), "New Color Fringe Correction Controls" (Purple/Green Amount and Hue sliders): http://xgavalda.blogspot.com/2012/04/new-color-fringe-correction-controls.html
+85. MDN, "Window: crossOriginIsolated property": https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated
+86. Netlify Docs, "Custom headers" (`_headers` file): https://docs.netlify.com/routing/headers/
+87. Cloudflare Pages docs, "Headers" (`_headers` file): https://developers.cloudflare.com/pages/configuration/headers/
 
 ### Benchmark caveat
 `scripts/bench.mjs` ran on a Linux box with no GPU. Headless Chromium used SwiftShader (software) for both WebGL2 and WebGPU and WebKit used software GL, so GPU timings there are slower than the CPU worker and are not representative of real hardware (see README).

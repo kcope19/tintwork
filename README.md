@@ -7,6 +7,26 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.3 (re-developable RAW, split view, defringe, threaded decode)
+
+![Split before/after view in the develop dialog](screenshots/13x-raw-split-view.png)
+
+- **Re-developable RAW layers**: a developed layer keeps the original RAW file (as an immutable `Blob`) and its develop settings in `layer.raw`. It shows a **RAW** badge in the Layers panel. Double-clicking the thumbnail, the context menu or Layer ▸ Re-develop RAW… reopens the develop dialog with those settings ("Re-develop *name*", **Apply**). Apply re-develops from the RAW data in full 16-bit quality, replacing the layer pixels as a single undo step. Crops are tracked (the crop window is developed). A layer that was edited after developing asks for confirmation first, and a resized or rotated layer is refused with a message. Project files (format **v7**) embed the RAW file as a data URL. Autosave stores it once per document as an `R-` blob record, for files up to 200 MB. Screenshot: `13x-raw-redevelop.png`.
+- **Split before/after view**: the **Split** button or `Y` shows *before* (the defaults, or the layer's previous settings when re-developing) on the left and the edit on the right. The divider can be dragged with the mouse or moved with the arrow keys. Edits redraw only the after side. `\` still toggles a full before view.
+- **Preset files**: **Export presets…** writes `tintwork-develop-presets.json` (`{"format":"tintwork-raw-presets","version":1,"presets":[…]}`). **Import presets…** accepts that file, a bare array or a single preset. Settings are cleaned (clamped, with unknown keys dropped), names are de-duplicated case-insensitively, and files that are not preset files are refused with a message.
+- **Defringe** (axial or purple fringing): **Purple amount** with a hue range (default 260–320°), and **Green amount** with a hue range (default 80–150°). Pixels are desaturated toward their luminance, weighted by hue (15° feather) and by local edge contrast, so flat purple or green objects are kept. This runs after noise reduction and before sharpening, in every band worker. Cost: about 0.23 s per 4 MP on one core, and nothing when the amounts are 0.
+- **Threaded decode when cross-origin isolated**: when `crossOriginIsolated` is true (COOP `same-origin` + COEP `require-corp`), the codec worker loads FlashRaw's SIMD+threads build with `min(8, max(2, cores))` threads. Otherwise it falls back to the single-threaded SIMD build. The choice is reported in `window.tintwork.lastDecoder`. The new **`_headers`** file sets these headers for Netlify and Cloudflare Pages. `npm run serve:isolated` serves locally with them. GitHub Pages cannot set headers, so it gets the single-threaded decoder.
+- **Memory-aware develop plan**: the develop pool is capped at `floor(navigator.deviceMemory × 1.5)` workers (8 GB is assumed when unknown), and bands are sized so that the bands in flight stay within 1/8 of device memory, with at most 25 % halo overhead. For 24 MP: 8 GB → 7 workers × 7 bands, 4 GB → 5 × 10, 2 GB → 2 × 10, 1 GB → 1 × 7.
+- **Timing and memory**, 24 MP Sony ARW, headless Chromium, 8-core Linux box (`npm run mem:raw`; renderer PSS above idle):
+
+  | | Decode | Open → full image | Develop peak | Whole-open peak |
+  |---|---|---|---|---|
+  | Not isolated (single-thread decode) | 0.61–0.90 s | 1.3–1.6 s | 0.83–1.20 GB | 1.36–1.73 GB |
+  | Isolated (8 decoder threads) | 0.27–0.49 s | 1.3–1.6 s | 0.74–0.81 GB | 1.30–1.37 GB |
+
+  About 0.6 GB of the peak is the fixed base (the decoded mosaic, the 16-bit result and the canvas). The rest scales with the number of bands in flight. The numbers vary by ±15 % between runs.
+- Tests: `npm run test:v13` (44 checks): defringe unit and preview tests, the split view with mouse drag and keys, preset export/import and refusal of bad files, re-develop (double-click, Apply, undo, crop, edited-layer confirmation), project v7 and autosave round trips, `_headers`, isolated vs non-isolated decoder selection, 24 MP decode timing, and the `deviceMemory` caps. The older suites were updated only for project v7 and the larger dialog.
+
 ## What's new in v1.2 (faster RAW develop, more develop controls, presets)
 
 ![RAW develop controls](screenshots/12x-raw-develop-controls.png)
@@ -285,14 +305,16 @@ npm start            # serves on http://localhost:5173
 
 To try it on a phone on the same network, run `npm run serve` (`scripts/serve.mjs`, port 8080, with no-cache headers suitable for the service worker). Add it to the home screen to install it.
 
-Any static file server works, e.g. `python3 -m http.server 5173`. It needs to be served over
+Any static file server works, e.g. `python3 -m http.server 5173`.
+
+**Hosting**: `_headers` (read by Netlify and Cloudflare Pages) sends `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`, so the page is cross-origin isolated and RAW decoding uses several threads. Hosts that cannot set headers (for example GitHub Pages) still work, with the single-threaded decoder. `npm run serve:isolated` sends the same headers locally. It needs to be served over
 http(s) rather than opened as a `file://` URL because it uses ES modules.
 
 ### Tests and screenshots
 
 ```bash
 npx playwright install chromium webkit   # one time
-npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile, v0.7, v0.8, v0.9, v1.0, v1.1 and v1.2 tests
+npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile, v0.7, v0.8, v0.9, v1.0, v1.1, v1.2 and v1.3 tests
 npm run test:platform    # scripts/desktop-platform-test.mjs: Windows/Mac keyboard labels and shortcuts
 npm run bench            # scripts/bench.mjs: GPU vs CPU timings and banding
 npm run test:desktop     # scripts/smoke-test.mjs (Chromium)
@@ -303,6 +325,8 @@ npm run test:v10         # scripts/v10-test.mjs: open → edit → save → reop
 npm run fetch-raw        # one time: downloads the CC0 RAW samples listed in test-assets/raw-samples.json
 npm run test:v11         # scripts/v11-test.mjs: PSD/PSB import/export round trips, RAW develop dialog, lens opcodes, JPEG fallback, per-format decode, 24 MP timing
 npm run test:v12         # scripts/v12-test.mjs: parallel/progressive RAW develop, sharpening, curve, vibrance/saturation, CA, before/after, presets, batch RAW settings, offline decoder, 24 MP timing
+npm run test:v13         # scripts/v13-test.mjs: re-developable RAW layers, split view, preset files, defringe, COOP/COEP threaded decode, deviceMemory worker caps
+npm run mem:raw          # scripts/raw-memory.mjs: peak memory of a 24 MP RAW open (ISOLATED=1 for the threaded decoder)
 node scripts/perf.mjs cpu --json out.json  # 24 MP timings: open, pan/zoom, layer toggle, adjustment drag, brush, export
 npm run test:mobile      # scripts/mobile-test.mjs (WebKit iPhone 14 + Chromium Pixel 7, touch input)
 ```
@@ -425,7 +449,7 @@ test-assets/          generated test image (export outputs are git-ignored)
 
 ## Known limitations
 
-- RAW: decoding is single-threaded (multi-threaded wasm needs cross-origin isolation headers, COOP/COEP, which plain static hosting does not send), so file → dialog stays about 1 s for 24 MP. Developing uses bands on several workers, which raises peak memory: each band worker holds its own copy of its part of the image, plus the overlap. Lens correction uses DNG opcodes only, so most proprietary RAW files (CR2, NEF, ARW…) get no automatic distortion fix, and there is no lens-profile database. Automatic CA correction is lateral only (a radial red/blue scale): there is no defringe for purple fringing (axial CA). Sharpening is a luminance unsharp mask with a halo limiter, not deconvolution. There are no local adjustments, and develop is one-way into pixels: it cannot be reopened. Presets are per browser, and there is no import/export for them yet. Colours for cameras the decoder has no matrix for are approximate.
+- RAW: decoding is multi-threaded only when the host sends the COOP/COEP headers from `_headers` (Netlify, Cloudflare Pages). Elsewhere, for example on GitHub Pages, it is single-threaded, and file → dialog stays about 1 s for 24 MP. Developing uses bands on several workers, which raises peak memory: each band worker holds its own copy of its part of the image, plus the overlap. Lens correction uses DNG opcodes only, so most proprietary RAW files (CR2, NEF, ARW…) get no automatic distortion fix, and there is no lens-profile database. Automatic CA correction is lateral only (a radial red/blue scale). Defringe for purple and green (axial) fringes is global: there is no brush or eyedropper to pick the fringe colour, and it adds about 0.2 s per 4 MP when it is on. Sharpening is a luminance unsharp mask with a halo limiter, not deconvolution. There are no local adjustments. A developed layer can be re-developed, but not after it has been resized or rotated, and re-developing replaces any pixel edits made on that layer. Embedding the RAW file makes project files bigger by about 1.33 × the RAW size, and RAW files over 200 MB are not autosaved. Presets are per browser unless they are exported to a file. Colours for cameras the decoder has no matrix for are approximate.
 - PSD: text, smart objects, fill/shape layers and effects do not survive import as editable objects; vector masks, artboards and layer comps are ignored; CMYK files are converted without a colour profile, 32-bit files are converted to 16-bit (values above 1.0 clipped), and Lab, duotone, indexed, bitmap and multichannel files are refused. Export writes PSD only (no PSB), 8 or 16 bits, with layer styles baked.
 - On documents over 2.5 MP, adjustment layers and live filters are computed in the worker. While a slider is dragged a reduced-resolution preview is shown; the full result replaces it a moment after you stop. The very first render of a new adjustment layer shows the image unadjusted until the worker finishes.
 - Live filters cover Gaussian blur, sharpen, noise and vignette only, and there is one filter mask per layer. Transforming a selection on a live layer converts it to pixels. Text layers are rasterized when converted.
@@ -468,6 +492,7 @@ Milestones to 1.0 (Windows desktop, Chrome and Edge first; Mac and iPhone kept w
 - ~~**v1.0**: onboarding, help, accessibility, error handling, memory tuning, full tests, user guide~~ (done).
 - ~~**v1.1**: camera RAW develop, PSD/PSB import and layered PSD export~~ (done).
 - ~~**v1.2**: parallel and progressive RAW develop, sharpening, tone curve, vibrance/saturation, chromatic aberration, before/after, presets, batch RAW settings, offline decoder~~ (done).
+- ~~**v1.3**: re-developable RAW layers, split before/after, preset files, defringe, threaded decode with COOP/COEP, memory-aware worker plan~~ (done).
 
 Longer-term items:
 
@@ -479,7 +504,7 @@ Longer-term items:
 5. **History snapshots**: named snapshots, a history brush, and IndexedDB-backed history so large documents don't run out of memory.
 6. ~~**Curves** with a point editor~~ (v0.3). ~~white balance, LUT import (.cube)~~ (v0.8). Next: per-channel levels/curves, color balance, vibrance.
 7. **Performance**: ~~Web Worker for filters~~ (done in v0.2), ~~WebGL2 GPU pipeline, 16-bit~~ (v0.5). ~~WebGPU compute engine as the primary path on Chrome/Edge~~ (v0.6). Next: OffscreenCanvas, tiled rendering for very large images.
-8. ~~**RAW support** via a WASM decoder, orientation, 16-bit pipeline~~ (v1.1). Next: camera colour profiles beyond the decoder's matrices, lens profiles for files without opcodes. ~~Multi-threaded develop~~ (v1.2); next: threaded decode, defringe.
+8. ~~**RAW support** via a WASM decoder, orientation, 16-bit pipeline~~ (v1.1). Next: camera colour profiles beyond the decoder's matrices, lens profiles for files without opcodes. ~~Multi-threaded develop~~ (v1.2), ~~threaded decode, defringe, re-developable RAW layers~~ (v1.3); next: linked (not embedded) RAW sources, local adjustments in develop.
 9. **Plugin system**: a sandboxed filter/tool API (worker-based, ImageData in/out), a manifest format and a plugin manager.
 10. **Packaging**: installable PWA with offline cache and file handling, and desktop builds (Tauri or Electron) with native open/save dialogs.
 11. Multiple documents (tabs), ~~autosave and recovery~~ (v0.3), ~~recovery slots with history~~ (v0.4), pen pressure, custom brushes, guides, rulers and snapping.
