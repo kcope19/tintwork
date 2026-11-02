@@ -39,15 +39,30 @@ function transferablesOf(doc) {
   return out;
 }
 /** Develop parallelism inputs: device memory (GB, from the page) and an optional worker-count override (tests). */
-const devEnv = { deviceMemory: (typeof navigator !== 'undefined' && navigator.deviceMemory) || 0 };
+const ENGINE_KEY = 'tintwork.developEngine', ENGINES = ['auto', 'webgpu', 'webgl2', 'cpu'];
+const savedEngine = () => { try { const v = localStorage.getItem(ENGINE_KEY); return ENGINES.includes(v) ? v : 'auto'; } catch { return 'auto'; } };
+const devEnv = { deviceMemory: (typeof navigator !== 'undefined' && navigator.deviceMemory) || 0, engine: savedEngine() };
 export function setDevelopEnv(e) { Object.assign(devEnv, e); }
+/**
+ * RAW develop engine: 'auto' (a hardware GPU when there is one, else the CPU workers), 'webgpu', 'webgl2' or 'cpu'.
+ * Saved for next time; returns what is in use: { prefer, kind, label, renderer, software, note }.
+ */
+export async function setDevelopEngine(prefer) {
+  prefer = ENGINES.includes(prefer) ? prefer : 'auto'; devEnv.engine = prefer;
+  try { localStorage.setItem(ENGINE_KEY, prefer); } catch { /* private mode */ }
+  return call('devEngine', { prefer });
+}
+export const developEngineInfo = () => call('devEngine', { prefer: devEnv.engine });
+export const getDevelopEnginePref = () => devEnv.engine;
+/** Develop benchmark in the codec worker (synthetic sensor data): see codec-worker.js devBench. */
+export const developBenchmark = (opts, onProgress) => call('devBench', opts, [], onProgress);
 /** A RAW develop session: the decoded sensor image stays in the worker until close(). */
 export async function openRawSession(bytes, settings) {
   const session = ++sessionSeq;
   const res = await call('rawOpen', { session, bytes, settings, env: { ...devEnv } }, [bytes.buffer]);
   return {
     ...res, session, firstPreview: res.preview,
-    preview: (s) => call('rawPreview', { session, settings: s }).then((r) => r.preview),
+    preview: (s, o = {}) => call('rawPreview', { session, settings: s, draft: !!o.draft }).then((r) => r.preview),
     /** Full-resolution develop; onHalf({ width, height, rows, data }) receives half-resolution bands as they finish. */
     develop: (s, maxPixels, onHalf = null, xform = null) => call('rawDevelop', { session, settings: s, maxPixels, half: !!onHalf, xform }, [], onHalf),
     /** Defringe eyedropper at (u, v), fractions of the preview: { kind, hue, sat, lo, hi } (see raw.js pickFringe). */

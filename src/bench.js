@@ -86,13 +86,17 @@ export const BENCH_OPS = [
   ['composite', '10-layer composite, mixed blend modes (cold)'],
   ['composite_warm', '10-layer composite, one layer changed'],
   ['warp', 'Perspective warp (mesh) of the full image'],
+  ['dev_preview', 'RAW develop: preview update while dragging a slider (3 masks)'],
+  ['dev_paint', 'RAW develop: preview update while painting a brush mask'],
+  ['dev_full', 'RAW develop: full resolution, 16-bit, 3 masks (WebGL2 → CPU workers)'],
 ];
+const DEV_KIND = { cpu: 'cpu', webgl: 'webgl2', webgpu: 'webgpu' };
 
 /**
  * Full benchmark. engines: subset of ['cpu','webgl','webgpu']; sizes: keys of BENCH_SIZES.
  * onProgress(text) is called between steps. Returns { engines: {kind: info|error}, rows: [{mp, op, kind, ms}], env }.
  */
-export async function runBenchmark({ engines = ['cpu', 'webgl', 'webgpu'], sizes = [12, 24], curves, onProgress = () => {}, budgetMB = 2048 } = {}) {
+export async function runBenchmark({ engines = ['cpu', 'webgl', 'webgpu'], sizes = [12, 24], curves, onProgress = () => {}, budgetMB = 2048, develop = null, developDims = null } = {}) {
   const res = { engines: {}, rows: [], env: envInfo(), started: new Date().toISOString() };
   for (const kind of engines) {
     onProgress(`Starting ${kind.toUpperCase()}…`); await tick();
@@ -117,6 +121,17 @@ export async function runBenchmark({ engines = ['cpu', 'webgl', 'webgpu'], sizes
       }
     } finally { if (o.e) try { o.e.destroy(); } catch { /* gone */ } }
   }
+  // RAW develop (in the codec worker, where it really runs): CPU band workers vs the GPU develop engines
+  if (develop) {
+    onProgress('RAW develop…'); await tick();
+    try {
+      const d = await develop({ kinds: engines.map((k) => DEV_KIND[k]).filter(Boolean), sizes, dims: developDims || Object.fromEntries(sizes.map((mp) => [mp, BENCH_SIZES[mp]])) }, (p) => onProgress(p.text));
+      const back = Object.fromEntries(Object.entries(DEV_KIND).map(([a, b]) => [b, a]));
+      res.develop = {};
+      for (const [k, v] of Object.entries(d.engines)) res.develop[back[k]] = v;
+      for (const r of d.rows) res.rows.push({ ...r, kind: back[r.kind], error: r.error || '' });
+    } catch (err) { res.develop = { error: err?.message || String(err) }; }
+  }
   res.finished = new Date().toISOString();
   return res;
 }
@@ -131,6 +146,8 @@ export function envInfo() {
   return { userAgent: navigator.userAgent, platform: navigator.userAgentData?.platform || navigator.platform || '', threads: navigator.hardwareConcurrency || null, memoryGB: navigator.deviceMemory || null, dpr: window.devicePixelRatio || 1 };
 }
 const NAMES = { cpu: 'CPU', webgl: 'WebGL2', webgpu: 'WebGPU' };
+/** Engine columns: every engine with at least one result (canvas engines and the RAW develop engines). */
+export function benchKinds(res) { return ['cpu', 'webgl', 'webgpu'].filter((k) => res.rows.some((r) => r.kind === k) || (res.engines[k] && !res.engines[k].error)); }
 /** Plain-text report (what "Copy results" puts on the clipboard). */
 export function benchText(res, appVersion = '') {
   const L = [];
@@ -142,7 +159,9 @@ export function benchText(res, appVersion = '') {
     const id = k === 'webgpu' ? [v.vendor && `vendor ${v.vendor}`, v.architecture && `architecture ${v.architecture}`, v.device && `device ${v.device}`, v.description && `“${v.description}”`].filter(Boolean).join(', ') : v.renderer;
     L.push(`${NAMES[k]}: ${id || v.renderer}${v.software ? ' — SOFTWARE adapter (numbers are not representative of a hardware GPU)' : k === 'cpu' ? '' : ' — hardware'}${v.present ? ` · output ${v.present}` : ''}`);
   }
-  const kinds = Object.keys(res.engines).filter((k) => !res.engines[k].error), sizes = [...new Set(res.rows.map((r) => r.mp))];
+  if (res.develop?.error) L.push(`RAW develop: failed (${res.develop.error})`);
+  else if (res.develop) for (const [k, v] of Object.entries(res.develop)) L.push(`RAW develop on ${NAMES[k]}: ${v.error ? `unavailable (${v.error})` : `${v.renderer}${v.software ? ' — SOFTWARE (numbers are not representative of a hardware GPU)' : ''}`}`);
+  const kinds = benchKinds(res), sizes = [...new Set(res.rows.map((r) => r.mp))].sort((a, b) => a - b);
   const head = ['Operation', 'MP', ...kinds.map((k) => NAMES[k])], rows = [head];
   for (const mp of sizes) for (const [op, label] of BENCH_OPS) {
     const cells = kinds.map((k) => { const r = res.rows.find((x) => x.mp === mp && x.op === op && x.kind === k); return !r ? '—' : r.ms == null ? 'error' : `${r.ms} ms`; });

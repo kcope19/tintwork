@@ -30,7 +30,10 @@ export const RANGES = {
 export const LOCAL_RANGES = {
   exposure: [-4, 4], contrast: [-100, 100], highlights: [-100, 100], shadows: [-100, 100], temp: [-100, 100], tint: [-100, 100],
   saturation: [-100, 100], clarity: [-100, 100], texture: [-100, 100], sharpness: [-100, 100], noise: [0, 100],
+  whites: [-100, 100], blacks: [-100, 100], dehaze: [-100, 100], hue: [-180, 180],
 };
+/** Extra shapes a mask can combine with its own: add (union), subtract, intersect. */
+export const MASK_OPS = ['add', 'subtract', 'intersect'], MAX_PARTS = 8;
 export const LOCAL_DETAIL = ['clarity', 'texture', 'sharpness', 'noise'];
 export const MAX_LOCALS = 8;
 /** Brush limits per local adjustment: strokes and points (u, v pairs) kept. */
@@ -47,6 +50,8 @@ const clampN = (v, lo, hi, d = 0) => (Number.isFinite(+v) ? Math.min(hi, Math.ma
  * Every type: invert (the shape's other side), strokes (brush strokes that add to the shape, or erase from it with
  * erase: true; { size, feather, flow, auto, erase, pts: [u, v, u, v, …] }), lum ({ lo, hi, soft }: luminance range
  * 0..100) and color ({ hue, range, soft } in degrees): range masks multiply (intersect) the shape. name: a label.
+ * parts: up to MAX_PARTS more graduated / radial shapes { op: 'add' | 'subtract' | 'intersect', type, shape…, invert }
+ * combined in order after the strokes: the mask is shape → strokes → parts → invert → range.
  * Returns null when there are none.
  */
 export function cleanLocal(list) {
@@ -58,11 +63,16 @@ export function cleanLocal(list) {
     const e = { type: a.type };
     if (typeof a.name === 'string' && a.name.trim()) e.name = a.name.trim().slice(0, 40);
     for (const [k, [lo, hi]] of Object.entries(LOCAL_RANGES)) e[k] = clampN(a[k], lo, hi);
-    if (a.type === 'linear') {
-      Object.assign(e, { x0: clampN(a.x0, -1, 2, 0.5), y0: clampN(a.y0, -1, 2, 0), x1: clampN(a.x1, -1, 2, 0.5), y1: clampN(a.y1, -1, 2, 0.5) });
-      if (Math.hypot(e.x1 - e.x0, e.y1 - e.y0) < 1e-3) e.y1 = e.y0 + 0.01;
-    } else if (a.type === 'radial') Object.assign(e, { cx: clampN(a.cx, -1, 2, 0.5), cy: clampN(a.cy, -1, 2, 0.5), rx: clampN(a.rx, 0.01, 2, 0.3), ry: clampN(a.ry, 0.01, 2, 0.3), feather: clampN(a.feather, 0, 1, 0.5) });
+    cleanShape(a, e);
     e.invert = !!a.invert;
+    if (Array.isArray(a.parts)) {
+      const parts = [];
+      for (const q of a.parts) {
+        if (parts.length >= MAX_PARTS || !q || typeof q !== 'object' || !['linear', 'radial'].includes(q.type)) continue;
+        const p = { op: MASK_OPS.includes(q.op) ? q.op : 'add', type: q.type }; cleanShape(q, p); p.invert = !!q.invert; parts.push(p);
+      }
+      if (parts.length) e.parts = parts;
+    }
     if (Array.isArray(a.strokes)) {
       const st = []; let pts = 0;
       for (const k of a.strokes) {
@@ -81,6 +91,14 @@ export function cleanLocal(list) {
   }
   return out.length ? out : null;
 }
+/** Graduated / radial geometry of a (a mask or one of its parts) into e, clamped. */
+function cleanShape(a, e) {
+  if (a.type === 'linear') {
+    Object.assign(e, { x0: clampN(a.x0, -1, 2, 0.5), y0: clampN(a.y0, -1, 2, 0), x1: clampN(a.x1, -1, 2, 0.5), y1: clampN(a.y1, -1, 2, 0.5) });
+    if (Math.hypot(e.x1 - e.x0, e.y1 - e.y0) < 1e-3) e.y1 = e.y0 + 0.01;
+  } else if (a.type === 'radial') Object.assign(e, { cx: clampN(a.cx, -1, 2, 0.5), cy: clampN(a.cy, -1, 2, 0.5), rx: clampN(a.rx, 0.01, 2, 0.3), ry: clampN(a.ry, 0.01, 2, 0.3), feather: clampN(a.feather, 0, 1, 0.5) });
+  return e;
+}
 /** True when local adjustment `a` changes anything. */
 export const localActive = (a) => Object.keys(LOCAL_RANGES).some((k) => a[k]);
 /**
@@ -98,6 +116,12 @@ export function localWeight(a, u, v, aspect = 1) {
     const dx = (u - a.cx) / a.rx, dy = (v - a.cy) / a.ry, d = Math.sqrt(dx * dx + dy * dy), f = Math.max(1e-3, a.feather);
     w = 1 - smooth(1 - f, 1, d);
   }
+  return a.invert ? 1 - w : w;
+}
+/** Combined shape weight of a graduated / radial mask with its parts (no strokes, no range masks): for previews / tests. */
+export function maskShapeWeight(a, u, v, aspect = 1) {
+  let w = a.type === 'brush' ? 0 : localWeight({ ...a, invert: false }, u, v, aspect);
+  for (const p of a.parts || []) { const q = localWeight(p, u, v, aspect); w = p.op === 'subtract' ? w * (1 - q) : p.op === 'intersect' ? w * q : w > q ? w : q; }
   return a.invert ? 1 - w : w;
 }
 /** Luminance (0..100, display-like: √ of linear luma) and hue / saturation (of the √ channels) used by range masks. */
@@ -163,45 +187,65 @@ export const BRUSH_GRID = 768;
  * flow (c = c + (1 − c) · flow · dab).
  */
 export function rasterStrokes(strokes, OW, OH) {
-  const L = Math.max(OW, OH), G = Math.min(BRUSH_GRID, L), GW = Math.max(1, Math.round(G * OW / L)), GH = Math.max(1, Math.round(G * OH / L)), n = GW * GH;
-  const grids = { GW, GH, add: null, addA: null, refA: null, era: null, eraA: null, refE: null, bx0: 0, by0: 0, bx1: 0, by1: 0 };
-  const t = new Float32Array(n), ti = new Int32Array(n).fill(-1), refW = { refA: null, refE: null }; // colour weights (kept off `grids` so it keeps a fixed shape)
-  let BX0 = GW, BY0 = GH, BX1 = -1, BY1 = -1;
-  for (const k of strokes) {
-    const auto = !!k.auto && !!k.refs, key = k.erase ? (auto ? 'eraA' : 'era') : (auto ? 'addA' : 'add');
-    const tgt = grids[key] ||= new Float32Array(n), rk = k.erase ? 'refE' : 'refA';
-    if (auto) { grids[rk] ||= new Float32Array(n * 3); refW[rk] ||= new Float32Array(n); }
-    const R = Math.max(0.75, k.size * Math.max(GW, GH)), f = Math.max(0.01, k.feather), step = Math.max(0.35, R * 0.2);
-    let x0 = GW, y0 = GH, x1 = -1, y1 = -1;
-    const dab = (x, y, pi) => {
-      const ax = Math.max(0, Math.floor(x - R)), bx = Math.min(GW - 1, Math.ceil(x + R)), ay = Math.max(0, Math.floor(y - R)), by = Math.min(GH - 1, Math.ceil(y + R));
-      if (ax > bx || ay > by) return;
-      x0 = Math.min(x0, ax); x1 = Math.max(x1, bx); y0 = Math.min(y0, ay); y1 = Math.max(y1, by);
-      for (let yy = ay; yy <= by; yy++) for (let xx = ax; xx <= bx; xx++) {
-        const d = Math.hypot(xx + 0.5 - x, yy + 0.5 - y) / R; if (d >= 1) continue;
-        const w = 1 - smooth(1 - f, 1, d), i = yy * GW + xx; if (w > t[i]) { t[i] = w; ti[i] = pi; }
-      }
-    };
-    const P = k.pts, np = P.length / 2;
-    let px = P[0] * GW, py = P[1] * GH; dab(px, py, 0);
-    for (let i = 1; i < np; i++) {
-      const qx = P[2 * i] * GW, qy = P[2 * i + 1] * GH, dist = Math.hypot(qx - px, qy - py), m = Math.ceil(dist / step);
-      for (let j = 1; j <= m; j++) dab(px + (qx - px) * j / m, py + (qy - py) * j / m, j * 2 > m ? i : i - 1);
-      px = qx; py = qy;
+  const st = rasterBegin(OW, OH);
+  for (const k of strokes) rasterAdd(st, k);
+  return rasterFinish(st);
+}
+/**
+ * Incremental rasteriser (live painting re-rasterises only the stroke being drawn): a state holds the un-normalised
+ * accumulators; rasterAdd() adds one stroke, rasterClone() copies a state, rasterFinish() makes the grids.
+ */
+function rasterBegin(OW, OH) {
+  const L = Math.max(OW, OH), G = Math.min(BRUSH_GRID, L), GW = Math.max(1, Math.round(G * OW / L)), GH = Math.max(1, Math.round(G * OH / L));
+  return { GW, GH, n: GW * GH, add: null, addA: null, refA: null, era: null, eraA: null, refE: null, wA: null, wE: null, BX0: GW, BY0: GH, BX1: -1, BY1: -1 };
+}
+const RASTER_ARRAYS = ['add', 'addA', 'refA', 'era', 'eraA', 'refE', 'wA', 'wE'];
+function rasterClone(st) { const c = { ...st }; for (const k of RASTER_ARRAYS) if (st[k]) c[k] = st[k].slice(); return c; }
+let rasterScratch = null; // per-stroke dab maximum and the point index it came from (left zeroed after every stroke)
+function rasterAdd(st, k) {
+  const { GW, GH, n } = st;
+  if (!rasterScratch || rasterScratch.t.length < n) rasterScratch = { t: new Float32Array(n), ti: new Int32Array(n).fill(-1) };
+  const { t, ti } = rasterScratch;
+  const auto = !!k.auto && !!k.refs, key = k.erase ? (auto ? 'eraA' : 'era') : (auto ? 'addA' : 'add');
+  const tgt = st[key] ||= new Float32Array(n), rk = k.erase ? 'refE' : 'refA', wk = k.erase ? 'wE' : 'wA';
+  if (auto) { st[rk] ||= new Float32Array(n * 3); st[wk] ||= new Float32Array(n); }
+  const R = Math.max(0.75, k.size * Math.max(GW, GH)), f = Math.max(0.01, k.feather), step = Math.max(0.35, R * 0.2);
+  let x0 = GW, y0 = GH, x1 = -1, y1 = -1;
+  const dab = (x, y, pi) => {
+    const ax = Math.max(0, Math.floor(x - R)), bx = Math.min(GW - 1, Math.ceil(x + R)), ay = Math.max(0, Math.floor(y - R)), by = Math.min(GH - 1, Math.ceil(y + R));
+    if (ax > bx || ay > by) return;
+    x0 = Math.min(x0, ax); x1 = Math.max(x1, bx); y0 = Math.min(y0, ay); y1 = Math.max(y1, by);
+    for (let yy = ay; yy <= by; yy++) for (let xx = ax; xx <= bx; xx++) {
+      const d = Math.hypot(xx + 0.5 - x, yy + 0.5 - y) / R; if (d >= 1) continue;
+      const w = 1 - smooth(1 - f, 1, d), i = yy * GW + xx; if (w > t[i]) { t[i] = w; ti[i] = pi; }
     }
-    const flow = k.flow, ref = auto ? grids[rk] : null, rw = auto ? refW[rk] : null;
-    for (let yy = y0; yy <= y1; yy++) for (let xx = x0; xx <= x1; xx++) {
-      const i = yy * GW + xx, w = t[i]; if (w <= 0) continue;
-      tgt[i] += (1 - tgt[i]) * flow * w;
-      if (auto) { const r = ti[i] * 3, q = w * flow; ref[i * 3] += k.refs[r] * q; ref[i * 3 + 1] += k.refs[r + 1] * q; ref[i * 3 + 2] += k.refs[r + 2] * q; rw[i] += q; }
-      t[i] = 0; ti[i] = -1;
-    }
-    if (x1 >= 0) { BX0 = Math.min(BX0, x0); BY0 = Math.min(BY0, y0); BX1 = Math.max(BX1, x1); BY1 = Math.max(BY1, y1); }
+  };
+  const P = k.pts, np = P.length / 2;
+  let px = P[0] * GW, py = P[1] * GH; dab(px, py, 0);
+  for (let i = 1; i < np; i++) {
+    const qx = P[2 * i] * GW, qy = P[2 * i + 1] * GH, dist = Math.hypot(qx - px, qy - py), m = Math.ceil(dist / step);
+    for (let j = 1; j <= m; j++) dab(px + (qx - px) * j / m, py + (qy - py) * j / m, j * 2 > m ? i : i - 1);
+    px = qx; py = qy;
   }
+  const flow = k.flow, ref = auto ? st[rk] : null, rw = auto ? st[wk] : null;
+  for (let yy = y0; yy <= y1; yy++) for (let xx = x0; xx <= x1; xx++) {
+    const i = yy * GW + xx, w = t[i]; if (w <= 0) continue;
+    tgt[i] += (1 - tgt[i]) * flow * w;
+    if (auto) { const r = ti[i] * 3, q = w * flow; ref[i * 3] += k.refs[r] * q; ref[i * 3 + 1] += k.refs[r + 1] * q; ref[i * 3 + 2] += k.refs[r + 2] * q; rw[i] += q; }
+    t[i] = 0; ti[i] = -1;
+  }
+  if (x1 >= 0) { st.BX0 = Math.min(st.BX0, x0); st.BY0 = Math.min(st.BY0, y0); st.BX1 = Math.max(st.BX1, x1); st.BY1 = Math.max(st.BY1, y1); }
+  return st;
+}
+/** Grids of a state: the coverage arrays are shared with it (do not add to a finished state), the colours are copies. */
+function rasterFinish(st) {
+  const { GW, GH, n } = st;
   // bounding box of every painted cell, one cell wider for the bilinear lookup and the colour spread
-  Object.assign(grids, { bx0: Math.max(0, BX0 - 3), by0: Math.max(0, BY0 - 3), bx1: Math.min(GW - 1, BX1 + 3), by1: Math.min(GH - 1, BY1 + 3) });
-  for (const rk of ['refA', 'refE']) { // normalise, then spread into empty neighbours (bilinear coverage reaches them)
-    const ref = grids[rk], W = refW[rk]; if (!ref) continue;
+  const grids = { GW, GH, add: st.add, addA: st.addA, refA: null, era: st.era, eraA: st.eraA, refE: null,
+    bx0: Math.max(0, st.BX0 - 3), by0: Math.max(0, st.BY0 - 3), bx1: Math.min(GW - 1, st.BX1 + 3), by1: Math.min(GH - 1, st.BY1 + 3) };
+  for (const [rk, wk] of [['refA', 'wA'], ['refE', 'wE']]) { // normalise, then spread into empty neighbours (bilinear coverage reaches them)
+    if (!st[rk]) continue;
+    const ref = grids[rk] = st[rk].slice(), W = st[wk].slice();
     for (let i = 0; i < n; i++) if (W[i] > 0) { ref[i * 3] /= W[i]; ref[i * 3 + 1] /= W[i]; ref[i * 3 + 2] /= W[i]; }
     const { bx0, by0, bx1, by1 } = grids, has = new Uint8Array(n), DX = [1, -1, 0, 0, 1, -1, 1, -1], DY = [0, 0, 1, -1, 1, -1, -1, 1];
     for (let pass = 0; pass < 2; pass++) {
@@ -236,19 +280,29 @@ function brushAt(B, u, v, r, g, b, out) {
   out[0] = add > 1 ? 1 : add; out[1] = er > 1 ? 1 : er; return out;
 }
 /** Local adjustment mask weight at (u, v) for source pixel r, g, b and range metrics m (null: computed by the caller). */
+/** Weight of one planned shape (kind 1 graduated, 2 radial, 0 none) at (u, v). */
+function shapeAt(S, u, v, aspect) {
+  if (S.kind === 1) { const t = (u * aspect - S.ax) * S.dx + (v - S.ay) * S.dy; return t <= 0 ? 1 : t >= 1 ? 0 : 1 - t * t * (3 - 2 * t); }
+  if (S.kind === 2) {
+    const dx = (u - S.cx) * S.irx, dy = (v - S.cy) * S.iry, d2 = dx * dx + dy * dy;
+    if (d2 < 1) { const d = Math.sqrt(d2); if (d <= S.f0) return 1; const t = (d - S.f0) * S.fi; return 1 - t * t * (3 - 2 * t); }
+  }
+  return 0;
+}
+/**
+ * Mask weight: own shape, then strokes (add by maximum, erase multiplies), then parts in order (add = maximum,
+ * subtract = × (1 − part), intersect = × part), then invert, then the range masks.
+ */
 export function maskWeight(P, u, v, aspect, r, g, b, m, tmp = [0, 0]) {
-  const a = P.a; let w = 0;
-  if (P.kind === 1) { const t = (u * aspect - P.ax) * P.dx + (v - P.ay) * P.dy; w = t <= 0 ? 1 : t >= 1 ? 0 : 1 - t * t * (3 - 2 * t); }
-  else if (P.kind === 2) {
-    const dx = (u - P.cx) * P.irx, dy = (v - P.cy) * P.iry, d2 = dx * dx + dy * dy;
-    if (d2 < 1) { const d = Math.sqrt(d2); if (d <= P.f0) w = 1; else { const t = (d - P.f0) * P.fi; w = 1 - t * t * (3 - 2 * t); } }
+  let w = shapeAt(P, u, v, aspect);
+  if (P.brush) { brushAt(P.brush, u, v, r, g, b, tmp); w = (w > tmp[0] ? w : tmp[0]) * (1 - tmp[1]); }
+  const parts = P.parts;
+  if (parts) for (let i = 0; i < parts.length; i++) {
+    const Q = parts[i]; let q = shapeAt(Q, u, v, aspect); if (Q.inv) q = 1 - q;
+    w = Q.op === 1 ? (w > q ? w : q) : Q.op === 2 ? w * (1 - q) : w * q;
   }
-  if (P.inv && !P.brush) w = 1 - w;
-  if (P.brush) { // strokes add to the shape and erase strokes remove from it; invert applies to the result
-    brushAt(P.brush, u, v, r, g, b, tmp); w = (w > tmp[0] ? w : tmp[0]) * (1 - tmp[1]);
-    if (a.invert) w = 1 - w;
-  }
-  if (w > 0 && P.range) w *= rangeWeight(a, m);
+  if (P.inv) w = 1 - w;
+  if (w > 0 && P.range) w *= rangeWeight(P.a, m);
   return w;
 }
 /**
@@ -256,32 +310,55 @@ export function maskWeight(P, u, v, aspect, r, g, b, m, tmp = [0, 0]) {
  * (points, sizes, flags and auto-mask colours) and the output size.
  */
 const rasterCache = new Map();
-function strokeKey(strokes, OW, OH) {
-  let h = 2166136261 >>> 0; const mix = (x) => { h = Math.imul(h ^ (Math.round(x * 1e6) | 0), 16777619) >>> 0; };
-  for (const k of strokes) {
+export const rasterStats = { full: 0, incremental: 0, hits: 0 };
+/** Hashes of every prefix of the strokes: keys[i] identifies strokes[0..i]. */
+function strokeKeys(strokes, OW, OH) {
+  let h = 2166136261 >>> 0; const mix = (x) => { h = Math.imul(h ^ (Math.round(x * 1e6) | 0), 16777619) >>> 0; }, keys = [];
+  strokes.forEach((k, i) => {
     mix(k.size); mix(k.feather); mix(k.flow); mix(k.erase ? 1 : 0); mix(k.auto ? 1 : 0); mix(k.pts.length);
-    for (let i = 0; i < k.pts.length; i++) mix(k.pts[i]);
-    if (k.refs) for (let i = 0; i < k.refs.length; i++) mix(k.refs[i]);
-  }
-  return `${OW}x${OH}:${strokes.length}:${h}`;
+    for (let j = 0; j < k.pts.length; j++) mix(k.pts[j]);
+    if (k.refs) for (let j = 0; j < k.refs.length; j++) mix(k.refs[j]);
+    keys.push(`${OW}x${OH}:${i + 1}:${h}`);
+  });
+  return keys;
 }
-function cachedRaster(strokes, OW, OH) {
-  const key = strokeKey(strokes, OW, OH); let g = rasterCache.get(key);
-  if (!g) { g = rasterStrokes(strokes, OW, OH); rasterCache.set(key, g); if (rasterCache.size > 12) rasterCache.delete(rasterCache.keys().next().value); }
-  return g;
+const cachePut = (key, v) => { rasterCache.set(key, v); if (rasterCache.size > 12) rasterCache.delete(rasterCache.keys().next().value); return v; };
+/**
+ * Raster of strokes, cached. While a stroke is being painted only its last stroke changes between updates: the state
+ * of the strokes before it is kept, so each update rasterises one stroke (live painting with many strokes stays fast).
+ */
+export function cachedRaster(strokes, OW, OH) {
+  const keys = strokeKeys(strokes, OW, OH), key = keys[keys.length - 1], hit = rasterCache.get(key);
+  if (hit) { rasterStats.hits++; rasterCache.delete(key); rasterCache.set(key, hit); return hit.grids ||= rasterFinish(hit.state); }
+  const n = strokes.length; let st;
+  const pre = n > 1 ? rasterCache.get(keys[n - 2]) : null;
+  if (pre) { st = rasterClone(pre.state); rasterStats.incremental++; }
+  else {
+    rasterStats.full++;
+    st = rasterBegin(OW, OH); for (let i = 0; i < n - 1; i++) rasterAdd(st, strokes[i]);
+    if (n > 1) { cachePut(keys[n - 2], { state: st, grids: null }); st = rasterClone(st); }
+  }
+  rasterAdd(st, strokes[n - 1]);
+  return cachePut(key, { state: st, grids: rasterFinish(st) }).grids;
 }
 /** Order of the per-pixel local accumulators (see localsAt). */
-const LOCAL_KEYS = ['exposure', 'temp', 'tint', 'contrast', 'highlights', 'shadows', 'saturation', 'clarity', 'texture', 'sharpness', 'noise'];
+export const LOCAL_KEYS = ['exposure', 'temp', 'tint', 'contrast', 'highlights', 'shadows', 'saturation', 'clarity', 'texture', 'sharpness', 'noise', 'whites', 'blacks', 'dehaze', 'hue'];
+const NLK = LOCAL_KEYS.length;
+/** Graduated / radial constants of a shape (the same weights as localWeight, worked out once). */
+function planShape(a, aspect, P) {
+  if (a.type === 'linear') { const ax = a.x0 * aspect, dx = a.x1 * aspect - ax, dy = a.y1 - a.y0, L = dx * dx + dy * dy || 1e-9; Object.assign(P, { kind: 1, ax, ay: a.y0, dx: dx / L, dy: dy / L }); }
+  else if (a.type === 'radial') { const f = Math.max(1e-3, a.feather); Object.assign(P, { kind: 2, cx: a.cx, cy: a.cy, irx: 1 / a.rx, iry: 1 / a.ry, f0: 1 - f, fi: 1 / f }); }
+  return P;
+}
+const shapeRec = () => ({ kind: 0, ax: 0, ay: 0, dx: 0, dy: 0, cx: 0, cy: 0, irx: 0, iry: 0, f0: 0, fi: 0 });
 /** Prepared locals → per-adjustment develop state { a, brush, active, range, c (amounts in LOCAL_KEYS order) }. */
 export function localPlan(locs, OW, OH) {
   const aspect = OW / OH;
   return (locs || []).map((a) => {
     // the same shapes as localWeight(), with the constants worked out once (exactly the same weights)
     const P = { a, brush: a.strokes ? cachedRaster(a.strokes, OW, OH) : null, active: localActive(a), range: !!(a.lum || a.color), c: Float64Array.from(LOCAL_KEYS, (k) => a[k] || 0),
-      inv: !!a.invert, kind: 0, ax: 0, ay: 0, dx: 0, dy: 0, cx: 0, cy: 0, irx: 0, iry: 0, f0: 0, fi: 0, k: -1 };
-    if (a.type === 'linear') { const ax = a.x0 * aspect, dx = a.x1 * aspect - ax, dy = a.y1 - a.y0, L = dx * dx + dy * dy || 1e-9; Object.assign(P, { kind: 1, ax, ay: a.y0, dx: dx / L, dy: dy / L }); }
-    else if (a.type === 'radial') { const f = Math.max(1e-3, a.feather); Object.assign(P, { kind: 2, cx: a.cx, cy: a.cy, irx: 1 / a.rx, iry: 1 / a.ry, f0: 1 - f, fi: 1 / f }); }
-    return P;
+      inv: !!a.invert, ...shapeRec(), k: -1, parts: a.parts?.length ? a.parts.map((q) => planShape(q, aspect, { op: q.op === 'subtract' ? 2 : q.op === 'intersect' ? 3 : 1, inv: !!q.invert, ...shapeRec() })) : null };
+    return planShape(a, aspect, P);
   });
 }
 /** Weighted sum of every local adjustment's amounts at one pixel into acc; also the overlay weight. False when none applies. */
@@ -292,12 +369,14 @@ function localsAt(plan, nl, u, v, aspect, r, g, b, met, tmp, acc, ovl, oi, showK
     if (ovl !== null && P.k === showK) ovl[oi] = w * 255 + 0.5;
     if (!P.active) continue;
     const c = P.c;
-    if (!any) { any = true; for (let j = 0; j < 11; j++) acc[j] = c[j] * w; } else for (let j = 0; j < 11; j++) acc[j] += c[j] * w;
+    if (!any) { any = true; for (let j = 0; j < NLK; j++) acc[j] = c[j] * w; } else for (let j = 0; j < NLK; j++) acc[j] += c[j] * w;
   }
   return any;
 }
 /** Temperature ±100 of a local adjustment = ±0.5 EV of red against blue; tint ±100 = ±0.4 EV of green against red + blue. */
 export const LOCAL_TEMP_EV = 0.5, LOCAL_TINT_EV = 0.4;
+/** Local whites ±100 = ±0.9 EV on the brightest tones; blacks ±100 = ±0.012 (linear) at black; dehaze: see develop(). */
+export const WHITES_EV = 0.9, BLACKS_OFF = 0.012, DEHAZE_K = 0.7, HAZE_ADD = 0.35, HAZE_AIR = 0.8;
 const LN2 = Math.LN2;
 /** Lateral CA slider ±100 = ±0.4 % radial scale of the red or blue channel against green. */
 export const CA_UNIT = 0.004;
@@ -541,7 +620,7 @@ export function downscale(src, maxSide) {
 /** Output size for an orientation. */
 export const orientedSize = (w, h, o) => (o >= 5 && o <= 8 ? [h, w] : [w, h]);
 /** Affine map output (ox, oy) → stored (x, y) for EXIF orientation o: x = ax*ox + bx*oy + cx … */
-function orientMap(o, W, H) {
+export function orientMap(o, W, H) {
   switch (o) {
     case 2: return [-1, 0, W - 1, 0, 1, 0];
     case 3: return [-1, 0, W - 1, 0, -1, H - 1];
@@ -597,8 +676,10 @@ function geometry(src, opts) {
     if (ks && c !== 1) { sx = cc.px + (sx - cc.px) * ks[c]; sy = cc.py + (sy - cc.py) * ks[c]; }
     out[0] = sx; out[1] = sy;
   };
-  return { fr, at, vg, vig, inv: !!lens?.invertVignette, factor, moves: !!(wp || ks || kd) };
+  return { fr, at, vg, vig, inv: !!lens?.invertVignette, factor, moves: !!(wp || ks || kd), K: { kd, dcx, dcy, dm, dn, wg, wp, ks, cc } };
 }
+/** Geometry constants of a develop (used by the GPU develop, which works with displacements for f32 precision). */
+export const developGeometry = (src, opts) => geometry(src, opts);
 /**
  * Develop a source into RGBA. opts: { pipe, orientation, lens: { warp, vignette, invertVignette, frame } | null, vignette (manual, -1..1),
  *   ca: [red, blue] radial scale offsets | null, factor (source pixels are this many full-resolution pixels), rows: [first, end) output rows,
@@ -638,7 +719,7 @@ export function develop(src, opts) {
   const met = [0, 0, 0], btmp = [0, 0];
   const q8 = (v) => (v > 100 ? 100 : v < -100 ? -100 : Math.round(v));
   const acc = new Float64Array(LOCAL_KEYS.length);
-  let r, g, b, lev = 0, ltemp = 0, lcon = 0, ltint = 0, lhi = 0, lsh = 0, lsat = 0;
+  let r, g, b, lev = 0, ltemp = 0, lcon = 0, ltint = 0, lhi = 0, lsh = 0, lsat = 0, lwh = 0, lbk = 0, ldh = 0, lhue = 0;
   for (let oy = r0; oy < r1; oy++) {
     let x = bx * oy + cx, y = by * oy + cy;
     const lv = (oy + 0.5) / OH;
@@ -663,21 +744,28 @@ export function develop(src, opts) {
       if (nl) {
         if (anyRange) rangeMetrics(R, Gc, B, met);
         if (localsAt(plan, nl, (ox + 0.5) / OW, lv, aspect, r, g, b, met, btmp, acc, ovl, o >> 2, showK)) {
-          lev = acc[0]; ltemp = acc[1]; ltint = acc[2]; lcon = acc[3]; lhi = acc[4]; lsh = acc[5]; lsat = acc[6];
+          lev = acc[0]; ltemp = acc[1]; ltint = acc[2]; lcon = acc[3]; lhi = acc[4]; lsh = acc[5]; lsat = acc[6]; lwh = acc[11]; lbk = acc[12]; ldh = acc[13]; lhue = acc[14];
           if (lev || ltemp || ltint) {
             if (ltemp || ltint) { const t = ltemp * lEV, u = ltint * tEV, e = lev * LN2; R *= Math.exp(e + (t + u * 0.5) * LN2); Gc *= Math.exp(e - u * LN2); B *= Math.exp(e + (u * 0.5 - t) * LN2); }
             else { const e = Math.exp(lev * LN2); R *= e; Gc *= e; B *= e; }
           }
           if (anyMap) { const i = o >> 2; if (mC) mC[i] = q8(acc[7]); if (mT) mT[i] = q8(acc[8]); if (mS) mS[i] = q8(acc[9]); if (mN) mN[i] = q8(acc[10]); }
-        } else lev = ltemp = ltint = lcon = lhi = lsh = lsat = 0;
+        } else lev = ltemp = ltint = lcon = lhi = lsh = lsat = lwh = lbk = ldh = lhue = 0;
       }
       // clipped highlights: neutralise where every channel was near the sensor limit (avoids pink / cyan casts)
       const lo = Math.min(r, g, b);
       if (lo > 0.75) { const t = smooth(0.75, 1, lo), m = Math.max(R, Gc, B); R += (m - R) * t; Gc += (m - Gc) * t; B += (m - B) * t; }
       // shadows: lift or deepen the darker tones (multiplicative, so black stays black)
       if (sh) { const Y = 0.2126 * R + 0.7152 * Gc + 0.0722 * B, k = Math.pow(2, sh * 1.3 * (1 - smooth(0, 0.25, Y))); R *= k; Gc *= k; B *= k; }
-      if (lsh || lhi) { // local shadows / highlights (±100): lift or deepen the dark tones, brighten or pull down the bright ones
-        const Y = 0.2126 * R + 0.7152 * Gc + 0.0722 * B, k = Math.exp(LN2 * ((lsh / 100) * 1.3 * (1 - smooth(0, 0.25, Y)) + (lhi / 100) * 1.2 * smooth(0.12, 0.8, Y))); R *= k; Gc *= k; B *= k;
+      if (ldh) { // local dehaze (±100): remove (or add) a veil of haze; the haze estimate is the darkest channel
+        const dc = Math.min(R, Gc, B), a = ldh / 100;
+        if (a > 0) { const t = a * DEHAZE_K * (dc <= 0 ? 0 : dc >= 1 ? 1 : dc), q = 1 / (1 - t); R = (R - t) * q; Gc = (Gc - t) * q; B = (B - t) * q; }
+        else { const t = -a * HAZE_ADD; R += (HAZE_AIR - R) * t; Gc += (HAZE_AIR - Gc) * t; B += (HAZE_AIR - B) * t; }
+      }
+      if (lsh || lhi || lwh || lbk) { // local shadows / highlights / whites (±100, multiplicative) and blacks (an offset at the very bottom)
+        const Y = 0.2126 * R + 0.7152 * Gc + 0.0722 * B;
+        if (lsh || lhi || lwh) { const k = Math.exp(LN2 * ((lsh / 100) * 1.3 * (1 - smooth(0, 0.25, Y)) + (lhi / 100) * 1.2 * smooth(0.12, 0.8, Y) + (lwh / 100) * WHITES_EV * smooth(0.3, 1, Y))); R *= k; Gc *= k; B *= k; }
+        if (lbk) { const q = (lbk / 100) * BLACKS_OFF * (1 - smooth(0, 0.1, Y)); R = R + q > 0 ? R + q : 0; Gc = Gc + q > 0 ? Gc + q : 0; B = B + q > 0 ? B + q : 0; }
       }
       // highlight shoulder on the brightest channel (keeps hue)
       const m = Math.max(R, Gc, B);
@@ -688,6 +776,12 @@ export function develop(src, opts) {
         const k = sat * (1 + vib * (vib > 0 ? 1 - cs : cs)) * Math.max(0, 1 + lsat / 100);
         R = Y + (R - Y) * k; Gc = Y + (Gc - Y) * k; B = Y + (B - Y) * k;
       }
+      if (lhue) { // local hue (degrees): rotate the colours around the grey axis, keeping luminance
+        const t = lhue * (Math.PI / 180), co = Math.cos(t), si = Math.sin(t), r2 = R, g2 = Gc, b2 = B;
+        R = (0.2126 + co * 0.7874 - si * 0.2126) * r2 + (0.7152 - co * 0.7152 - si * 0.7152) * g2 + (0.0722 - co * 0.0722 + si * 0.9278) * b2;
+        Gc = (0.2126 - co * 0.2126 + si * 0.143) * r2 + (0.7152 + co * 0.2848 + si * 0.14) * g2 + (0.0722 - co * 0.0722 - si * 0.283) * b2;
+        B = (0.2126 - co * 0.2126 - si * 0.7874) * r2 + (0.7152 - co * 0.7152 + si * 0.7152) * g2 + (0.0722 + co * 0.9278 + si * 0.0722) * b2;
+      }
       // output curve
       R = R <= 0 ? 0 : R >= 1 ? LS : R * LS; Gc = Gc <= 0 ? 0 : Gc >= 1 ? LS : Gc * LS; B = B <= 0 ? 0 : B >= 1 ? LS : B * LS;
       const ri = R | 0, gi = Gc | 0, bi = B | 0;
@@ -696,7 +790,7 @@ export function develop(src, opts) {
         const k = 1 + lcon / 100; vr = conC(vr, k); vg2 = conC(vg2, k); vb = conC(vb, k);
       }
       if (o16) { o16[o] = vr + 0.5; o16[o + 1] = vg2 + 0.5; o16[o + 2] = vb + 0.5; o16[o + 3] = 65535; }
-      if (o8) { o8[o] = vr / 257 + 0.5; o8[o + 1] = vg2 / 257 + 0.5; o8[o + 2] = vb / 257 + 0.5; o8[o + 3] = 255; }
+      if (o8) { o8[o] = vr / 257; o8[o + 1] = vg2 / 257; o8[o + 2] = vb / 257; o8[o + 3] = 255; } // Uint8ClampedArray rounds to nearest
     }
   }
   return { width: OW, height: r1 - r0, fullHeight: OH, data16: o16, data8: o8, maps: anyMap ? maps : null, overlay: ovl };
@@ -780,7 +874,7 @@ export function localDetail(px, w, h, maps, scale = 1) {
   const bT = mT ? blurred(Math.max(1, Math.round(3 * scale)), 2) : null;
   const bC = mC ? blurred(Math.max(1, Math.round(CLARITY_RADIUS * scale)), 2) : null;
   const bN = mN ? blurred(Math.max(1, Math.round(2 * scale)), 1) : null;
-  const lim = 0.12 * max, T = 0.05 * max, inv = 1 / max;
+  const lim = 0.12 * max, T = 0.05 * max, inv = 1 / max, hf = max === 255 ? 0 : 0.5; // Uint8ClampedArray rounds by itself; Uint16Array truncates
   for (let i = 0, j = 0; i < n; i++, j += 4) {
     const y0 = Y[i]; let d = 0;
     if (mC && mC[i]) { const a = mC[i] / 100, e = y0 - bC[i], t = y0 * inv, mid = 1 - (2 * t - 1) * (2 * t - 1); d += a * 0.9 * (0.35 + 0.65 * mid) * (e * lim / (lim + Math.abs(e))); }
@@ -789,7 +883,7 @@ export function localDetail(px, w, h, maps, scale = 1) {
     if (mN && mN[i]) { const a = mN[i] / 100, e = y0 - bN[i], ae = Math.abs(e), TT = T * a, keep = ae * ae / (ae * ae + TT * TT + 1e-9); d += (bN[i] + e * keep - y0); }
     if (!d) continue;
     const r = px[j] + d, g = px[j + 1] + d, b = px[j + 2] + d;
-    px[j] = r < 0 ? 0 : r > max ? max : r + 0.5; px[j + 1] = g < 0 ? 0 : g > max ? max : g + 0.5; px[j + 2] = b < 0 ? 0 : b > max ? max : b + 0.5;
+    px[j] = r < 0 ? 0 : r > max ? max : r + hf; px[j + 1] = g < 0 ? 0 : g > max ? max : g + hf; px[j + 2] = b < 0 ? 0 : b > max ? max : b + hf;
   }
 }
 /** Mask overlay (view only): tints the pixels a local adjustment affects red, by its weight (ov: 0..255 per pixel). */
@@ -822,11 +916,12 @@ const hueWeight = (h, lo, hi, f) => (h >= lo && h <= hi ? 1 : h < lo ? Math.max(
  * go while purple or green subjects in flat areas keep their colour. Works in place on RGBA (8- or 16-bit).
  * Edge strength = luma max − min over a (2r+1)² window, r = 3 px at full resolution (scaled for previews).
  */
+const TINT_MIN = 1 / 512; // mask view tints only visibly affected pixels (also keeps CPU/GPU views identical)
 export function defringe(px, w, h, set, scale = 1) {
   const ap = (set.fringePurple || 0) / 100, ag = (set.fringeGreen || 0) / 100, mask = !!set.fringeMask;
   if (mask) { // preview of the affected areas: white = untouched, darker = more colour removed
     const max = px instanceof Uint16Array ? 65535 : 255, wgt = (ap > 0 || ag > 0) && w >= 3 && h >= 3 ? defringeWeights(px, w, h, set, scale) : null;
-    for (let i = 0, j = 0, n = w * h; i < n; i++, j += 4) { const v = Math.round(max * (1 - (wgt ? wgt[i] : 0) * 0.9)); px[j] = v; px[j + 1] = wgt && wgt[i] > 0 ? Math.round(v * 0.75) : v; px[j + 2] = v; }
+    for (let i = 0, j = 0, n = w * h; i < n; i++, j += 4) { const v = Math.round(max * (1 - (wgt ? wgt[i] : 0) * 0.9)); px[j] = v; px[j + 1] = wgt && wgt[i] > TINT_MIN ? Math.round(v * 0.75) : v; px[j + 2] = v; }
     return;
   }
   if (!(ap > 0 || ag > 0) || w < 3 || h < 3) return;
@@ -1026,7 +1121,7 @@ export function caScales(set, auto) {
  */
 export function sharpen(rgba, w, h, set, scale = 1) {
   const amount = (set.sharpen || 0) / 100; if (!(amount > 0)) return;
-  const n = w * h, max = rgba instanceof Uint16Array ? 65535 : 255, Y = new Float32Array(n);
+  const n = w * h, max = rgba instanceof Uint16Array ? 65535 : 255, hf = max === 255 ? 0 : 0.5, Y = new Float32Array(n);
   for (let i = 0, j = 0; i < n; i++, j += 4) Y[i] = 0.2126 * rgba[j] + 0.7152 * rgba[j + 1] + 0.0722 * rgba[j + 2];
   const bl = Y.slice(), tmp = new Float32Array(n), sigma = (set.sharpRadius || 1) * scale;
   if (sigma < 0.8) { blur121(bl, w, h, tmp); } else { const rb = Math.max(1, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2)); for (let k = 0; k < 3; k++) boxBlur(bl, w, h, rb, tmp); }
@@ -1042,7 +1137,7 @@ export function sharpen(rgba, w, h, set, scale = 1) {
     if (!k) continue;
     const j = i * 4, add = dd * k;
     const r = rgba[j] + add, g = rgba[j + 1] + add, b = rgba[j + 2] + add;
-    rgba[j] = r < 0 ? 0 : r > max ? max : r + 0.5; rgba[j + 1] = g < 0 ? 0 : g > max ? max : g + 0.5; rgba[j + 2] = b < 0 ? 0 : b > max ? max : b + 0.5;
+    rgba[j] = r < 0 ? 0 : r > max ? max : r + hf; rgba[j + 1] = g < 0 ? 0 : g > max ? max : g + hf; rgba[j + 2] = b < 0 ? 0 : b > max ? max : b + hf;
   }
 }
 function blur121(p, w, h, tmp) {
@@ -1077,7 +1172,7 @@ function boxBlur(p, w, h, r, tmp) {
  */
 export function denoise(rgba, w, h, luma, color, scale = 1) {
   if (!(luma > 0) && !(color > 0)) return;
-  const n = w * h, max = rgba instanceof Uint16Array ? 65535 : 255;
+  const n = w * h, max = rgba instanceof Uint16Array ? 65535 : 255, hf = max === 255 ? 0 : 0.5;
   // luminance: soft coring of fine detail against a small blur (full resolution, only when asked for)
   let Y = null, bl = null;
   if (luma > 0) {
@@ -1113,12 +1208,12 @@ export function denoise(rgba, w, h, luma, color, scale = 1) {
         ca = sa + (ca - sa) * keep; cb = sb + (cb - sb) * keep;
       }
       const b = ca + yv, r = cb + yv, g = (yv - 0.2126 * r - 0.0722 * b) / 0.7152;
-      rgba[j] = r < 0 ? 0 : r > max ? max : r + 0.5; rgba[j + 1] = g < 0 ? 0 : g > max ? max : g + 0.5; rgba[j + 2] = b < 0 ? 0 : b > max ? max : b + 0.5;
+      rgba[j] = r < 0 ? 0 : r > max ? max : r + hf; rgba[j + 1] = g < 0 ? 0 : g > max ? max : g + hf; rgba[j + 2] = b < 0 ? 0 : b > max ? max : b + hf;
     }
   }
 }
 /** 8-bit copy of a 16-bit RGBA buffer (rounded, like deepToImageData). */
-export function to8(d16) { const o = new Uint8ClampedArray(d16.length); for (let i = 0; i < d16.length; i++) o[i] = (d16[i] + 128) / 257; return o; }
+export function to8(d16) { const o = new Uint8ClampedArray(d16.length); for (let i = 0; i < d16.length; i++) o[i] = d16[i] / 257; return o; }
 /** Short camera description for the dialog. */
 export function describe(meta) {
   const c = meta.camera || {}, e = meta.exposure || {};

@@ -2,6 +2,7 @@
 // RAW sessions keep the full-resolution linear image here, so slider changes only send a small preview back.
 import { readPSD, writePSD } from './psd.js';
 import * as R from './raw.js';
+import * as G from './gpu-develop.js';
 
 let flashraw = null, decoder = null; // decoder: { threads, reason, binary } of the loaded FlashRaw build
 /**
@@ -25,6 +26,7 @@ async function engine() {
 let noThreads = false; // test override (env.decodeThreads === false)
 const sessions = new Map();
 const PREVIEW_SIDE = 1400;
+const DRAFT_SIDE = 700; // live drafts while a slider or brush is moving, when the full preview is slow (CPU, software GPU)
 
 function buffersOf(obj, out = []) { // transferable buffers inside a result (deduplicated)
   if (!obj || typeof obj !== 'object') return out;
@@ -87,6 +89,120 @@ async function developBands(src, opts, { half = false, onHalf = null } = {}) {
   ms.wall = performance.now() - t0;
   return { width: OW, height: OH, data, data8, bands: bands.length, workers: n, ms };
 }
+/**
+ * GPU develop engine (gpu-develop.js): WebGPU compute (develop + every filter), WebGL2 (per-pixel develop on the GPU,
+ * filters here) or none (the CPU band workers above). 'auto' skips software adapters, which are slower than the CPU.
+ * Any GPU error falls back to the CPU path for the rest of the session and is reported in the result.
+ */
+let enginePrefer = 'auto', engineP = null, engineNote = '';
+function gpuEngine() {
+  if (!engineP) engineP = G.openDevelopEngine(enginePrefer).then((r) => { engineNote = r.why || ''; return r.engine; }, (err) => { engineNote = err.message; return null; });
+  return engineP;
+}
+async function dropEngine(why) { const e = await engineP; engineP = Promise.resolve(null); engineNote = why; try { e?.destroy(); } catch { /* gone */ } }
+function setEnginePrefer(p) {
+  p = ['auto', 'webgpu', 'webgl2', 'cpu'].includes(p) ? p : 'auto';
+  if (p === enginePrefer && engineP) return;
+  const old = engineP; enginePrefer = p; engineP = null; old?.then((e) => { try { e?.destroy(); } catch { /* gone */ } });
+}
+const engineLabel = (e) => (e ? (e.kind === 'webgpu' ? 'WebGPU' : 'WebGL2') : 'CPU');
+async function engineInfo() {
+  const e = await gpuEngine();
+  return { prefer: enginePrefer, kind: e ? e.kind : 'cpu', label: engineLabel(e), renderer: e?.info.renderer || '', software: !!e?.info.software, note: engineNote, workers: workers().length };
+}
+/** Develop with the GPU engine when there is one; null when the CPU should do it (no engine, or it failed). */
+async function gpuDevelop(src, opts, { full = false, cache = false } = {}) {
+  const e = await gpuEngine(); if (!e) return null;
+  if (full && e.kind !== 'webgpu') return null; // WebGL2 runs the filters on one CPU thread: the band workers are faster
+  try {
+    if (e.lost) throw new Error('GPU device lost');
+    const [FW, FH] = [src.fullW || src.width, src.fullH || src.height], [OW, OH] = R.orientedSize(FW, FH, opts.orientation || 1), bits = opts.bits || 16;
+    const t0 = performance.now();
+    if (!full) { const r = await e.developRows(src, { ...opts, cacheSource: cache }); return { width: r.width, height: r.height, data: r.data, data8: null, bands: 1, workers: 0, engine: e.kind, ms: { gpu: r.ms.gpu, wall: performance.now() - t0 } }; }
+    // full resolution: bands of about GPU_BAND_PX pixels (rows + halo) so the source and scratch buffers stay small
+    const n = Math.max(1, Math.ceil((OW * OH) / Math.min(GPU_BAND_PX, e.maxPixels / 2)));
+    const bands = n === 1 ? [{ rect: null, rows: [0, OH] }] : R.planBands(src, opts, n);
+    const data = bits === 16 ? new Uint16Array(OW * OH * 4) : new Uint8ClampedArray(OW * OH * 4), data8 = bits === 16 ? new Uint8ClampedArray(OW * OH * 4) : null;
+    const ms = { gpu: 0, extract: 0, assemble: 0 };
+    for (const b of bands) {
+      const te = performance.now(), region = b.rect ? R.extractRegion(src, b.rect) : src; ms.extract += performance.now() - te;
+      const r = await e.developRows(region, { ...opts, rows: b.rows }); ms.gpu += r.ms.gpu;
+      const ta = performance.now(); data.set(r.data, b.rows[0] * OW * 4); if (data8) data8.set(R.to8(r.data), b.rows[0] * OW * 4); ms.assemble += performance.now() - ta;
+    }
+    ms.wall = performance.now() - t0;
+    return { width: OW, height: OH, data, data8, bands: bands.length, workers: 0, engine: e.kind, ms };
+  } catch (err) {
+    console.warn('GPU develop failed, using the CPU:', err);
+    await dropEngine(`GPU develop failed (${err.message}); using the CPU`);
+    return null;
+  }
+}
+const GPU_BAND_PX = 4e6;
+
+// ---- develop benchmark (Help › Run performance benchmark): synthetic sensor data, the real develop paths ----------
+function benchSource(W, H) { // half-float linear RGB: gradients, saturated blocks, fine detail
+  const tab = new Uint16Array(4096), f = new Float32Array(1), u = new Uint32Array(f.buffer);
+  for (let i = 0; i < 4096; i++) { f[0] = (i / 4095) ** 2.2; const x = u[0], e = ((x >>> 23) & 255) - 112, m = x & 0x7fffff; tab[i] = e <= 0 ? 0 : (e << 10) | (m >>> 13); }
+  const d = new Uint16Array(W * H * 3);
+  for (let y = 0; y < H; y++) for (let x = 0, i = y * W * 3; x < W; x++, i += 3) {
+    const blk = ((x >> 7) + (y >> 7)) & 1, fine = ((x ^ y) & 7) * 40;
+    d[i] = tab[((x * 3000) / W + fine + blk * 500) & 4095]; d[i + 1] = tab[((y * 3000) / H + fine) & 4095]; d[i + 2] = tab[(((x + y) * 1500) / (W + H) + 1200 + blk * 900 + fine) & 4095];
+  }
+  return { width: W, height: H, data: d, half: true };
+}
+function benchPipe() {
+  const lut = new Float32Array(R.LUT_SIZE + 1);
+  for (let i = 0; i <= R.LUT_SIZE; i++) { const x = i / R.LUT_SIZE; lut[i] = 65535 * Math.min(1, x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055); }
+  return { C: [1.7, -0.5, -0.2, -0.2, 1.5, -0.3, 0, -0.4, 1.4], knee: 0.8, cK: 0.5, shadows: 0.1, lut, vib: 0.15, sat: 1.05 };
+}
+const BENCH_LOCALS = (k) => [
+  { type: 'linear', x0: 0.5, y0: 0, x1: 0.5, y1: 0.5, exposure: -0.8, dehaze: 30, highlights: -30 },
+  { type: 'radial', cx: 0.5, cy: 0.55, rx: 0.3, ry: 0.25, exposure: 0.5, clarity: 30, whites: 20, parts: [{ op: 'subtract', type: 'radial', cx: 0.5, cy: 0.55, rx: 0.08, ry: 0.08 }] },
+  { type: 'brush', shadows: 40, hue: 15, strokes: Array.from({ length: k }, (_, i) => ({ size: 0.06, feather: 0.5, flow: 0.8, pts: [0.1 + i * 0.02, 0.6, 0.15 + i * 0.02, 0.65, 0.2 + i * 0.02, 0.7] })) },
+];
+async function devBench({ kinds = ['cpu', 'webgpu', 'webgl2'], sizes = [12, 24], dims = {}, runs = 5 } = {}, progress) {
+  const res = { engines: {}, rows: [] }, pipe = benchPipe(), med = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1];
+  const set = (k) => ({ ...R.DEFAULT_SETTINGS, nrColor: 25, sharpen: 40, local: BENCH_LOCALS(k) });
+  const small = benchSource(PREVIEW_SIDE, Math.round(PREVIEW_SIDE / 1.5)), pmp = Math.round((small.width * small.height) / 1e5) / 10;
+  for (const kind of kinds) {
+    let e = null;
+    if (kind !== 'cpu') {
+      try { e = kind === 'webgpu' ? await G.createWebGPUDevelop() : G.createWebGL2Develop(); } catch (err) { res.engines[kind] = { error: err.message }; continue; }
+      if (!e) { res.engines[kind] = { error: kind === 'webgpu' ? 'WebGPU is not available here' : 'WebGL2 is not available here' }; continue; }
+      res.engines[kind] = { renderer: e.info.renderer, software: !!e.info.software };
+    } else res.engines.cpu = { renderer: `CPU (${workers().length} develop workers)`, software: false };
+    const run = async (src, opts, full) => {
+      if (!e) return full ? developBands(src, opts) : developBands(src, opts);
+      if (full) { // the same banding as gpuDevelop
+        const [OW, OH] = R.orientedSize(src.width, src.height, 1), n = Math.max(1, Math.ceil((OW * OH) / GPU_BAND_PX)), bands = R.planBands(src, opts, n);
+        for (const b of bands) await e.developRows(R.extractRegion(src, b.rect), { ...opts, rows: b.rows });
+        return;
+      }
+      return e.developRows(src, { ...opts, cacheSource: true });
+    };
+    try {
+      // preview update (slider drag): same settings each time except one slider
+      progress?.({ text: `Develop · ${kind} · preview updates…` });
+      const pOpts = (i, k = 3) => { const st = set(k); st.local[0].exposure = -0.8 + i * 0.01; return { pipe, orientation: 1, factor: 1, settings: st, locals: R.prepareLocals(st.local, small, 1), scale: 1 / 4, bits: 8 }; };
+      await run(small, pOpts(0), false); // warm-up: shader compile, worker start
+      const tp = []; for (let i = 1; i <= runs; i++) { const t = performance.now(); await run(small, pOpts(i), false); tp.push(performance.now() - t); }
+      res.rows.push({ mp: pmp, op: 'dev_preview', kind, ms: Math.round(med(tp) * 10) / 10 });
+      // painting: each update adds a brush stroke (prepareLocals rasterises it incrementally)
+      const tb = []; for (let i = 1; i <= runs; i++) { const t = performance.now(); await run(small, pOpts(0, 3 + i), false); tb.push(performance.now() - t); }
+      res.rows.push({ mp: pmp, op: 'dev_paint', kind, ms: Math.round(med(tb) * 10) / 10 });
+      if (kind === 'webgl2') continue; // full-resolution WebGL2 develops use the CPU band workers (see gpuDevelop)
+      for (const mp of sizes) {
+        const [W, H] = dims[mp] || [Math.round(Math.sqrt(mp * 1.5e6)), Math.round(Math.sqrt(mp * 1e6 / 1.5))];
+        progress?.({ text: `Develop · ${kind} · ${mp} MP full resolution…` });
+        const src = benchSource(W, H), st = set(3), o = { pipe, orientation: 1, factor: 1, settings: st, locals: R.prepareLocals(st.local, R.downscale(src, PREVIEW_SIDE), 1), scale: 1, bits: 16 };
+        const t = performance.now(); await run(src, o, true);
+        res.rows.push({ mp, op: 'dev_full', kind, ms: Math.round(performance.now() - t) });
+      }
+    } catch (err) { res.rows.push({ mp: pmp, op: 'dev_preview', kind, ms: null, error: err.message }); }
+    finally { try { e?.destroy(); } catch { /* gone */ } }
+  }
+  return res;
+}
 const lensFor = (s, set) => (set.lens === false ? s.lensOff : s.lensOpts);
 function caFor(s, set) {
   if (set.caAuto && !s.ca) { const t = performance.now(); s.ca = R.estimateCA(s.src); s.ca.ms = Math.round(performance.now() - t); }
@@ -97,12 +213,17 @@ function devOpts(s, set, pipe, factor, scale, bits) {
   const locals = set.local ? R.prepareLocals(set.local, s.small, s.orientation) : null;
   return { pipe, orientation: s.orientation, factor, lens: lensFor(s, set), vignette: (set.vignette || 0) / 100, ca: caFor(s, set), distortion: set.distortion || 0, settings: set, locals, scale, bits };
 }
-async function previewOf(s, settings) {
+function draftOf(s) {
+  if (!s.draftSrc) { const d = R.downscale(s.small, DRAFT_SIDE); s.draftSrc = { ...d, factor: s.small.factor * d.factor }; }
+  return s.draftSrc;
+}
+async function previewOf(s, settings, draft = false) {
   const pipe = R.pipeline(s.meta, s.model, settings, s.autoW);
-  const t = performance.now();
-  const out = await developBands(s.small, devOpts(s, settings, pipe, s.small.factor, 1 / s.small.factor, 8));
+  const t = performance.now(), src = draft ? draftOf(s) : s.small;
+  const opts = devOpts(s, settings, pipe, src.factor, 1 / src.factor, 8);
+  const out = (await gpuDevelop(src, opts, { cache: true })) || { ...(await developBands(src, opts)), engine: 'cpu' };
   const tt = settings.wb === 'custom' ? { temp: settings.temp, tint: settings.tint } : s.model.tempTintFor(pipe.wb);
-  return { width: out.width, height: out.height, data: out.data, temp: tt.temp, tint: tt.tint, ms: Math.round(performance.now() - t), ca: s.ca ? { red: s.ca.red / R.CA_UNIT * 100, blue: s.ca.blue / R.CA_UNIT * 100 } : null };
+  return { width: out.width, height: out.height, data: out.data, temp: tt.temp, tint: tt.tint, ms: Math.round(performance.now() - t), engine: out.engine, draft, ca: s.ca ? { red: s.ca.red / R.CA_UNIT * 100, blue: s.ca.blue / R.CA_UNIT * 100 } : null };
 }
 
 const handlers = {
@@ -110,7 +231,7 @@ const handlers = {
   async psdWrite({ doc }) { return { bytes: writePSD(doc) }; },
   /** Open a RAW file: decode the sensor data (or report why not), build the develop preview. */
   async rawOpen({ session, bytes, settings, env }) {
-    if (env) { deviceMemory = +env.deviceMemory || 0; bandsOverride = +env.bands || 0; if ('decodeThreads' in env) noThreads = env.decodeThreads === false; if ('workerCap' in env) workerCap = env.workerCap == null ? null : Math.max(0, +env.workerCap | 0); }
+    if (env) { deviceMemory = +env.deviceMemory || 0; bandsOverride = +env.bands || 0; if ('decodeThreads' in env) noThreads = env.decodeThreads === false; if ('workerCap' in env) workerCap = env.workerCap == null ? null : Math.max(0, +env.workerCap | 0); if (env.engine) setEnginePrefer(env.engine); }
     workers(); // start the develop workers now: they load while the sensor data decodes
     const fr = await engine(), t0 = performance.now(), src = new Uint8Array(bytes);
     let raw;
@@ -153,9 +274,9 @@ const handlers = {
     info.decoder = decoder;
     return { info, decoded: true, decodeMs, preview };
   },
-  async rawPreview({ session, settings }) {
+  async rawPreview({ session, settings, draft = false }) {
     const s = sessions.get(session); if (!s?.src) throw new Error('RAW session closed');
-    return { preview: await previewOf(s, { ...R.DEFAULT_SETTINGS, ...settings }) };
+    return { preview: await previewOf(s, { ...R.DEFAULT_SETTINGS, ...settings }, !!draft) };
   },
   /**
    * Defringe eyedropper: the fringe colour around (u, v) (fractions of the preview) in a preview developed without
@@ -189,7 +310,7 @@ const handlers = {
     const opts = devOpts(s, set, pipe, factor, 1 / factor, 16);
     const [OW, OH] = R.orientedSize(src.width, src.height, s.orientation), hw = Math.floor(src.width / 2), hh = Math.floor(src.height / 2), [HW, HH] = R.orientedSize(hw, hh, s.orientation);
     let firstHalf = 0;
-    const out = await developBands(src, opts, {
+    const out = (await gpuDevelop(src, opts, { full: true })) || await developBands(src, opts, {
       half: !!half,
       onHalf: half ? (b) => { firstHalf ||= performance.now() - t; progress({ stage: 'half', width: HW, height: HH, rows: b.rows, data: b.data, ms: Math.round(performance.now() - t) }, [b.data.buffer]); } : null,
     });
@@ -198,13 +319,16 @@ const handlers = {
       const mm = k === 1 ? m : { a: m.a * k, b: m.b * k, c: m.c * k, d: m.d * k, e: m.e * k, f: m.f * k };
       const d16 = R.resampleAffine(out.data, OW, OH, mm, xform.w, xform.h);
       const total = Math.round(performance.now() - t);
-      return { width: xform.w, height: xform.h, developed: [OW, OH], data16: d16, data8: R.to8(d16), scaled: factor > 1, bands: out.bands, workers: out.workers,
+      return { width: xform.w, height: xform.h, developed: [OW, OH], data16: d16, data8: R.to8(d16), scaled: factor > 1, bands: out.bands, workers: out.workers, engine: out.engine || 'cpu',
         ms: { ...Object.fromEntries(Object.entries(out.ms).map(([q, v]) => [q, Math.round(v)])), xform: Math.round(performance.now() - tx), total } };
     }
     const total = Math.round(performance.now() - t);
     return { width: OW, height: OH, data16: out.data, data8: out.data8, scaled: factor > 1, bands: out.bands,
-      workers: out.workers, ms: { ...Object.fromEntries(Object.entries(out.ms).map(([k, v]) => [k, Math.round(v)])), half: Math.round(firstHalf), total, ca: s.ca?.ms } };
+      workers: out.workers, engine: out.engine || 'cpu', ms: { ...Object.fromEntries(Object.entries(out.ms).map(([k, v]) => [k, Math.round(v)])), half: Math.round(firstHalf), total, ca: s.ca?.ms } };
   },
+  /** Develop engine: switch ({ prefer }) and/or describe the one in use. */
+  async devEngine({ prefer } = {}) { if (prefer) setEnginePrefer(prefer); return engineInfo(); },
+  async devBench(args, progress) { return devBench(args, progress); },
   async rawJpeg({ session }) {
     const s = sessions.get(session); if (!s) throw new Error('RAW session closed');
     const p = s.fallbackJpeg || await s.raw.preview();
