@@ -6,6 +6,7 @@ const CACHE = 'tintwork-shell-v0.3.0';
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
   './src/main.js', './src/pixels.js', './src/selection.js', './src/ops.js', './src/worker.js', './src/icons.js',
+  './src/curves-editor.js', './src/autosave.js',
   './src/styles.css', './src/logo.svg',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
 ];

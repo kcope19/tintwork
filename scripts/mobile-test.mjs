@@ -256,6 +256,79 @@ async function runDevice({ tag, browserType, device, realTouch, stubShare }) {
   await shot('landscape');
   await page.setViewportSize(vp);
 
+  // --- v0.3 on touch: adjustment layers + curves, text, ellipse, move pixels, autosave ----------
+  await T(() => {
+    const t = window.tintwork; t.newDocument(600, 400, 'white', 'touch-v03');
+    const l = t.doc.layers[0], x = l.canvas.getContext('2d'); x.fillStyle = 'rgb(100,100,100)'; x.fillRect(0, 0, 300, 400); x.fillStyle = 'rgb(200,50,50)'; x.fillRect(300, 0, 300, 400);
+    t.touch(l); t.commit('Two halves'); t.fitToScreen();
+  });
+  // drag on any element with touch (CDP touch in Chromium, synthetic touch pointers in WebKit)
+  async function swipeOn(sel, pts) {
+    if (cdp) { await swipe(pts); return; }
+    const fire = (type, q) => T(([sel, type, x, y]) => document.querySelector(sel).dispatchEvent(new PointerEvent(type, { pointerId: 21, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y, button: type === 'pointermove' ? -1 : 0, buttons: type === 'pointerup' ? 0 : 1, bubbles: true, cancelable: true })), [sel, type, q.x, q.y]);
+    await fire('pointerdown', pts[0]); for (const q of pts.slice(1)) await fire('pointermove', q); await fire('pointerup', pts.at(-1));
+  }
+  await page.locator('#mobilebar [data-sheet="layers"]').tap(); await page.waitForTimeout(250);
+  await page.locator('#layersPanel [data-cmd="adjLayerMenu"]').tap();
+  await page.locator('#modalBody [data-adj-type="curves"]').tap();
+  await page.waitForSelector('#modal:not(.hidden) .curves-graph');
+  const gb = await page.locator('.curves-graph').boundingBox();
+  check(gb.width >= 250, `curve editor is finger-sized on a phone (${gb.width.toFixed(0)}px)`);
+  const gp = (x, y) => ({ x: gb.x + (x / 255) * gb.width, y: gb.y + (1 - y / 255) * gb.height });
+  await swipeOn('.curves-graph', [gp(100, 100), gp(100, 140), gp(100, 180)]);
+  const cpts = await T(() => window.tintwork.activeLayer().adj.params.rgb);
+  check(cpts.length === 3 && Math.abs(cpts[1][0] - 100) <= 3 && Math.abs(cpts[1][1] - 180) <= 3, `touch drag adds/moves a curve point (${JSON.stringify(cpts[1])})`);
+  c = await px(100, 100);
+  check(c[0] > 160, `curves layer brightens below it live (100 → ${c[0]})`);
+  await shot('curves');
+  await page.locator('#modalOk').tap();
+  await page.locator('#mobilebar [data-sheet="layers"]').tap(); await page.waitForTimeout(250);
+  await page.locator('#layersPanel [data-cmd="editLayer"]').tap();
+  check(await T(() => document.querySelector('#modalTitle').textContent === 'Curves layer'), '✎ button re-opens the adjustment layer for editing');
+  await page.locator('#modalCancel').tap();
+  // text layer
+  await T(() => { window.tintwork.setTool('text'); window.tintwork.setFg('#1060ff'); });
+  const tp = await d2s(80, 300);
+  await page.touchscreen.tap(tp.x, tp.y);
+  await page.waitForSelector('#modal:not(.hidden) #tText');
+  await page.locator('#tText').fill('Touch text'); await page.locator('#tText').dispatchEvent('input');
+  await page.locator('#tAlign [data-align="center"]').tap();
+  await shot('text');
+  await page.locator('#modalOk').tap();
+  const tl = await T(() => { const l = window.tintwork.activeLayer(); return l.kind === 'text' && l.text.text === 'Touch text' && l.text.align === 'center'; });
+  check(tl, 'text tool tap creates an editable text layer');
+  await page.waitForTimeout(400); // past the double-tap window
+  const tp2 = await T(() => { const l = window.tintwork.activeLayer(); return { x: l.x + l.canvas.width / 2, y: l.y + l.canvas.height / 2 }; });
+  const tp2s = await d2s(tp2.x, tp2.y);
+  await page.touchscreen.tap(tp2s.x, tp2s.y);
+  await page.waitForSelector('#modal:not(.hidden) #tText');
+  check(await page.locator('#tText').inputValue() === 'Touch text', 'tapping the text again re-opens it');
+  await page.locator('#modalCancel').tap();
+  // ellipse select + move selected pixels
+  await T(() => { const t = window.tintwork; t.doc.activeId = t.doc.layers[0].id; t.setTool('ellipse'); });
+  const e0 = await d2s(70, 70), e1 = await d2s(190, 190);
+  await page.waitForTimeout(400);
+  await swipe([e0, { x: (e0.x + e1.x) / 2, y: (e0.y + e1.y) / 2 }, e1]);
+  const es = await T(() => { const s = window.tintwork.doc.selection; return s && [s.mask[100 * s.W + 100], s.mask[72 * s.W + 72]]; });
+  check(es && es[0] === 255 && es[1] === 0, `touch ellipse selection (${es})`);
+  await T(() => window.tintwork.setTool('move'));
+  const m0 = await d2s(100, 100), m1 = await d2s(100, 250);
+  await page.waitForTimeout(400);
+  await swipe([m0, { x: m0.x, y: (m0.y + m1.y) / 2 }, m1]);
+  const moved = await T(() => { const l = window.tintwork.doc.layers[0], x = l.canvas.getContext('2d'); return [x.getImageData(100, 100, 1, 1).data[3], x.getImageData(100, 250, 1, 1).data[0], window.tintwork.history.entries.at(-1).label]; });
+  check(moved[0] === 0 && moved[1] === 100 && moved[2] === 'Move selection', `one-finger drag moves the selected pixels (${moved})`);
+  await T(() => window.tintwork.run('deselect'));
+  // autosave + recovery after a "crash" (reload)
+  const preCrash = await T(() => ({ n: window.tintwork.doc.layers.length, p: window.tintwork.compositePixel(100, 250) }));
+  await T(() => window.tintwork.autosaveNow());
+  await page.reload();
+  await page.waitForSelector('#modal:not(.hidden)', { timeout: 5000 });
+  await shot('recover');
+  await page.locator('#modalOk').tap();
+  await page.waitForFunction(() => window.tintwork.doc?.layers.length > 0);
+  const recovered = await T(() => ({ n: window.tintwork.doc.layers.length, p: window.tintwork.compositePixel(100, 250), kinds: window.tintwork.doc.layers.map((l) => l.kind || 'pixels').join(',') }));
+  check(recovered.n === preCrash.n && recovered.p.every((v, i) => Math.abs(v - preCrash.p[i]) <= 1), `autosave survives a reload and recovers (${recovered.kinds})`);
+
   // --- service worker / offline ------------------------------------------------------------
   const swOk = await T(() => Promise.race([navigator.serviceWorker?.ready.then(() => true), new Promise((r) => setTimeout(() => r(false), 6000))]));
   if (swOk) {

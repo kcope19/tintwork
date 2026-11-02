@@ -1,11 +1,13 @@
 // Tintwork — an original, browser-based layered image editor (Canvas 2D).
 import { floodMask, similarMask, histogram, runOp, channelHistograms } from './pixels.js';
 import { createCurvesEditor, identityCurves } from './curves-editor.js';
+import { readAutosave, writeAutosave, clearAutosave, markAutosaveClean, buildRecord, decodeImage } from './autosave.js';
 import { makeSelection, shapeMask, rectMask, combine, invertSelection, selectionCanvas, selectionOutline, maskRegion, translateSelection } from './selection.js';
 import * as ops from './ops.js';
 import { ICONS } from './icons.js';
 
 const APP = 'Tintwork';
+const APP_VERSION = '0.3.0';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -1157,6 +1159,7 @@ const cmds = {
   camera: () => { fileMode = 'open'; $('#cameraInput').click(); },
   closePolygon: () => finishPolygon(),
   editLayer: needDoc(() => editLayer()),
+  recoverAutosave: () => checkRecovery(true),
   adjLayerMenu: needDoc(() => {
     const body = document.createElement('div'); body.className = 'choice-list';
     for (const [t, n] of Object.entries(ADJ_LAYER)) {
@@ -1253,7 +1256,7 @@ const cmds = {
   zoomIn: needDoc(() => zoomAt(1.25)), zoomOut: needDoc(() => zoomAt(0.8)),
   zoomFit: needDoc(() => fitToScreen()), zoom100: needDoc(() => setZoom(1)),
   shortcuts: () => openShortcutsDialog(),
-  about: () => openInfo(`About ${APP}`, `<p>${APP} is an original, browser-based layered image editor built on the HTML Canvas 2D API.</p><p class="muted">Everything runs locally in your browser; images never leave your device.</p>`),
+  about: () => openInfo(`About ${APP}`, `<p>${APP} ${APP_VERSION} is an original, browser-based layered image editor built on the HTML Canvas 2D API.</p><p class="muted">Everything runs locally in your browser; images never leave your device.</p>`),
   brightnessContrast: needDoc(() => openAdjust(ADJ.brightnessContrast)),
   hueSaturation: needDoc(() => openAdjust(ADJ.hueSaturation)),
   exposure: needDoc(() => openAdjust(ADJ.exposure)),
@@ -1285,7 +1288,7 @@ const SHORTCUTS = {
 
 const MENUS = [
   ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Take photo (camera)…', 'camera'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
-    ['Save project', 'saveProject', 'Ctrl+S'], ['Export image…', 'export', 'Ctrl+Shift+E']]],
+    ['Save project', 'saveProject', 'Ctrl+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E']]],
   ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
     ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-',
     ['Clear', 'clear', 'Del'], ['Fill with color', 'fillSelection', 'Alt+⌫']]],
@@ -1651,13 +1654,13 @@ function paramField(p, values, onChange, defaultValue) {
 // Modal dialogs
 // ---------------------------------------------------------------------------
 let modalHandlers = null;
-function showModal({ title, body, ok, cancel, okLabel = 'OK', preview = false, passive = false, onPreviewToggle, hideCancel = false }) {
+function showModal({ title, body, ok, cancel, okLabel = 'OK', cancelLabel = 'Cancel', preview = false, passive = false, onPreviewToggle, hideCancel = false }) {
   closeSheet();
   $('#modalTitle').textContent = title;
   const mb = $('#modalBody'); mb.innerHTML = '';
   if (typeof body === 'string') mb.innerHTML = body; else mb.append(body);
   $('#modalOk').textContent = okLabel;
-  $('#modalCancel').classList.toggle('hidden', hideCancel);
+  $('#modalCancel').classList.toggle('hidden', hideCancel); $('#modalCancel').textContent = cancelLabel;
   $('#previewWrap').classList.toggle('hidden', !preview);
   $('#modalPreview').checked = true;
   $('#modalPreview').onchange = onPreviewToggle || null;
@@ -1896,6 +1899,74 @@ function saveProject() {
   const name = (doc().name || 'project').replace(/\.[^.]+$/, '').replace(/\.tintwork$/, '');
   download(new Blob([JSON.stringify(serializeProject())], { type: 'application/json' }), `${name}.tintwork.json`);
   status(`Saved project ${name}.tintwork.json`);
+  cleanEntry = history.entries[history.index];
+  autosaveNow().then(() => markAutosaveClean()).catch(() => {}); // saved: no recovery prompt for this state
+}
+
+// ---------------------------------------------------------------------------
+// Autosave (IndexedDB) and crash recovery
+// ---------------------------------------------------------------------------
+const AUTOSAVE_DELAY = 1500;
+let autosaveTimer = null, autosaveRunning = null, autosaveWarned = false, lastAutosave = 0;
+let cleanEntry = null, writtenEntry = null; // history entries that are saved to a file / already autosaved
+function scheduleAutosave() {
+  if (!doc() || recoveryPending || history.entries[history.index] === writtenEntry) return;
+  clearTimeout(autosaveTimer); autosaveTimer = setTimeout(autosaveNow, AUTOSAVE_DELAY);
+}
+/** Write the current document to IndexedDB now (serialized: one write at a time). */
+async function autosaveNow() {
+  clearTimeout(autosaveTimer); autosaveTimer = null;
+  while (autosaveRunning) await autosaveRunning;
+  const d = doc(); if (!d || recoveryPending) return;
+  const entry = history.entries[history.index];
+  autosaveRunning = (async () => {
+    try {
+      await writeAutosave(await buildRecord(d, { app: APP, appVersion: APP_VERSION, dirty: entry !== cleanEntry }));
+      writtenEntry = entry; lastAutosave = Date.now();
+    }
+    catch (err) { if (!autosaveWarned) { autosaveWarned = true; toast(`Autosave is unavailable here (${err?.message || err}). Save your project to keep your work.`, 5000); } }
+  })();
+  try { await autosaveRunning; } finally { autosaveRunning = null; }
+}
+// flush a pending save when the tab is hidden or closed (best effort)
+addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && autosaveTimer) autosaveNow(); });
+addEventListener('pagehide', () => { if (autosaveTimer) autosaveNow(); });
+
+let recoveryPending = false;
+async function restoreAutosave(r) {
+  const layers = [];
+  for (const L of r.layers) {
+    const img = await decodeImage(L.png ?? L.blob);
+    const l = createLayer(L.name, img.width, img.height, { visible: L.visible, opacity: L.opacity, blend: L.blend, x: L.x, y: L.y });
+    l.canvas.getContext('2d').drawImage(img, 0, 0); img.close?.();
+    if (L.mask?.png || L.mask?.blob) {
+      const mi = await decodeImage(L.mask.png ?? L.mask.blob), m = makeCanvas(mi.width, mi.height);
+      m.getContext('2d').drawImage(mi, 0, 0); mi.close?.();
+      l.mask = { canvas: m, enabled: L.mask.enabled !== false, rev: ++globalRev };
+    }
+    if (L.kind === 'adjust' && L.adj && l.mask) Object.assign(l, { kind: 'adjust', adj: L.adj, editMask: true });
+    if (L.kind === 'text' && L.text) Object.assign(l, { kind: 'text', text: L.text });
+    layers.push(l);
+  }
+  if (!layers.length) throw new Error('The autosaved copy has no layers');
+  const ai = Math.min(layers.length - 1, Math.max(0, r.activeIndex ?? layers.length - 1));
+  state.doc = { width: r.width, height: r.height, layers, activeId: layers[ai].id, selection: null, name: r.name || 'Recovered' };
+  afterDocChange('Recovered from autosave');
+  status(`Recovered ${state.doc.name} (${layers.length} layer${layers.length === 1 ? '' : 's'}) from the autosave of ${new Date(r.savedAt).toLocaleString()}.`);
+}
+/** On start-up (or from File ▸ Recover autosave), offer to restore the last autosaved document. */
+async function checkRecovery(manual = false) {
+  let r; try { r = await readAutosave(); } catch (err) { if (manual) status(`Autosave unavailable: ${err?.message || err}`); return; }
+  if (!r || !r.layers?.length || (!manual && (!r.dirty || doc()))) { if (manual) status('There is no autosaved document.'); return; }
+  recoveryPending = true;
+  showModal({
+    title: manual ? 'Recover autosave' : 'Recover unsaved work?',
+    body: `<p class="recover-info">${manual ? 'The last autosaved copy is' : `${APP} closed with unsaved changes. Found an autosaved copy of`} <b>${escapeHtml(r.name || 'Untitled')}</b> — ${r.width} × ${r.height} px, ${r.layers.length} layer${r.layers.length === 1 ? '' : 's'}, saved ${escapeHtml(new Date(r.savedAt).toLocaleString())}.</p>` +
+      (manual && doc() ? '<p class="muted">Recovering replaces the open document (you can still undo nothing past this point).</p>' : '<p class="muted">Discarding deletes the autosaved copy.</p>'),
+    okLabel: 'Recover', cancelLabel: manual ? 'Cancel' : 'Discard',
+    ok: () => { recoveryPending = false; restoreAutosave(r).catch((err) => openInfo('Recovery failed', `<p>${escapeHtml(err.message)}</p>`)); },
+    cancel: () => { recoveryPending = false; if (!manual) clearAutosave().catch(() => {}); },
+  });
 }
 async function loadProject(data, filename) {
   if (data.format !== PROJECT_FORMAT) throw new Error('Not a Tintwork project file');
@@ -2135,6 +2206,7 @@ function updateLayersPanel() {
 }
 
 function updateHistoryPanel() {
+  scheduleAutosave();
   const ol = $('#historyList'); ol.innerHTML = '';
   history.entries.forEach((e, i) => {
     const li = document.createElement('li'); li.textContent = e.label;
@@ -2183,6 +2255,7 @@ if ('serviceWorker' in navigator && (window.isSecureContext || location.hostname
 document.querySelectorAll('.panel-actions [data-cmd]').forEach((b) => { b.innerHTML = ICONS[b.dataset.cmd] || b.innerHTML; }); setTool('brush'); setFg(state.fg);
 $('#welcome').classList.remove('hidden');
 render();
+checkRecovery();
 status(`${APP} ready — open an image (Ctrl+O), drop one in, or create a new canvas (Ctrl+N).`);
 
 // Small automation/testing hook (also handy from the devtools console).
@@ -2190,7 +2263,9 @@ window.tintwork = {
   state, cmds, run, setTool, openFile, newDocument, history, commit, composite, activeLayer, setFg, serializeProject, openAdjust, ADJ,
   ops, setSelection, makeSelection, rectMask, renderSource, updateLayersPanel, touch, fitToScreen,
   mods, setMod, openSheet, closeSheet, toast, MAX_PIXELS, IS_IOS, fitPixels, renderExport,
-  newAdjustmentLayer, editLayer, adjCache, rasterize, renderTextLayer, textLayerAt, undo, redo, closeModal, mergeDown,
+  /** true once the current state is in IndexedDB and nothing is waiting to be written */
+  get autosaveSettled() { return !autosaveTimer && !autosaveRunning && writtenEntry === history.entries[history.index]; },
+  autosaveNow, readAutosave, clearAutosave, checkRecovery, newAdjustmentLayer, editLayer, adjCache, rasterize, renderTextLayer, textLayerAt, undo, redo, closeModal, mergeDown,
   get zoom() { return state.zoom; },
   compositePixel(x, y) { if (compDirty) { composite(); compDirty = false; } return [...compCtx.getImageData(x, y, 1, 1).data]; },
   get doc() { return state.doc; },

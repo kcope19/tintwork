@@ -634,6 +634,59 @@ await page.evaluate(() => window.tintwork.run('deselect'));
 await dragDoc([[100, 100], [110, 105]]);
 check(await page.evaluate(() => { const l = window.tintwork.doc.layers[0]; return l.x === 10 && l.y === 5; }), 'without a selection the move tool moves the whole layer');
 
+// ============================================================================
+// v0.3: autosave to IndexedDB + crash recovery
+// ============================================================================
+await page.evaluate(async () => {
+  const t = window.tintwork; t.newDocument(320, 200, 'white', 'autosave-test');
+  const l = t.doc.layers[0], x = l.canvas.getContext('2d'); x.fillStyle = 'rgb(10,200,30)'; x.fillRect(20, 20, 100, 60); t.touch(l); t.commit('Green box');
+  t.newAdjustmentLayer('invert'); t.closeModal?.();
+  t.run('layerNew'); const p = t.activeLayer(); p.name = 'Painted'; const px = p.canvas.getContext('2d'); px.fillStyle = 'rgb(250,0,0)'; px.fillRect(200, 100, 40, 40); t.touch(p); t.commit('Paint');
+  p.opacity = 0.5; p.mask = null; t.commit('Opacity');
+});
+// a text layer too
+await page.keyboard.press('t'); await clickDoc(150, 150);
+await page.locator('#tText').fill('Saved?'); await page.locator('#tText').dispatchEvent('input'); await page.locator('#modalOk').click();
+const beforeCrash = await page.evaluate(() => { const t = window.tintwork; return { n: t.doc.layers.length, kinds: t.doc.layers.map((l) => l.kind || 'pixels'), px: t.compositePixel(50, 50), px2: t.compositePixel(220, 120) }; });
+await page.waitForTimeout(1800); // debounced autosave
+await page.evaluate(() => window.tintwork.autosaveNow());
+const stored = await page.evaluate(async () => { const r = await window.tintwork.readAutosave(); return r && { dirty: r.dirty, n: r.layers.length, blob: r.layers[0].png instanceof ArrayBuffer, name: r.name }; });
+check(stored && stored.dirty && stored.n === beforeCrash.n && stored.blob && stored.name === 'autosave-test', 'document autosaved to IndexedDB (PNG bytes per layer)');
+// simulate a crash: reload without saving
+await page.reload();
+await page.waitForSelector('#modal:not(.hidden)', { timeout: 5000 });
+check(await page.locator('#modalTitle').textContent() === 'Recover unsaved work?' && (await page.locator('#modalBody').textContent()).includes('autosave-test'), 'reload after a crash offers to recover the autosaved document');
+await page.screenshot({ path: path.join(shots, '2x-autosave-recover.png') });
+await page.locator('#modalOk').click();
+await page.waitForFunction(() => window.tintwork.doc?.layers.length > 0);
+const afterCrash = await page.evaluate(() => { const t = window.tintwork; return { n: t.doc.layers.length, kinds: t.doc.layers.map((l) => l.kind || 'pixels'), px: t.compositePixel(50, 50), px2: t.compositePixel(220, 120), text: t.doc.layers.find((l) => l.kind === 'text')?.text.text, op: t.doc.layers[2].opacity, name: t.doc.name }; });
+check(afterCrash.n === beforeCrash.n && JSON.stringify(afterCrash.kinds) === JSON.stringify(beforeCrash.kinds), `recovered all layers with their kinds (${afterCrash.kinds.join(', ')})`);
+check(near(afterCrash.px, beforeCrash.px, 1) && near(afterCrash.px2, beforeCrash.px2, 1), 'recovered document is pixel-identical (composite incl. adjustment layer)');
+check(afterCrash.text === 'Saved?' && afterCrash.op === 0.5 && afterCrash.name === 'autosave-test', 'recovered text stays editable; opacity and name kept');
+await page.waitForTimeout(150);
+await page.screenshot({ path: path.join(shots, '2x-autosave-recovered.png') });
+// saving the project marks the copy clean: no prompt on the next load
+const dl = page.waitForEvent('download');
+await page.keyboard.press('Control+s'); await dl;
+await page.waitForFunction(() => window.tintwork.autosaveSettled);
+check(await page.evaluate(async () => (await window.tintwork.readAutosave()).dirty === false), 'saving the project marks the autosave clean');
+await page.reload(); await page.waitForTimeout(800);
+check(await page.locator('#modal').evaluate((m) => m.classList.contains('hidden')), `no recovery prompt after the project was saved`);
+// manual recovery still possible from the File menu
+await page.evaluate(() => window.tintwork.run('recoverAutosave'));
+await page.waitForSelector('#modal:not(.hidden)');
+check(await page.locator('#modalTitle').textContent() === 'Recover autosave', 'File ▸ Recover autosave offers the last copy');
+await page.locator('#modalCancel').click();
+// discard clears it
+await page.evaluate(async () => { const t = window.tintwork; t.newDocument(100, 100, 'white', 'discard-me'); await t.autosaveNow(); });
+await page.reload();
+await page.waitForSelector('#modal:not(.hidden)');
+await page.locator('#modalCancel').click();
+await page.waitForTimeout(200);
+check(await page.evaluate(async () => !(await window.tintwork.readAutosave())), 'Discard deletes the autosaved copy');
+await page.reload(); await page.waitForTimeout(600);
+check(await page.locator('#modal').evaluate((m) => m.classList.contains('hidden')), 'no prompt after discarding');
+
 await browser.close();
 server.close();
 if (errors.length) { console.error(`\n${errors.length} problem(s):\n` + errors.join('\n')); process.exit(1); }
