@@ -11,14 +11,16 @@ import { createEngine } from './gpu.js';
 import { createWebGPUEngine, webgpuAvailable } from './webgpu.js';
 import { runBenchmark, benchText, probeEngines, stackId, BENCH_SIZES, BENCH_OPS } from './bench.js';
 import * as mesh from './mesh.js';
-import { FX_TYPES, FX_ORDER, defaultEffect, hasActiveStyles, normalizeStyles, renderStyled } from './layerfx.js';
+import { FX_TYPES, FX_ORDER, defaultEffect, hasActiveStyles, normalizeStyles, renderStyled, effectStack } from './layerfx.js';
 import { fsaSupported, pickOpen, pickSave, writeFile, ensurePermission, listRecent, addRecent, removeRecent, clearRecent, EXPORT_TYPES } from './files.js';
 import { blendIndex, createDeep, cloneDeep, deepFromImageData, deepToImageData, reconcileDeep, compositeDeep, accToDeep, runDeep, DEEP_OPS } from './deep.js';
 import { decodePNG, encodePNG, pngInfo } from './png.js';
+import { BUILTIN_PRESETS, RATIO_ONLY, allPresets, presetById, presetPixels, centredRatioRect, constrainRect, describePreset, saveCustomPreset, deleteCustomPreset, customPresets } from './presets.js';
+import { formatName, variantSize, uniqueNamer, zipFiles } from './batch.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '0.8.0';
+const APP_VERSION = '0.9.0';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -29,7 +31,6 @@ const viewport = $('#viewport');
 // State
 // ---------------------------------------------------------------------------
 const state = {
-  doc: null,          // { width, height, layers: [], activeId, selection, name }
   tool: 'brush',
   zoom: 1, panX: 0, panY: 0,
   fg: '#e8553a', bg: '#ffffff',
@@ -51,6 +52,7 @@ const state = {
     redeyeSize: 40, redeyeDarken: 60,
     liquifySize: 120, liquifyStrength: 50, liquifyMode: 'push',
     straightenCrop: true, lookIntensity: 100,
+    cropPreset: '', cropDpi: 300, cropOrient: 'auto', cropResize: true, cropLockRatio: null, resizePreset: 'sq',
     crMode: 'sampled', crColor: null, crFuzziness: 40, refineSmooth: 0, refineShift: 0, refineFeather: 0,
   },
   selPreview: null,   // in-progress rectangle / lasso outline
@@ -71,6 +73,32 @@ const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPo
 const MAX_PIXELS = IS_IOS ? 16_000_000 : 64_000_000;
 const WARN_PIXELS = 16_000_000;
 const history = { entries: [], index: -1, limit: IS_IOS ? 24 : IS_TOUCH ? 36 : 60 };
+// ---- Document tabs (v0.9) ----------------------------------------------------------------------------
+// `state.doc` is the active document; assigning a new document opens it in a new tab after the current one.
+// Each tab keeps its own undo history, saved/autosaved markers and view (zoom/pan); the globals below
+// (history, cleanEntry, writtenEntry, state.zoom/pan) always hold the active tab's values.
+const tabs = []; // { doc, entries, index, cleanEntry, writtenEntry, view }
+let activeDoc = null;
+function stashTab() {
+  const t = tabs.find((x) => x.doc === activeDoc); if (!t) return null;
+  Object.assign(t, { entries: history.entries, index: history.index, cleanEntry, writtenEntry, view: { zoom: state.zoom, panX: state.panX, panY: state.panY } });
+  return t;
+}
+const tabDirty = (t) => t.cleanEntry ? t.entries[t.index] !== t.cleanEntry : t.index > 0;
+function setActiveDoc(d) {
+  if (d === activeDoc) return;
+  if (activeDoc && autosaveTimer) autosaveNow(); // captures the outgoing tab's history synchronously
+  const cur = stashTab();
+  let t = d && tabs.find((x) => x.doc === d);
+  if (d && !t) { t = { doc: d, entries: [], index: -1, cleanEntry: null, writtenEntry: null, view: null }; tabs.splice(cur ? tabs.indexOf(cur) + 1 : tabs.length, 0, t); }
+  activeDoc = d;
+  history.entries = t ? t.entries : []; history.index = t ? t.index : -1;
+  cleanEntry = t ? t.cleanEntry : null; writtenEntry = t ? t.writtenEntry : null;
+  if (t?.view) Object.assign(state, t.view);
+  state.xf = null; state.mxf = null; state.crop = null; state.poly = null; state.selPreview = null; state.cloneSrc = null; state.cloneOffset = null;
+  compDirty = true;
+}
+Object.defineProperty(state, 'doc', { get: () => activeDoc, set: setActiveDoc, enumerable: true }); // { width, height, layers: [], activeId, selection, name }
 // Rendering engine (gpu.js) — View ▸ Rendering engine… chooses Auto / GPU / CPU (remembered per browser).
 const ENGINE_KEY = 'tintwork.engine';
 const readPref = (k, def) => { try { return localStorage.getItem(k) || def; } catch { return def; } };
@@ -442,15 +470,15 @@ function leafItem(d, l) {
     if (hasActiveStyles(l.styles)) {
       const src = maskOn(l) ? maskedCopy(g.canvas, 0, 0, { canvas: l.mask.canvas, x: l.x, y: l.y }) : g.canvas;
       const st = styledOf(l, src, 0, 0, sig); if (!st.canvas) return null;
-      const deepSrc = maskOn(l) ? null : styledDeepOf(st, l, g.canvas, 0, 0, () => deepGroupOf(d, l));
+      const deepSrc = maskOn(l) ? null : styledDeepOf(st, l, g.canvas, 0, 0, () => deepGroupOf(d, l), src);
       return pix({ l, key: `s${l.id}:${st.ver}`, slot: `p${l.id}`, src: st.canvas, deepSrc, x: st.x, y: st.y, opacity, blend, mask: null, sig });
     }
     return pix({ l, key: `g${l.id}:${g.ver}`, slot: `p${l.id}`, src: g.canvas, x: 0, y: 0, opacity, blend, mask: maskItem(l), sig });
   }
   const sig = layerSignature(l);
   if (hasActiveStyles(l.styles)) {
-    const st = styledOf(l, renderSource(l), l.x, l.y, sig); if (!st.canvas) return null;
-    const deepSrc = l.kind ? null : styledDeepOf(st, l, l.canvas, l.x, l.y, () => deepOf(l));
+    const fxSrc = renderSource(l), st = styledOf(l, fxSrc, l.x, l.y, sig); if (!st.canvas) return null;
+    const deepSrc = l.kind ? null : styledDeepOf(st, l, l.canvas, l.x, l.y, () => deepOf(l), fxSrc);
     return pix({ l, key: `s${l.id}:${st.ver}`, slot: `p${l.id}`, src: st.canvas, deepSrc, x: st.x, y: st.y, opacity, blend: l.blend, mask: null, sig });
   }
   const deep = deepIfSynced(l), src = deep || l.canvas;
@@ -740,7 +768,7 @@ function gpuLayerList(d) {
   return resolveItems(d, null, { groups: d.depth === 16 }).map((it) => {
     if (it.kind === 'groupBegin' || it.kind === 'passBegin') return { kind: it.kind };
     if (it.kind === 'groupEnd' || it.kind === 'passEnd') return { kind: it.kind, opacity: it.opacity, mode: blendIndex(it.blend), mask: it.mask };
-    if (it.kind === 'adjust') return { kind: 'adjust', op: it.l.adj.type, params: it.l.adj.params || {}, opacity: it.opacity, mode: blendIndex(it.blend), mask: it.mask };
+    if (it.kind === 'adjust') return { kind: 'adjust', op: it.l.adj.type, params: adjParamsOf(it.l.adj), opacity: it.opacity, mode: blendIndex(it.blend), mask: it.mask };
     const src = d.depth === 16 && it.deepSrc ? it.deepSrc : it.src;
     return { kind: 'pixels', key: src === it.src ? it.key : `${it.key}D`, slot: it.slot, src, x: it.x, y: it.y, w: src.width, h: src.height, opacity: it.opacity, mode: blendIndex(it.blend), mask: it.mask };
   });
@@ -750,9 +778,6 @@ function gpuComposite(c, opts, display) {
   gfx.frame++;
   const layers = gpuLayerList(d), big = d.width > e.info.maxTextureSize || d.height > e.info.maxTextureSize;
   if (!e.canComposite(layers, d.width, d.height)) {
-    if (layers.some((L) => L.kind === 'adjust' && L.op === 'lut3d') && !big && e.canComposite(layers.filter((L) => L.kind !== 'adjust' || L.op !== 'lut3d'), d.width, d.height)) {
-      gpuNotice('lut3d', '3D LUT layers are applied on the CPU, so this document is composited on the CPU while one is visible.'); return false;
-    }
     gpuNotice(`size:${d.width}x${d.height}`, big ? `This canvas (${d.width}×${d.height}) is larger than this GPU's texture limit (${e.info.maxTextureSize}px), so it is composited on the CPU.`
       : `${d.width}×${d.height} does not fit this device's GPU memory budget (${e.budgetMB} MB), so it is composited on the CPU.`);
     return false;
@@ -890,7 +915,35 @@ function deepGroupOf(d, g) {
  * 16-bit body for a styled layer: pixels the effects did not change (styled == plain content) take the
  * 16-bit content; pixels an effect touched (shadow, glow, stroke, overlay) keep the effect's 8-bit value.
  */
-function styledDeep(st, content8, cx, cy, deep) {
+/**
+ * 16-bit styled layer (v0.9): shadow / glow / stroke coverage is computed in float (effectStack) and composited
+ * with the 16-bit pixels, so effect gradients keep 16-bit precision. Effects that recolour the pixels
+ * (overlay, inner glow / shadow) and masked layers use styledDeep8: 16-bit where the pixels show unchanged.
+ */
+function styledDeep(st, content8, cx, cy, deep, styles, fxSrc) {
+  const fx = fxSrc === content8 ? effectStack(content8, styles) : null;
+  if (!fx || fx.bodyFx || fx.w !== st.canvas.width || fx.h !== st.canvas.height) return styledDeep8(st, content8, cx, cy, deep);
+  const sw = fx.w, sh = fx.h, n = sw * sh, R = new Float32Array(n), G = new Float32Array(n), B = new Float32Array(n), A = new Float32Array(n);
+  const paint = (it) => {
+    const r = it.rgb[0] / 255, g = it.rgb[1] / 255, b = it.rgb[2] / 255, P = it.a, k = it.opacity;
+    for (let i = 0; i < n; i++) { const a = P[i] * k; if (a <= 0) continue; const q = 1 - a; R[i] = r * a + R[i] * q; G[i] = g * a + G[i] * q; B[i] = b * a + B[i] * q; A[i] = a + A[i] * q; }
+  };
+  fx.under.forEach(paint);
+  const D = deep.data, cw = deep.width, ch = deep.height;
+  for (let y = 0; y < sh; y++) {
+    const v = y + st.y - cy; if (v < 0 || v >= ch) continue;
+    for (let x = 0; x < sw; x++) {
+      const u = x + st.x - cx; if (u < 0 || u >= cw) continue;
+      const j = (v * cw + u) * 4, a = D[j + 3] / 65535; if (a <= 0) continue;
+      const i = y * sw + x, q = 1 - a; R[i] = (D[j] / 65535) * a + R[i] * q; G[i] = (D[j + 1] / 65535) * a + G[i] * q; B[i] = (D[j + 2] / 65535) * a + B[i] * q; A[i] = a + A[i] * q;
+    }
+  }
+  fx.over.forEach(paint);
+  const out = createDeep(sw, sh), o = out.data, c16 = (x) => (x <= 0 ? 0 : x >= 1 ? 65535 : Math.round(x * 65535));
+  for (let i = 0; i < n; i++) { const a = A[i]; if (a <= 0) continue; const j = i * 4; o[j] = c16(R[i] / a); o[j + 1] = c16(G[i] / a); o[j + 2] = c16(B[i] / a); o[j + 3] = c16(a); }
+  out.fx16 = true; return out;
+}
+function styledDeep8(st, content8, cx, cy, deep) {
   const sw = st.canvas.width, sh = st.canvas.height, S = ctxOf(st.canvas).getImageData(0, 0, sw, sh).data;
   const C = ctxOf(content8).getImageData(0, 0, content8.width, content8.height).data, cw = content8.width, ch = content8.height, D = deep.data;
   const out = createDeep(sw, sh), o = out.data;
@@ -904,10 +957,10 @@ function styledDeep(st, content8, cx, cy, deep) {
   }
   return out;
 }
-function styledDeepOf(st, l, content8, cx, cy, deepFn) {
+function styledDeepOf(st, l, content8, cx, cy, deepFn, fxSrc = null) {
   if (!is16()) return null;
   if (st.deep && st.deepKey === st.key) return st.deep;
-  st.deep = styledDeep(st, content8, cx, cy, deepFn()); st.deepKey = st.key; return st.deep;
+  st.deep = styledDeep(st, content8, cx, cy, deepFn(), l.styles, fxSrc); st.deepKey = st.key; return st.deep;
 }
 /** Image ▸ Mode ▸ 8 / 16 bits per channel (a history step). */
 function setDepth(bits) {
@@ -970,7 +1023,7 @@ function openAdjustmentLayerDialog(l, isNew = false) {
   } else { status(`${ADJ_LAYER[type]} has no settings.`); return; }
   showModal({
     title: `${ADJ_LAYER[type]} layer`, body, passive: true, okLabel: 'Done',
-    ok: () => { apply(); if (JSON.stringify(before) !== JSON.stringify(l.adj)) commit(`Edit ${ADJ_LAYER[type]} layer`); else if (isNew) updateLayersPanel(); },
+    ok: () => { apply(); if (JSON.stringify(before) !== JSON.stringify(l.adj)) commit(`Edit ${ADJ_LAYER[type]} layer`); else if (isNew) updateLayersPanel(); if (isNew && type !== 'lut3d') recordStep({ t: 'adjLayer', type, params: l.adj.params, name: l.name }); },
     cancel: () => {
       l.adj = before; compDirty = true;
       if (isNew) { undo(); history.entries.length = history.index + 1; updateHistoryPanel(); }
@@ -1316,16 +1369,17 @@ setInterval(() => {
   if (doc()?.selection || state.poly || state.selPreview) { antsOffset = (antsOffset + 1) % 10; requestRender(); }
 }, 90);
 
+const TABBAR_H = 28; // the document tab strip overlays the top of the viewport
 function fitToScreen() {
   const d = doc(); if (!d) return;
   const w = viewport.clientWidth, h = viewport.clientHeight;
-  state.zoom = Math.min((w - 48) / d.width, (h - 48) / d.height, 1);
+  state.zoom = Math.min((w - 48) / d.width, (h - 48 - TABBAR_H) / d.height, 1);
   centerView();
 }
 function centerView() {
   const d = doc();
   state.panX = Math.round((viewport.clientWidth - d.width * state.zoom) / 2);
-  state.panY = Math.round((viewport.clientHeight - d.height * state.zoom) / 2);
+  state.panY = Math.round((viewport.clientHeight + TABBAR_H - d.height * state.zoom) / 2);
   updateZoomLabel(); requestRender();
 }
 function zoomAt(factor, cx, cy) {
@@ -1533,7 +1587,7 @@ const toolHandlers = {
   wand: { down(p, e) { magicWand(p, selModeFor(e)); } },
   crop: {
     down(p) { drag = { start: clampPt(p) }; },
-    move(p, e) { state.crop = rectFromPoints(drag.start, clampPt(p), e.shiftKey); buildOptionsBar(); requestRender(); },
+    move(p, e) { const a = cropAspect(), d = doc(); state.crop = a ? constrainRect(drag.start, clampPt(p), a.w, a.h, { w: d.width, h: d.height }) : rectFromPoints(drag.start, clampPt(p), e.shiftKey); buildOptionsBar(); requestRender(); },
     up() { if (state.crop && (state.crop.w < 2 || state.crop.h < 2)) state.crop = null; buildOptionsBar(); requestRender(); },
   },
   brush: paintTool('brush'),
@@ -3073,7 +3127,19 @@ const cmds = {
   imageSize: needDoc(() => openImageSizeDialog()),
   canvasSize: needDoc(() => openCanvasSizeDialog()),
   cropToSelection: needDoc(() => { const s = doc().selection; if (!s) { status('Make a selection first.'); return; } cropTo({ x: s.x, y: s.y, w: s.w, h: s.h }); }),
-  cropApply: needDoc(() => { if (state.crop) cropTo(state.crop); }),
+  cropApply: needDoc(() => { if (state.crop) applyCropTool(); }),
+  // v0.9
+  docNext: () => cycleTab(1), docPrev: () => cycleTab(-1), docClose: () => { if (tabs.length) closeTab(); },
+  layerToDoc: needDoc(() => openLayerToDocDialog()),
+  resizePresets: needDoc(() => openResizePresetDialog()),
+  cropPresetTool: needDoc(() => { setTool('crop'); if (!state.opts.cropPreset) setCropPreset('sq'); else setCropPreset(state.opts.cropPreset); }),
+  exportMulti: needDoc(() => openExportVariantsDialog()),
+  batch: () => openBatchDialog(),
+  actions: () => openActionsDialog(),
+  actionRecord: () => startRecording(),
+  actionStop: () => stopRecording(),
+  autoEnhanceOptions: () => openAutoOptionsDialog('enhance'),
+  autoWBOptions: () => openAutoOptionsDialog('wb'),
   cropCancel: () => { state.crop = null; buildOptionsBar(); requestRender(); },
   zoomIn: needDoc(() => zoomAt(1.25)), zoomOut: needDoc(() => zoomAt(0.8)),
   zoomFit: needDoc(() => fitToScreen()), zoom100: needDoc(() => setZoom(1)),
@@ -3108,7 +3174,8 @@ function run(name) {
   }
   if (state.xf && !XF_SAFE.has(name)) applyTransform();
   if (state.mxf && !MXF_SAFE.has(name)) { status(`Finish the ${state.mxf.mode === 'warp' ? 'warp' : 'perspective transform'} first: Enter applies, Esc cancels.`); return; }
-  cmds[name]?.();
+  if (REC_CMDS.has(name) && doc()) recordStep({ t: 'cmd', name });
+  return cmds[name]?.();
 }
 
 // Ctrl+V is handled by the paste event (so system-clipboard images work too).
@@ -3122,6 +3189,7 @@ const SHORTCUTS = {
   'mod+b': 'brightnessContrast', 'mod+u': 'hueSaturation', 'mod+l': 'levels', 'mod+m': 'curves', 'mod+i': 'invert', 'mod+shift+u': 'grayscale',
   'mod+t': 'freeTransform', 'mod+alt+r': 'refineEdge',
   'mod+shift+l': 'autoEnhance',
+  'mod+tab': 'docNext', 'mod+shift+tab': 'docPrev', 'mod+f6': 'docNext', 'mod+shift+f6': 'docPrev', 'mod+alt+w': 'docClose',
   'mod+g': 'groupLayers', 'mod+shift+g': 'ungroup', 'mod+alt+g': 'clipToggle',
   // Alternates for combos the browser or OS keeps (see RESERVED in platform.js); the menus show these where needed.
   'mod+alt+n': 'new', 'mod+shift+alt+n': 'layerNew', 'mod+alt+t': 'freeTransform', 'mod+shift+m': 'curves',
@@ -3134,7 +3202,7 @@ function specCombo(spec) {
   return (parts.includes('Ctrl') ? 'mod+' : '') + (parts.includes('Shift') ? 'shift+' : '') + (parts.includes('Alt') ? 'alt+' : '') + key;
 }
 const ALTERNATE_KEYS = { new: 'Ctrl+Alt+N', layerNew: 'Ctrl+Alt+Shift+N', freeTransform: 'Ctrl+Alt+T', curves: 'Ctrl+Shift+M',
-  invertSelection: 'Shift+F7', copyMerged: 'Ctrl+Alt+Shift+C', zoom100: 'Ctrl+Alt+0', feather: 'Shift+F6' };
+  docNext: 'Ctrl+F6', docPrev: 'Ctrl+Shift+F6', invertSelection: 'Shift+F7', copyMerged: 'Ctrl+Alt+Shift+C', zoom100: 'Ctrl+Alt+0', feather: 'Shift+F6' };
 /** The shortcut to show for a command: its usual combo, or the alternate when this browser/OS reserves the usual one. */
 function shortcutFor(cmd, spec) {
   if (!spec) return '';
@@ -3145,13 +3213,14 @@ const shortcutLabel = (cmd, spec) => keyLabel(shortcutFor(cmd, spec));
 
 const MENUS = [
   ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Take photo (camera)…', 'camera'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
-    ['Open recent…', 'openRecent'], '-', ['Save', 'saveProject', 'Ctrl+S'], ['Save as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E']]],
+    ['Open recent…', 'openRecent'], '-', ['Save', 'saveProject', 'Ctrl+S'], ['Save as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E'], ['Export multiple sizes…', 'exportMulti'], ['Batch process…', 'batch'], '-',
+    ['Next document', 'docNext', 'Ctrl+Tab'], ['Previous document', 'docPrev', 'Ctrl+Shift+Tab'], ['Close document', 'docClose', 'Ctrl+Alt+W']]],
   ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
     ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-',
     ['Clear', 'clear', 'Del'], ['Fill with color', 'fillSelection', 'Alt+⌫'], '-', ['Free transform', 'freeTransform', 'Ctrl+T'], ['Perspective', 'perspective'], ['Warp', 'warp']]],
-  ['Image', [['Image size…', 'imageSize'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], '-',
+  ['Image', [['Image size…', 'imageSize'], ['Resize to preset…', 'resizePresets'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], ['Crop with preset', 'cropPresetTool'], '-',
     ['Rotate 90° clockwise', 'rotateCW'], ['Rotate 90° counter-clockwise', 'rotateCCW'], ['Rotate 180°', 'rotate180'],
-    ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Auto enhance', 'autoEnhance', 'Ctrl+Shift+L'], ['Auto white balance', 'autoWhiteBalance'],
+    ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Auto enhance', 'autoEnhance', 'Ctrl+Shift+L'], ['Auto enhance options…', 'autoEnhanceOptions'], ['Auto white balance', 'autoWhiteBalance'], ['Auto white balance options…', 'autoWBOptions'],
     ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
   ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
     ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
@@ -3159,7 +3228,7 @@ const MENUS = [
     ['New adjustment layer: Brightness / contrast…', 'adjLayer_brightnessContrast'], ['New adjustment layer: Hue / saturation…', 'adjLayer_hueSaturation'],
     ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: White balance…', 'adjLayer_whiteBalance'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
     ['New adjustment layer: 3D LUT from .cube file…', 'lutImport'],
-    ['Edit layer settings…', 'editLayer'], ['Convert to live layer (editable filters)', 'convertSmart'], ['Convert text / live layer to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Delete layer', 'layerDelete'], '-',
+    ['Edit layer settings…', 'editLayer'], ['Convert to live layer (editable filters)', 'convertSmart'], ['Convert text / live layer to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Duplicate to document…', 'layerToDoc'], ['Delete layer', 'layerDelete'], '-',
     ['Move up', 'layerUp', 'Ctrl+]'], ['Move down', 'layerDown', 'Ctrl+['], ['Merge down / merge group', 'layerMergeDown', 'Ctrl+E'], '-',
     ['New group', 'groupNew'], ['Group layer', 'groupLayers', 'Ctrl+G'], ['Ungroup', 'ungroup', 'Ctrl+Shift+G'], ['Create / release clipping mask', 'clipToggle', 'Ctrl+Alt+G'], '-',
     ['Align left edges', 'alignLeft'], ['Align horizontal centers', 'alignHCenter'], ['Align right edges', 'alignRight'],
@@ -3174,6 +3243,7 @@ const MENUS = [
     ['Auto enhance (adds editable layers)', 'autoEnhance'], ['Auto white balance (adds a layer)', 'autoWhiteBalance'], ['White balance picker', 'wbPicker'], '-',
     ['Invert', 'invert', 'Ctrl+I'], ['Grayscale', 'grayscale', 'Ctrl+Shift+U'], ['Sepia tone…', 'sepia']]],
   ['Filter', [['Convert to live layer', 'convertSmart'], '-', ['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
+  ['Actions', [['Actions…', 'actions'], ['Start recording', 'actionRecord'], ['Stop recording and save…', 'actionStop'], '-', ['Batch process…', 'batch']]],
   ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1'], '-', ['Rendering engine…', 'engine']]],
   ['Help', [['Keyboard shortcuts', 'shortcuts', '?'], ['Run performance benchmark…', 'benchmark'], [`About ${APP}`, 'about']]],
 ];
@@ -3719,7 +3789,7 @@ function openAdjust(def, presetValues = {}) {
       try {
         if (deepSrc) await deepOp(l, deepSrc, r, def.op, params(), info, selMask);
         else { const out = await ops.process(def.op, original, params(), info, selMask); c.putImageData(out, r.x, r.y); touchIt(); }
-        requestRender(); commit(def.title); status(def.title); updateLayersPanel();
+        requestRender(); commit(def.title); status(def.title); updateLayersPanel(); recordStep({ t: 'adjust', op: def.op, params: params() });
       } catch (err) { c.putImageData(original, r.x, r.y); compDirty = true; requestRender(); status(`${def.title} failed: ${err.message}`); }
       finally { setBusy(-1); }
     },
@@ -3916,7 +3986,7 @@ function openImageSizeDialog() {
   P.addEventListener('input', () => { W.value = Math.max(1, Math.round((d.width * P.value) / 100)); H.value = Math.max(1, Math.round((d.height * P.value) / 100)); });
   showModal({ title: 'Image size', body, ok: () => {
     const w = Math.min(16384, Math.max(1, +W.value | 0)), h = Math.min(16384, Math.max(1, +H.value | 0));
-    if (w !== d.width || h !== d.height) resizeImage(w, h);
+    if (w !== d.width || h !== d.height) { resizeImage(w, h); recordStep({ t: 'resize', w, h }); }
   } });
 }
 function openCanvasSizeDialog() {
@@ -4127,7 +4197,7 @@ async function openFile(file, mode = 'open') {
     status(`${mode === 'place' && doc() ? 'Placed' : 'Opened'} ${file.name} (${img.naturalWidth}×${img.naturalHeight})`);
   } catch (err) { status(`Error: ${err.message}`); console.error(err); }
 }
-for (const id of ['#fileInput', '#cameraInput']) $(id).addEventListener('change', (e) => { const f = e.target.files[0]; if (f) openFile(f, fileMode); e.target.value = ''; });
+for (const id of ['#fileInput', '#cameraInput']) $(id).addEventListener('change', async (e) => { const fs = [...e.target.files]; e.target.value = ''; for (const f of fs) await openFile(f, fileMode); });
 
 function serializeProject() {
   const d = doc();
@@ -4194,9 +4264,9 @@ async function writeProjectTo(h) {
   } finally { setBusy(-1); }
 }
 async function openWithPicker() {
-  let h;
-  try { h = await pickOpen(); } catch (err) { status(`Open: ${err.message}`); return; }
-  if (h) await openHandle(h);
+  let hs;
+  try { hs = await pickOpen(true); } catch (err) { status(`Open: ${err.message}`); return; }
+  for (const h of hs || []) await openHandle(h); // several files open as tabs
 }
 /** Open a FileSystemFileHandle (picker, recent list, or the OS via the installed app's file handler). */
 async function openHandle(h, { remember = true } = {}) {
@@ -4252,17 +4322,17 @@ const newSlot = () => `doc-${Date.now().toString(36)}-${Math.random().toString(3
  * Autosave record v2: the last AUTOSAVE_STEPS history entries with every canvas stored once
  * (history canvases are immutable and shared between entries, so each image is encoded and written once).
  */
-function encodeHistory(d, dirty) {
+function encodeHistory(d, dirty, hist = history) {
   const images = new Map(), ref = (c) => { const r = imageRef(c); images.set(r.id, r.encode); return r.id; };
   const dref = (dd) => { const r = deepRef(dd); images.set(r.id, r.encode); return r.id; };
-  const n = history.entries.length;
+  const n = hist.entries.length;
   // 16-bit data is autosaved for the current step only, and only up to a size cap (it is 8 bytes/pixel)
-  const curSnap = history.entries[history.index].snap;
+  const curSnap = hist.entries[hist.index].snap;
   let deepPx = 0; for (const l of curSnap.layers) if (l.deep) deepPx += l.deep.width * l.deep.height;
   const deepOk = curSnap.depth === 16 && deepPx <= AUTOSAVE_DEEP_PX;
   if (curSnap.depth === 16 && !deepOk) gpuNotice('autosave-deep', 'This 16-bit document is too large for 16-bit autosave; crash recovery keeps an 8-bit copy. Save the project to keep 16-bit data.');
-  const start = Math.max(0, Math.min(history.index, n - AUTOSAVE_STEPS)), end = Math.min(n, start + AUTOSAVE_STEPS);
-  const entries = history.entries.slice(start, end).map((e) => {
+  const start = Math.max(0, Math.min(hist.index, n - AUTOSAVE_STEPS)), end = Math.min(n, start + AUTOSAVE_STEPS);
+  const entries = hist.entries.slice(start, end).map((e) => {
     const sn = e.snap;
     return {
       label: e.label,
@@ -4281,25 +4351,27 @@ function encodeHistory(d, dirty) {
       },
     };
   });
-  const cur = history.entries[history.index].snap;
+  const cur = hist.entries[hist.index].snap;
   const record = {
     format: 'tintwork-autosave', version: 2, app: APP, appVersion: APP_VERSION, slot: d.slot, name: d.name || 'Untitled',
     width: d.width, height: d.height, savedAt: Date.now(), dirty, layerCount: cur.layers.length, steps: entries.length,
-    history: { index: history.index - start, entries }, imageIds: [...images.keys()],
+    history: { index: hist.index - start, entries }, imageIds: [...images.keys()],
   };
   return { record, images };
 }
 /** Write the current document to IndexedDB now (serialized: one write at a time). */
 async function autosaveNow() {
   clearTimeout(autosaveTimer); autosaveTimer = null;
-  while (autosaveRunning) await autosaveRunning;
   const d = doc(); if (!d || recoveryPending || history.index < 0) return;
-  const entry = history.entries[history.index];
+  // capture this document's history now: the user may switch tabs while an earlier write finishes
+  const hist = { entries: history.entries.slice(), index: history.index }, entry = hist.entries[hist.index], dirty = entry !== cleanEntry;
+  while (autosaveRunning) await autosaveRunning;
   autosaveRunning = (async () => {
     try {
-      const { record, images } = encodeHistory(d, entry !== cleanEntry);
+      const { record, images } = encodeHistory(d, dirty, hist);
       await writeAutosave(record, images);
-      writtenEntry = entry; lastAutosave = Date.now();
+      if (doc() === d) writtenEntry = entry; else { const t = tabs.find((x) => x.doc === d); if (t) t.writtenEntry = entry; }
+      lastAutosave = Date.now();
     }
     catch (err) { if (!autosaveWarned) { autosaveWarned = true; toast(`Autosave is unavailable here (${err?.message || err}). Save your project to keep your work.`, 5000); } }
   })();
@@ -4383,9 +4455,22 @@ const recordLayers = (r) => r.layerCount ?? r.layers?.length ?? 0;
  * On start-up, offer the documents that closed with unsaved changes; File ▸ Recover autosave lists
  * every slot (up to MAX_SLOTS documents, each with its recent undo history).
  */
+// Documents open in another Tintwork window are not "closed with unsaved changes": ask the other windows
+// which autosave slots they hold (they answer over a BroadcastChannel) and leave those out of the prompt.
+const liveChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('tintwork.live') : null;
+liveChannel?.addEventListener('message', (e) => {
+  if (e.data?.type === 'who') liveChannel.postMessage({ type: 'open', slots: tabs.map((t) => t.doc?.slot).filter(Boolean) });
+});
+function otherWindowSlots(wait = 250) {
+  if (!liveChannel) return Promise.resolve(new Set());
+  const slots = new Set(), on = (e) => { if (e.data?.type === 'open') e.data.slots.forEach((s) => slots.add(s)); };
+  liveChannel.addEventListener('message', on); liveChannel.postMessage({ type: 'who' });
+  return new Promise((r) => setTimeout(() => { liveChannel.removeEventListener('message', on); r(slots); }, wait));
+}
 async function checkRecovery(manual = false) {
   let list; try { list = await listAutosaves(); } catch (err) { if (manual) status(`Autosave unavailable: ${err?.message || err}`); return; }
-  list = list.filter((r) => recordLayers(r) > 0 && (manual || r.dirty));
+  const live = await otherWindowSlots(), mine = new Set(tabs.map((t) => t.doc?.slot));
+  list = list.filter((r) => recordLayers(r) > 0 && (manual || r.dirty) && !live.has(r.slot) && !(manual && mine.has(r.slot) && r.slot !== doc()?.slot));
   if (!list.length || (!manual && doc())) { if (manual) status('There is no autosaved document.'); return; }
   recoveryPending = true;
   const body = document.createElement('div');
@@ -4458,7 +4543,7 @@ async function loadProject(data, filename) {
 
 // drag & drop: opens a file when nothing is open, otherwise places it as a new layer (hold Shift to open instead)
 let dragDepth = 0;
-window.addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; $('#dropzone').classList.remove('hidden'); });
+window.addEventListener('dragenter', (e) => { e.preventDefault(); if (!e.dataTransfer?.types?.includes('Files')) return; dragDepth++; $('#dropzone').classList.remove('hidden'); });
 window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('#dropzone').classList.add('hidden'); } });
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', async (e) => {
@@ -4469,7 +4554,7 @@ window.addEventListener('drop', async (e) => {
     await openFile(files[i], doc() && !isProject && !(i === 0 && e.shiftKey) ? 'place' : 'open');
   }
 });
-window.addEventListener('beforeunload', (e) => { if (history.entries.length > 1) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', (e) => { stashTab(); if (tabs.some(tabDirty)) { e.preventDefault(); e.returnValue = ''; } });
 
 // ---------------------------------------------------------------------------
 // UI building
@@ -4591,7 +4676,13 @@ function buildOptionsBar() {
     case 'wbpick': parts.push(`<span class="muted">Click a spot that should be neutral grey or white · edits the selected white-balance layer, or adds one</span>`, `<button data-cmd="autoWhiteBalance">Auto</button>`, `<button data-cmd="adjLayer_whiteBalance">Temperature / tint layer…</button>`); break;
     case 'crop': {
       const c = state.crop;
-      parts.push(`<span class="muted">${c ? `${c.w} × ${c.h} px` : 'Drag a crop rectangle · Shift = square'}</span>`);
+      const cp = o.cropPreset && o.cropPreset !== 'orig' ? presetById(o.cropPreset) : null;
+      parts.push(`<label>Ratio <select data-croppreset title="Crop presets: social, banner and print sizes">${presetOptionsHTML(o.cropPreset)}</select></label>`,
+        `<button data-cropswap title="Swap orientation" ${cropAspect() ? '' : 'disabled'}>⇄</button>`,
+        `<label title="Lock the current crop's aspect ratio"><input type="checkbox" data-croplock ${o.cropLockRatio ? 'checked' : ''} ${c || o.cropLockRatio ? '' : 'disabled'}/> Lock</label>`);
+      if (cp && cp.inW != null) parts.push(`<label>DPI <input type="number" data-opt="cropDpi" min="72" max="1200" value="${o.cropDpi}" style="width:60px"/></label>`);
+      if (cp && cp.rw == null) parts.push(`<label title="After cropping, resize to the preset's pixel size"><input type="checkbox" data-opt="cropResize" ${o.cropResize ? 'checked' : ''}/> Resize to ${cp.inW != null ? `${Math.round((o.cropOrient === 'landscape' ? cp.inH : cp.inW) * o.cropDpi)}×${Math.round((o.cropOrient === 'landscape' ? cp.inW : cp.inH) * o.cropDpi)}` : `${cp.w}×${cp.h}`}</label>`);
+      parts.push(`<span class="muted">${c ? `${c.w} × ${c.h} px` : cropAspect() ? 'Drag a crop rectangle (ratio locked)' : 'Drag a crop rectangle · Shift = square'}</span>`);
       if (c) parts.push(`<button data-cmd="cropApply" class="primary">Apply (Enter)</button>`, `<button data-cmd="cropCancel">Cancel (Esc)</button>`);
       break;
     }
@@ -4609,6 +4700,13 @@ function buildOptionsBar() {
   bar.querySelectorAll('[data-xf]').forEach((inp) => inp.addEventListener('change', () => setXfField(inp.dataset.xf, +inp.value)));
   bar.querySelectorAll('[data-selmode]').forEach((b) => b.addEventListener('click', () => { o.selMode = b.dataset.selmode; buildOptionsBar(); }));
   bar.querySelectorAll('[data-seg]').forEach((b) => b.addEventListener('click', () => { o[b.dataset.seg] = b.dataset.val; buildOptionsBar(); }));
+  bar.querySelector('[data-croppreset]')?.addEventListener('change', (e) => setCropPreset(e.target.value));
+  bar.querySelector('[data-cropswap]')?.addEventListener('click', () => {
+    const d = doc(), a = cropAspect(); if (!a) return;
+    if (o.cropLockRatio) o.cropLockRatio = { w: a.h, h: a.w }; else { const land = a.w > a.h; o.cropOrient = land ? 'portrait' : 'landscape'; if (o.cropPreset === 'orig' || presetById(o.cropPreset)?.rw != null) o.cropLockRatio = { w: a.h, h: a.w }; }
+    const b = cropAspect(); state.crop = centredRatioRect(d.width, d.height, b.w, b.h); buildOptionsBar(); requestRender();
+  });
+  bar.querySelector('[data-croplock]')?.addEventListener('change', (e) => { const c = state.crop; o.cropLockRatio = e.target.checked && c ? { w: c.w, h: c.h } : null; buildOptionsBar(); });
   bar.querySelectorAll('[data-opt]').forEach((inp) => {
     inp.addEventListener('input', () => {
       const k = inp.dataset.opt;
@@ -4759,7 +4857,7 @@ function updateLayersPanel() {
       const done = () => { const v = input.value.trim(); if (v && v !== l.name) { l.name = v; commit('Rename layer'); } else updateLayersPanel(); };
       input.addEventListener('blur', done); input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.value = l.name; input.blur(); } });
     });
-    li.addEventListener('dragstart', (e) => { dragLayerId = l.id; e.dataTransfer.effectAllowed = 'move'; });
+    li.addEventListener('dragstart', (e) => { dragLayerId = l.id; e.dataTransfer.effectAllowed = 'copyMove'; e.dataTransfer.setData('application/x-tintwork-layer', String(l.id)); });
     const clearDrop = () => li.classList.remove('dragover', 'dragbelow', 'drop-into');
     li.addEventListener('dragover', (e) => {
       if (dragLayerId == null) return; e.preventDefault(); e.stopPropagation();
@@ -4823,6 +4921,68 @@ function updateDocInfo() {
   try { updateTitle(); } catch { /* early boot */ }
   const d = doc(); $('#docinfo').textContent = d ? `${d.name} — ${d.width} × ${d.height} px · ${d.depth === 16 ? 16 : 8}-bit · ${d.layers.length} layer${d.layers.length > 1 ? 's' : ''} · ${engineLabel()}` : `${engineLabel()} engine`;
 }
+// ---- Document tabs UI (v0.9) --------------------------------------------------------------------------
+function renderTabs() {
+  const bar = $('#tabbar'); if (!bar) return;
+  stashTab();
+  bar.classList.toggle('hidden', !tabs.length);
+  bar.replaceChildren(...tabs.map((t, i) => {
+    const b = document.createElement('div'); b.className = 'doc-tab' + (t.doc === activeDoc ? ' active' : ''); b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(t.doc === activeDoc)); b.dataset.index = i; b.title = `${t.doc.name || 'Untitled'} — ${t.doc.width}×${t.doc.height}${t.doc.depth === 16 ? ', 16-bit' : ''}\nDrop a layer here to copy it into this document`;
+    const n = document.createElement('span'); n.className = 'tab-name'; n.textContent = (t.doc.name || 'Untitled') + (tabDirty(t) ? ' •' : '');
+    const x = document.createElement('button'); x.type = 'button'; x.className = 'tab-close'; x.textContent = '×'; x.title = `Close (${keyLabel('Ctrl+Alt+W')})`; x.setAttribute('aria-label', `Close ${t.doc.name || 'Untitled'}`);
+    x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(i); });
+    b.addEventListener('mousedown', (e) => { if (e.button === 1) { e.preventDefault(); closeTab(i); } });
+    b.addEventListener('click', () => switchTab(i));
+    b.addEventListener('dragover', (e) => { if (dragLayerId == null || t.doc === activeDoc) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; b.classList.add('drop'); });
+    b.addEventListener('dragleave', () => b.classList.remove('drop'));
+    b.addEventListener('drop', (e) => { if (dragLayerId == null || t.doc === activeDoc) return; e.preventDefault(); e.stopPropagation(); b.classList.remove('drop'); const id = dragLayerId; dragLayerId = null; copyLayerToDoc(id, i); });
+    b.append(n, x); return b;
+  }));
+}
+function switchTab(i) {
+  const t = tabs[(i + tabs.length) % tabs.length]; if (!t || t.doc === activeDoc) return;
+  if (state.mxf) cancelMeshXf(); if (state.xf) cancelTransform(true);
+  state.doc = t.doc;
+  if (!t.view) fitToScreen();
+  $('#welcome').classList.add('hidden'); updateAll(); updateTitle();
+  status(`${t.doc.name || 'Untitled'} (${tabs.indexOf(t) + 1} of ${tabs.length})`);
+}
+const cycleTab = (dir) => { if (tabs.length > 1) switchTab(tabs.findIndex((t) => t.doc === activeDoc) + dir); };
+/** Close tab i (default: the active one); asks first when it has unsaved changes. Resolves true when closed. */
+function closeTab(i = tabs.findIndex((t) => t.doc === activeDoc), { force = false } = {}) {
+  stashTab(); const t = tabs[i]; if (!t) return Promise.resolve(false);
+  const doClose = () => {
+    if (t.doc === activeDoc) { if (state.mxf) cancelMeshXf(); if (state.xf) cancelTransform(true); clearTimeout(autosaveTimer); autosaveTimer = null; }
+    const was = t.doc === activeDoc, slot = t.doc.slot; tabs.splice(i, 1);
+    if (slot) clearAutosave(slot).catch(() => {});
+    if (was) {
+      activeDoc = null; // the closed tab is gone: do not stash it
+      const next = tabs[Math.min(i, tabs.length - 1)];
+      if (next) switchTab(tabs.indexOf(next));
+      else { state.doc = null; history.entries = []; history.index = -1; cleanEntry = writtenEntry = null; $('#welcome').classList.remove('hidden'); updateAll(); }
+    }
+    updateTitle(); return true;
+  };
+  if (force || !tabDirty(t)) return Promise.resolve(doClose());
+  return new Promise((res) => {
+    const body = document.createElement('p'); body.textContent = `“${t.doc.name || 'Untitled'}” has unsaved changes. Close it and discard them? (Save the project or export first to keep them.)`;
+    showModal({ title: 'Close document?', body, okLabel: 'Discard and close', ok: () => res(doClose()), cancel: () => res(false) });
+  });
+}
+/** Copy a layer (a group comes with its contents) from the active document into tab `ti`, centred on the same offset. */
+function copyLayerToDoc(id, ti) {
+  const src = doc(), l = layerById(src, id), t = tabs[ti]; if (!l || !t || t.doc === src) return false;
+  const dst = t.doc, block = blockOf(src, l), ids = new Map(), dx = Math.round((dst.width - src.width) / 2), dy = Math.round((dst.height - src.height) / 2);
+  const copies = block.map((x) => { const c = cloneLayerObj(x); ids.set(x.id, c.id); c.x = (x.x || 0) + dx; c.y = (x.y || 0) + dy; if (dst.depth !== 16) delete c.deep; return c; });
+  for (const c of copies) c.parent = ids.has(c.parent) ? ids.get(c.parent) : null;
+  const name = src.name || 'Untitled';
+  switchTab(ti);
+  dst.layers.push(...copies); normalizeTree(dst); dst.activeId = copies[copies.length - 1].id;
+  compDirty = true; requestRender(); commit(`Layer from ${name}`); updateAll();
+  status(`Copied “${l.name}” into ${dst.name || 'Untitled'}.`);
+  return true;
+}
 function updateAll() { updateLayersPanel(); updateHistoryPanel(); buildOptionsBar(); updateDocInfo(); updateZoomLabel(); scheduleHistogram(); requestRender(); }
 
 // ---------------------------------------------------------------------------
@@ -4858,7 +5018,7 @@ if ('launchQueue' in window) {
 }
 // Window title shows the document (and the installed app's title bar uses it).
 /** Window title: "name • — Tintwork" while there are unsaved changes (taskbar / installed-app title bar). */
-function updateTitle() { const d = doc(), dirty = d && (cleanEntry ? history.entries[history.index] !== cleanEntry : history.index > 0); document.title = d ? `${d.name || 'Untitled'}${dirty ? ' •' : ''} — ${APP}` : `${APP} — photo editor`; }
+function updateTitle() { renderTabs(); const d = doc(), dirty = d && (cleanEntry ? history.entries[history.index] !== cleanEntry : history.index > 0); document.title = d ? `${d.name || 'Untitled'}${dirty ? ' •' : ''} — ${APP}` : `${APP} — photo editor`; }
 $('#toolsToggle').addEventListener('click', () => { document.body.classList.toggle('tools-collapsed'); $('#toolsToggle').classList.toggle('on', !document.body.classList.contains('tools-collapsed')); });
 $('#toolsToggle').classList.add('on');
 // Installable/offline: register the service worker on secure origins (https or localhost).
@@ -4910,17 +5070,20 @@ function addAdjustmentGroup(name, specs, { opacity = 1, look = null, label } = {
   d.activeId = g.id; compDirty = true; requestRender(); commit(label || name);
   return g;
 }
-function autoWhiteBalanceCmd() {
+function autoWhiteBalanceCmd(o = autoOpts().wb) {
   const { img } = analysisImage();
-  const p = auto.autoWhiteBalance(img);
+  const p0 = auto.autoWhiteBalance(img), k = (o?.strength ?? 100) / 100;
+  const p = { temperature: Math.max(-100, Math.min(100, Math.round(p0.temperature * k + (o?.warmth || 0)))), tint: Math.round(p0.tint * k) };
+  recordStep({ t: 'autoWB', opts: o });
   if (Math.abs(p.temperature) + Math.abs(p.tint) < 2) { status('Auto white balance: the colours are already neutral.'); toast('Already neutral: no white balance change needed.'); return null; }
   const l = makeAdjLayer('whiteBalance', p, 'Auto white balance');
   addLayer(l, 'Auto white balance'); clearPicked();
   status(`Auto white balance: temperature ${p.temperature > 0 ? '+' : ''}${p.temperature}, tint ${p.tint > 0 ? '+' : ''}${p.tint} (editable adjustment layer)`);
   return p;
 }
-function autoEnhanceCmd() {
-  const { img } = analysisImage(), specs = auto.autoEnhance(img);
+function autoEnhanceCmd(o = autoOpts().enhance) {
+  const { img } = analysisImage(), specs = auto.autoEnhance(img, o || {});
+  recordStep({ t: 'autoEnhance', opts: o });
   if (!specs.length) { status('Auto enhance: nothing to improve.'); toast('This picture already looks balanced: nothing changed.'); return null; }
   const g = addAdjustmentGroup('Auto enhance', specs, { label: 'Auto enhance' });
   status(`Auto enhance: ${specs.map((s) => s.name.replace(/^Auto /, '')).join(', ')} — editable layers in the “Auto enhance” group`);
@@ -5003,7 +5166,7 @@ function applyLook(idOrLook, intensity = state.opts.lookIntensity) {
   const specs = lookToLayers(look).map((s) => ({ ...s, name: `${look.name}: ${ADJ_LAYER[s.type]}` }));
   const g = addAdjustmentGroup(`Look: ${look.name}`, specs, { opacity: Math.max(0, Math.min(1, intensity / 100)), look: look.id, label: `Look: ${look.name}` });
   status(`Look “${look.name}” added at ${Math.round(g.opacity * 100)}% — the group's opacity is its intensity; every layer inside stays editable.`);
-  updateLooksPanel(); return g;
+  updateLooksPanel(); recordStep({ t: 'look', id: look.id, intensity }); return g;
 }
 /** The look group being edited (the active layer or its enclosing look group). */
 function activeLookGroup() { const d = doc(); if (!d) return null; let l = activeLayer(); while (l && !l.look) l = layerById(d, parentId(l)); return l || null; }
@@ -5075,7 +5238,476 @@ async function importCubeText(text, name = 'LUT') {
 }
 lutStoreLoad();
 
+// ===========================================================================================================
+// v0.9 — crop / resize presets, multi-size export, batch processing, actions, auto options
+// ===========================================================================================================
+// ---- Actions: record a sequence of edits and replay it on another image -----------------------------------
+const ACTIONS_KEY = 'tintwork.actions';
+const REC_CMDS = new Set(['rotateCW', 'rotateCCW', 'rotate180', 'flipH', 'flipV', 'invert', 'grayscale', 'autoLevels', 'flatten', 'autoStraighten',
+  'mode8', 'mode16', 'layerDuplicate', 'layerMergeDown', 'adjLayer_invert', 'adjLayer_grayscale', 'selectAll', 'deselect', 'invertSelection']);
+const BUILTIN_ACTIONS = [
+  { id: 'a-social-sq', name: 'Square 1080 for social', builtin: true, steps: [{ t: 'preset', id: 'sq', mode: 'fill' }] },
+  { id: 'a-enhance-sharpen', name: 'Auto enhance + light sharpen', builtin: true, steps: [{ t: 'autoEnhance', opts: { strength: 100 } }, { t: 'cmd', name: 'flatten' }, { t: 'adjust', op: 'sharpen', params: { amount: 60, radius: 1, threshold: 2 } }] },
+  { id: 'a-web-2048', name: 'Web size (2048 px long edge)', builtin: true, steps: [{ t: 'fitLong', long: 2048 }] },
+];
+const recorder = { on: false, steps: [], replaying: 0 };
+function userActions() { try { return JSON.parse(localStorage.getItem(ACTIONS_KEY) || '[]').filter((a) => a && a.id && Array.isArray(a.steps)); } catch { return []; } }
+function saveUserActions(list) { localStorage.setItem(ACTIONS_KEY, JSON.stringify(list.map(({ id, name, steps }) => ({ id, name, steps })))); }
+const allActions = () => [...BUILTIN_ACTIONS, ...userActions()];
+function recordStep(step) {
+  if (!recorder.on || recorder.replaying) return;
+  recorder.steps.push(JSON.parse(JSON.stringify(step))); updateRecBadge();
+}
+function updateRecBadge() {
+  let b = $('#recBadge');
+  if (!b) { b = document.createElement('button'); b.id = 'recBadge'; b.type = 'button'; b.className = 'rec-badge hidden'; b.title = 'Recording an action — click to stop and save'; b.addEventListener('click', () => run('actionStop')); $('#status').before(b); }
+  b.classList.toggle('hidden', !recorder.on); b.textContent = `● REC ${recorder.steps.length} step${recorder.steps.length === 1 ? '' : 's'}`;
+}
+function startRecording() {
+  if (recorder.on) { status('Already recording: Actions ▸ Stop recording saves it.'); return; }
+  recorder.on = true; recorder.steps = []; updateRecBadge();
+  status('Recording an action: adjustments, filters, rotate/flip, crop & resize presets, looks and auto fixes are recorded. Actions ▸ Stop recording saves it.');
+}
+function stopRecording(name) {
+  if (!recorder.on) { status('Not recording.'); return null; }
+  recorder.on = false; const steps = recorder.steps; recorder.steps = []; updateRecBadge();
+  if (!steps.length) { toast('Nothing was recorded.'); return null; }
+  const save = (n) => { const a = { id: `u-${Date.now().toString(36)}`, name: n || `Action ${userActions().length + 1}`, steps }; saveUserActions([...userActions(), a]); status(`Saved action “${a.name}” (${steps.length} step${steps.length === 1 ? '' : 's'}).`); return a; };
+  if (name != null) return save(name);
+  const body = document.createElement('div');
+  body.innerHTML = formHTML([{ label: 'Action name', html: `<input type="text" id="actName" value="Action ${userActions().length + 1}" />` }]) +
+    `<ol class="muted action-steps">${steps.map((s) => `<li>${escapeHtml(describeStep(s))}</li>`).join('')}</ol>`;
+  showModal({ title: 'Save action', body, okLabel: 'Save', ok: () => { save(body.querySelector('#actName').value.trim()); } });
+  return steps;
+}
+function describeStep(s) {
+  switch (s.t) {
+    case 'cmd': return MENUS.flatMap(([, items]) => items).find((it) => Array.isArray(it) && it[1] === s.name)?.[0] || s.name;
+    case 'adjust': return `${Object.values(ADJ).find((d) => d.op === s.op)?.title || s.op} (${Object.entries(s.params || {}).filter(([, v]) => typeof v !== 'object').map(([k, v]) => `${k} ${v}`).join(', ')})`;
+    case 'adjLayer': return `${ADJ_LAYER[s.type] || s.type} layer`;
+    case 'look': return `Look: ${allLooks().find((l) => l.id === s.id)?.name || s.id} at ${s.intensity}%`;
+    case 'preset': { const p = presetById(s.id); return `${s.mode === 'fit' ? 'Fit' : 'Crop & resize'} to ${p ? p.name : s.id}`; }
+    case 'crop': return s.preset ? `Crop to ${presetById(s.preset)?.name || s.preset}` : `Crop (${Math.round(s.fw * 100)}% × ${Math.round(s.fh * 100)}%)`;
+    case 'resize': return `Resize to ${s.w}×${s.h}`;
+    case 'fitLong': return `Fit within ${s.long} px`;
+    case 'autoEnhance': return `Auto enhance (${s.opts?.strength ?? 100}%)`;
+    case 'autoWB': return `Auto white balance (${s.opts?.strength ?? 100}%)`;
+    default: return s.t;
+  }
+}
+/** Replay an action (id or object) on the active document. Resolves { ok, steps, errors }. */
+async function playAction(a, d0 = doc()) {
+  const act = typeof a === 'string' ? allActions().find((x) => x.id === a) : a;
+  if (!act || !d0) { status('Open an image and choose an action first.'); return { ok: false, steps: 0, errors: ['no action or document'] }; }
+  recorder.replaying++; const errors = []; let n = 0;
+  try {
+    for (const s of act.steps) {
+      if (doc() !== d0) { errors.push('document changed'); break; }
+      try { await playStep(s); n++; } catch (err) { errors.push(`${describeStep(s)}: ${err.message || err}`); }
+    }
+  } finally { recorder.replaying--; }
+  updateAll();
+  status(errors.length ? `Action “${act.name}”: ${n} of ${act.steps.length} steps; ${errors[0]}` : `Played action “${act.name}” (${n} step${n === 1 ? '' : 's'}).`);
+  return { ok: !errors.length, steps: n, errors };
+}
+async function playStep(s) {
+  const d = doc();
+  switch (s.t) {
+    case 'cmd': { const f = cmds[s.name]; if (!f) throw new Error(`unknown command ${s.name}`); await f(); break; }
+    case 'adjust': if (!(await applyAdjustDirect(s.op, s.params))) throw new Error('could not apply here'); break;
+    case 'adjLayer': addLayer(makeAdjLayer(s.type, s.params, s.name || ADJ_LAYER[s.type]), s.name || ADJ_LAYER[s.type]); break;
+    case 'look': if (!applyLook(s.id, s.intensity ?? 100)) throw new Error('look not found'); break;
+    case 'preset': resizeToPreset(s.id, s); break;
+    case 'crop':
+      if (s.preset) { const px = presetPixels(presetById(s.preset) || { rw: 1, rh: 1 }, s.dpi || 300, s.orient || 'auto', d.width, d.height); cropTo(centredRatioRect(d.width, d.height, px.w, px.h), 'Crop'); if (s.resize && presetById(s.preset)?.rw == null) { resizeImage(px.w, px.h); if (s.dpi && presetById(s.preset)?.inW != null) doc().dpi = s.dpi; } }
+      else cropTo({ x: Math.round(s.fx * d.width), y: Math.round(s.fy * d.height), w: Math.max(1, Math.round(s.fw * d.width)), h: Math.max(1, Math.round(s.fh * d.height)) }, 'Crop');
+      break;
+    case 'resize': resizeImage(s.w, s.h); break;
+    case 'fitLong': { const k = s.long / Math.max(d.width, d.height); if (k < 1) resizeImage(Math.max(1, Math.round(d.width * k)), Math.max(1, Math.round(d.height * k))); break; }
+    case 'autoEnhance': autoEnhanceCmd(s.opts); break;
+    case 'autoWB': autoWhiteBalanceCmd(s.opts); break;
+    default: throw new Error(`unknown step ${s.t}`);
+  }
+  await settle();
+}
+const settle = () => new Promise((r) => setTimeout(r, 0));
+/** Apply a destructive adjustment / filter to the active layer without a dialog (actions and batch). */
+async function applyAdjustDirect(op, params = {}) {
+  const def = Object.values(ADJ).find((x) => x.op === op); if (!def || def.layerOnly) return false;
+  const l = activeLayer(); if (!canAdjust(l, def)) return false;
+  recordStep({ t: 'adjust', op, params });
+  if (!editingMask(l)) rasterize(l, def.title);
+  if (!editingMask(l) && (op === 'gaussianBlur' || op === 'sharpen')) ensureCoversDoc(l);
+  const r = opRegion(l); if (!r) return false;
+  const onMask = editingMask(l), c = ctxOf(targetCanvas(l)), original = c.getImageData(r.x, r.y, r.w, r.h);
+  const deepSrc = !onMask && useDeep(l) && DEEP_OPS.includes(op) ? deepOf(l) : null;
+  const p = { ...(def.curves ? identityCurves() : {}), ...Object.fromEntries(def.params.map((q) => [q.key, q.value])), ...params, ...(def.extra || {}) };
+  const info = regionInfo(l, r), selMask = regionMask(l, r);
+  setBusy(1);
+  try {
+    if (deepSrc) await deepOp(l, deepSrc, r, op, p, info, selMask);
+    else { const out = await ops.process(op, original, p, info, selMask); c.putImageData(out, r.x, r.y); touchTarget(l); }
+    requestRender(); commit(def.title); return true;
+  } finally { setBusy(-1); }
+}
+function openActionsDialog() {
+  const body = document.createElement('div');
+  const draw = () => {
+    const list = allActions();
+    body.innerHTML = `<p class="muted">Record edits with <b>Start recording</b>, then replay them on any open image or use them in <b>File ▸ Batch process</b>.</p>
+      <div class="row-btns"><button type="button" id="actRec" class="${recorder.on ? '' : 'primary'}">${recorder.on ? `■ Stop recording (${recorder.steps.length})` : '● Start recording'}</button>
+      <button type="button" id="actImport">Import…</button><button type="button" id="actExport" ${userActions().length ? '' : 'disabled'}>Export…</button></div>
+      <ul class="action-list">${list.map((a) => `<li data-id="${escapeHtml(a.id)}"><div><b>${escapeHtml(a.name)}</b>${a.builtin ? ' <span class="muted">(built-in)</span>' : ''}<div class="muted small">${a.steps.map((s) => escapeHtml(describeStep(s))).join(' → ')}</div></div>
+        <span class="act-btns"><button type="button" data-play="${escapeHtml(a.id)}" class="primary" ${doc() ? '' : 'disabled'}>▶ Play</button>${a.builtin ? '' : `<button type="button" data-ren="${escapeHtml(a.id)}" title="Rename">✎</button><button type="button" data-del="${escapeHtml(a.id)}" title="Delete">✕</button>`}</span></li>`).join('')}</ul>`;
+  };
+  body.addEventListener('click', async (e) => {
+    const t = e.target.closest('button'); if (!t) return;
+    if (t.id === 'actRec') { if (recorder.on) { closeModal(); stopRecording(); } else { startRecording(); closeModal(); } return; }
+    if (t.id === 'actExport') { download(new Blob([JSON.stringify({ format: 'tintwork-actions', version: 1, actions: userActions() }, null, 2)], { type: 'application/json' }), 'tintwork-actions.json'); return; }
+    if (t.id === 'actImport') {
+      const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
+      inp.onchange = async () => { const f = inp.files[0]; if (!f) return; try { const n = importActionsJSON(await f.text()); status(`Imported ${n} action${n === 1 ? '' : 's'}.`); draw(); } catch (err) { toast(`Could not import: ${err.message}`, 4000); } };
+      inp.click(); return;
+    }
+    if (t.dataset.play) { closeModal(); await playAction(t.dataset.play); return; }
+    if (t.dataset.del) { saveUserActions(userActions().filter((a) => a.id !== t.dataset.del)); draw(); return; }
+    if (t.dataset.ren) { const list = userActions(), a = list.find((x) => x.id === t.dataset.ren), n = prompt('Action name', a?.name); if (a && n) { a.name = n.trim() || a.name; saveUserActions(list); draw(); } }
+  });
+  draw();
+  showModal({ title: 'Actions', body, okLabel: 'Close', hideCancel: true, ok: () => {} });
+}
+function importActionsJSON(text) {
+  const j = JSON.parse(text); if (j.format !== 'tintwork-actions' || !Array.isArray(j.actions)) throw new Error('not a Tintwork actions file');
+  const ok = j.actions.filter((a) => a && typeof a.name === 'string' && Array.isArray(a.steps)).map((a) => ({ id: `u-${Math.random().toString(36).slice(2, 9)}`, name: a.name.slice(0, 80), steps: a.steps }));
+  saveUserActions([...userActions(), ...ok]); return ok.length;
+}
+
+// ---- Crop & resize presets ------------------------------------------------------------------------------
+function presetOptionsHTML(sel, { ratios = true, free = true } = {}) {
+  const groups = new Map(); for (const p of allPresets()) { if (!groups.has(p.group)) groups.set(p.group, []); groups.get(p.group).push(p); }
+  const opt = (p) => `<option value="${escapeHtml(p.id)}" ${p.id === sel ? 'selected' : ''}>${escapeHtml(p.name)}${p.w ? ` (${p.w}×${p.h})` : ''}</option>`;
+  return (free ? `<option value="" ${!sel ? 'selected' : ''}>Free (no ratio)</option><option value="orig" ${sel === 'orig' ? 'selected' : ''}>Original ratio</option>` : '') +
+    (ratios ? `<optgroup label="Ratio">${RATIO_ONLY.map(opt).join('')}</optgroup>` : '') +
+    [...groups].map(([g, list]) => `<optgroup label="${escapeHtml(g)}">${list.map(opt).join('')}</optgroup>`).join('');
+}
+/** The crop tool's current aspect (w, h) or null for free cropping. */
+function cropAspect() {
+  const o = state.opts, d = doc(); if (!d) return null;
+  if (o.cropLockRatio) return o.cropLockRatio;
+  if (!o.cropPreset) return null;
+  if (o.cropPreset === 'orig') return { w: d.width, h: d.height };
+  const p = presetById(o.cropPreset); return p ? presetPixels(p, o.cropDpi, o.cropOrient, d.width, d.height) : null;
+}
+function setCropPreset(id) {
+  const o = state.opts, d = doc(); o.cropPreset = id; o.cropLockRatio = null;
+  const a = cropAspect(); state.crop = a && d ? centredRatioRect(d.width, d.height, a.w, a.h) : state.crop;
+  buildOptionsBar(); requestRender();
+}
+function applyCropTool() {
+  const d = doc(), c = state.crop, o = state.opts; if (!c) return;
+  const p = o.cropPreset && o.cropPreset !== 'orig' ? presetById(o.cropPreset) : null;
+  const px = p ? presetPixels(p, o.cropDpi, o.cropOrient, d.width, d.height) : null, fixed = p && p.rw == null;
+  const step = { t: 'crop', fx: c.x / d.width, fy: c.y / d.height, fw: c.w / d.width, fh: c.h / d.height };
+  if (p) Object.assign(step, { preset: p.id, dpi: o.cropDpi, orient: o.cropOrient, resize: !!(o.cropResize && fixed) });
+  const h0 = history.index; cropTo(c);
+  if (fixed && o.cropResize && (d.width !== px.w || d.height !== px.h)) resizeImage(px.w, px.h);
+  if (p?.inW != null) doc().dpi = o.cropDpi;
+  squashHistory(h0, p ? `Crop to ${p.name}` : 'Crop');
+  recordStep(step);
+  updateDocInfo();
+}
+/** Crop (mode 'fill': centred, to the preset's ratio) and/or resize to a preset; 'fit' keeps the ratio inside the preset size. */
+/** Merge the history steps after index h0 into one (crop + resize is a single undo step); the last snapshot wins. */
+function squashHistory(h0, label) {
+  if (history.index - h0 < 2 || h0 < -1) return;
+  const last = history.entries[history.index]; last.label = label; last.snap = snapshot(); // picks up the DPI too
+  history.entries.splice(h0 + 1, history.index - h0, last); history.index = h0 + 1; updateHistoryPanel();
+}
+function resizeToPreset(id, { mode = 'fill', dpi = state.opts.cropDpi, orient = 'auto' } = {}) {
+  const d = doc(), p = presetById(id); if (!d || !p) return false;
+  const px = presetPixels(p, dpi, orient, d.width, d.height), h0 = history.index;
+  if (p.rw != null) { cropTo(centredRatioRect(d.width, d.height, px.w, px.h), `Crop to ${p.name}`); }
+  else if (mode === 'fit') { const k = Math.min(px.w / d.width, px.h / d.height); resizeImage(Math.max(1, Math.round(d.width * k)), Math.max(1, Math.round(d.height * k))); }
+  else {
+    const r = centredRatioRect(d.width, d.height, px.w, px.h);
+    if (r.w !== d.width || r.h !== d.height) cropTo(r, `Crop to ${p.name}`);
+    if (doc().width !== px.w || doc().height !== px.h) resizeImage(px.w, px.h);
+  }
+  if (p.inW != null) doc().dpi = dpi;
+  squashHistory(h0, `Resize to ${p.name}`);
+  recordStep({ t: 'preset', id, mode, dpi, orient });
+  updateDocInfo(); status(`${mode === 'fit' ? 'Fitted' : 'Cropped and resized'} to ${describePreset(p, dpi)} → ${doc().width}×${doc().height}`);
+  return true;
+}
+function openResizePresetDialog() {
+  const d = doc(), o = state.opts, body = document.createElement('div');
+  const draw = (sel = o.resizePreset || 'sq') => {
+    body.innerHTML = formHTML([
+      { label: 'Preset', html: `<select id="rpSel">${presetOptionsHTML(sel, { free: false })}</select>` },
+      { label: 'Mode', html: `<select id="rpMode"><option value="fill">Crop to fill (exact size)</option><option value="fit">Fit inside (keep whole picture)</option></select>` },
+      { label: 'Orientation', html: `<select id="rpOrient"><option value="auto">Auto</option><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select>` },
+      { label: 'Print resolution', html: `<input type="number" id="rpDpi" min="72" max="1200" value="${o.cropDpi}" /> DPI` },
+    ]) + `<p class="muted" id="rpInfo"></p><details class="custom-presets"><summary>Custom presets</summary>
+      ${formHTML([{ label: 'Name', html: '<input type="text" id="cpName" placeholder="e.g. Shop thumbnail" />' }, { label: 'Width × height', html: '<input type="number" id="cpW" min="1" max="16384" value="1200" style="width:80px"/> × <input type="number" id="cpH" min="1" max="16384" value="800" style="width:80px"/> <select id="cpUnit"><option value="px">px</option><option value="in">in</option></select>' }])}
+      <div class="row-btns"><button type="button" id="cpSave">Save preset</button><button type="button" id="cpCur">Use current size</button><button type="button" id="cpDel" ${presetById(sel)?.group === 'Custom' ? '' : 'disabled'}>Delete selected</button></div></details>`;
+    const info = () => { const p = presetById(body.querySelector('#rpSel').value); if (!p) return; const px = presetPixels(p, +body.querySelector('#rpDpi').value || 300, body.querySelector('#rpOrient').value, d.width, d.height);
+      body.querySelector('#rpInfo').textContent = `${describePreset(p, +body.querySelector('#rpDpi').value || 300)} — result ${p.rw != null ? 'crop only (ratio)' : `${px.w}×${px.h} px`} from ${d.width}×${d.height}`; };
+    body.querySelectorAll('select, input').forEach((x) => x.addEventListener('input', info)); info();
+    body.querySelector('#cpCur').onclick = () => { body.querySelector('#cpW').value = d.width; body.querySelector('#cpH').value = d.height; body.querySelector('#cpUnit').value = 'px'; };
+    body.querySelector('#cpSave').onclick = () => {
+      const name = body.querySelector('#cpName').value.trim() || 'Custom', w = +body.querySelector('#cpW').value, h = +body.querySelector('#cpH').value, inch = body.querySelector('#cpUnit').value === 'in';
+      if (!(w > 0 && h > 0)) return;
+      const id = saveCustomPreset(inch ? { name, inW: w, inH: h } : { name, w: Math.round(w), h: Math.round(h) }); o.resizePreset = id; draw(id);
+    };
+    body.querySelector('#cpDel').onclick = () => { deleteCustomPreset(body.querySelector('#rpSel').value); draw('sq'); };
+  };
+  draw();
+  showModal({ title: 'Resize to preset', body, okLabel: 'Apply', ok: () => {
+    const id = body.querySelector('#rpSel').value; o.resizePreset = id; o.cropDpi = Math.max(72, Math.min(1200, +body.querySelector('#rpDpi').value || 300));
+    resizeToPreset(id, { mode: body.querySelector('#rpMode').value, dpi: o.cropDpi, orient: body.querySelector('#rpOrient').value });
+  } });
+}
+
+// ---- Auto enhance / white balance options -------------------------------------------------------------------
+const AUTO_KEY = 'tintwork.autoOpts';
+function autoOpts() { try { return { enhance: { wb: true, tone: true, contrast: true, color: true, strength: 100 }, wb: { strength: 100, warmth: 0 }, ...JSON.parse(localStorage.getItem(AUTO_KEY) || '{}') }; } catch { return { enhance: { strength: 100 }, wb: { strength: 100, warmth: 0 } }; } }
+function saveAutoOpts(o) { try { localStorage.setItem(AUTO_KEY, JSON.stringify(o)); } catch { /* ignore */ } }
+function openAutoOptionsDialog(kind = 'enhance') {
+  const all = autoOpts(), o = { ...all[kind] }, body = document.createElement('div');
+  const ck = (k, label) => `<label class="radio-row"><input type="checkbox" data-k="${k}" ${o[k] !== false ? 'checked' : ''}/> ${label}</label>`;
+  body.innerHTML = (kind === 'enhance'
+    ? `<p class="muted">Auto enhance adds editable adjustment layers in a group. Choose the corrections and their strength.</p><div class="field two"><span>Corrections</span><span>${ck('wb', 'White balance')}${ck('tone', 'Tone (levels)')}${ck('contrast', 'Contrast (curve)')}${ck('color', 'Color (saturation)')}</span></div>`
+    : '<p class="muted">Auto white balance neutralises the average of the mid-tones. Strength scales the correction; warmth shifts the result warmer (+) or cooler (−).</p>');
+  body.append(paramField({ key: 'strength', label: 'Strength', min: 0, max: 150, value: o.strength ?? 100, unit: '%' }, o, () => {}, 100));
+  if (kind === 'wb') body.append(paramField({ key: 'warmth', label: 'Warmth', min: -40, max: 40, value: o.warmth ?? 0 }, o, () => {}, 0));
+  body.addEventListener('change', (e) => { const k = e.target.dataset?.k; if (k) o[k] = e.target.checked; });
+  showModal({ title: kind === 'enhance' ? 'Auto enhance options' : 'Auto white balance options', body, okLabel: doc() ? 'Apply' : 'Save', ok: () => {
+    all[kind] = o; saveAutoOpts(all); if (doc()) (kind === 'enhance' ? autoEnhanceCmd(o) : autoWhiteBalanceCmd(o));
+  } });
+}
+
+// ---- Multi-size export and batch processing ----------------------------------------------------------------
+const EXPORT_SETS_KEY = 'tintwork.exportVariants';
+const DEFAULT_VARIANTS = [
+  { mode: 'original', type: 'image/jpeg', quality: 90 },
+  { mode: 'long', long: 2048, type: 'image/jpeg', quality: 85 },
+  { mode: 'long', long: 1080, type: 'image/webp', quality: 80 },
+];
+function savedVariants() { try { const v = JSON.parse(localStorage.getItem(EXPORT_SETS_KEY) || 'null'); return Array.isArray(v) && v.length ? v : DEFAULT_VARIANTS.map((x) => ({ ...x })); } catch { return DEFAULT_VARIANTS.map((x) => ({ ...x })); } }
+const VARIANT_TYPES = [['image/jpeg', 'JPEG'], ['image/png', 'PNG'], ['image/webp', 'WebP']];
+/** Variant list editor (shared by the export and batch dialogs). */
+function variantEditor(list) {
+  const el = document.createElement('div'); el.className = 'variant-editor';
+  const draw = () => {
+    el.innerHTML = `<table class="variants"><thead><tr><th>Size</th><th></th><th>Format</th><th>Quality</th><th></th></tr></thead><tbody>${list.map((v, i) => `<tr data-i="${i}">
+      <td><select data-f="mode"><option value="original">Original</option><option value="long">Long edge</option><option value="width">Width</option><option value="scale">Scale %</option><option value="preset">Preset</option></select></td>
+      <td>${v.mode === 'preset' ? `<select data-f="preset">${presetOptionsHTML(v.preset || 'sq', { free: false })}</select>` : v.mode === 'original' ? '' : `<input type="number" data-f="${v.mode === 'long' ? 'long' : v.mode === 'width' ? 'w' : 'pct'}" min="1" max="16384" value="${v.mode === 'long' ? v.long ?? 2048 : v.mode === 'width' ? v.w ?? 1200 : v.pct ?? 50}" style="width:72px"/>`}</td>
+      <td><select data-f="type">${VARIANT_TYPES.map(([t, n]) => `<option value="${t}" ${v.type === t ? 'selected' : ''}>${n}</option>`).join('')}</select></td>
+      <td><input type="number" data-f="quality" min="1" max="100" value="${v.quality ?? 90}" style="width:56px" ${v.type === 'image/png' ? 'disabled' : ''}/></td>
+      <td><button type="button" data-rm="${i}" title="Remove" ${list.length < 2 ? 'disabled' : ''}>✕</button></td></tr>`).join('')}</tbody></table>
+      <button type="button" id="varAdd">＋ Add size</button>`;
+    el.querySelectorAll('tr[data-i]').forEach((tr) => { tr.querySelector('[data-f=mode]').value = list[+tr.dataset.i].mode; });
+  };
+  el.addEventListener('change', (e) => {
+    const tr = e.target.closest('tr[data-i]'), f = e.target.dataset.f; if (!tr || !f) return;
+    const v = list[+tr.dataset.i]; v[f] = ['long', 'w', 'pct', 'quality'].includes(f) ? +e.target.value : e.target.value;
+    if (f === 'mode' && v.mode === 'preset') v.preset ||= 'sq';
+    if (f === 'mode' || f === 'type') draw();
+  });
+  el.addEventListener('click', (e) => {
+    if (e.target.id === 'varAdd') { list.push({ mode: 'long', long: 1200, type: 'image/jpeg', quality: 85 }); draw(); }
+    else if (e.target.dataset.rm) { list.splice(+e.target.dataset.rm, 1); draw(); }
+  });
+  draw(); return el;
+}
+const variantLabel = (v) => v.mode === 'original' ? 'original' : v.mode === 'long' ? `${v.long}px` : v.mode === 'width' ? `w${v.w}` : v.mode === 'scale' ? `${v.pct}pct` : (presetById(v.preset)?.name || v.preset).replace(/\s+/g, '-');
+/** Render the active document as one variant: { blob, w, h, ext }. */
+async function renderVariant(v, base = null) {
+  const d = doc(), type = v.type || 'image/jpeg', q = (v.quality ?? 90) / 100;
+  let src = base, sx = 0, sy = 0, sw = d.width, sh = d.height, w, h;
+  if (v.mode === 'preset') {
+    const p = presetById(v.preset); if (!p) throw new Error(`unknown preset ${v.preset}`);
+    const px = presetPixels(p, v.dpi || 300, v.orient || 'auto', d.width, d.height);
+    const r = centredRatioRect(d.width, d.height, px.w, px.h); sx = r.x; sy = r.y; sw = r.w; sh = r.h;
+    if (p.rw != null) { w = sw; h = sh; } else { w = px.w; h = px.h; }
+  } else ({ w, h } = variantSize(d.width, d.height, v));
+  if (!src) { src = makeCanvas(d.width, d.height); composite(src, { background: type === 'image/jpeg' ? '#ffffff' : null, sync: true }); }
+  // high-quality downscale: halve while more than 2× too big, then one smooth draw
+  let cur = src, cx = sx, cy = sy, cw = sw, chh = sh;
+  while (cw / 2 >= w && chh / 2 >= h && cw > 2 && chh > 2) {
+    const t = makeCanvas(Math.round(cw / 2), Math.round(chh / 2)), x = t.getContext('2d'); x.imageSmoothingQuality = 'high';
+    x.drawImage(cur, cx, cy, cw, chh, 0, 0, t.width, t.height); if (cur !== src) cur.width = 0; cur = t; cx = 0; cy = 0; cw = t.width; chh = t.height;
+  }
+  const out = makeCanvas(w, h), x = out.getContext('2d'); x.imageSmoothingQuality = 'high';
+  if (type === 'image/jpeg') { x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); }
+  x.drawImage(cur, cx, cy, cw, chh, 0, 0, w, h); if (cur !== src) cur.width = 0;
+  let blob = await new Promise((res) => out.toBlob(res, type, q)); out.width = 0;
+  if (!blob) throw new Error(`${type} encoding is not supported in this browser`);
+  if (blob.type !== type) toast(`${type.split('/')[1].toUpperCase()} is not supported here; saved as ${blob.type.split('/')[1].toUpperCase()}.`, 4000);
+  const dpi = v.mode === 'preset' && presetById(v.preset)?.inW != null ? v.dpi || 300 : d.dpi;
+  if (dpi) blob = await withDpi(blob, dpi);
+  return { blob, w, h, ext: EXPORT_EXT[blob.type] || 'img' };
+}
+/** Sinks: where batch / multi-size output goes. */
+function dirSink(dir) {
+  return { label: dir.name, async write(name, blob) { const fh = await dir.getFileHandle(name, { create: true }); const w = await fh.createWritable(); await w.write(blob); await w.close(); }, async finish() {} };
+}
+function zipSink(zipName) {
+  const files = {};
+  return { label: zipName, files, async write(name, blob) { files[name] = new Uint8Array(await blob.arrayBuffer()); },
+    async finish(cancelled) { if (!Object.keys(files).length) return; download(new Blob([zipFiles(files)], { type: 'application/zip' }), zipName); if (cancelled) toast('Cancelled: the zip holds the files finished so far.', 4000); } };
+}
+const memorySink = () => { const files = {}; return { label: 'memory', files, async write(name, blob) { files[name] = { size: blob.size, type: blob.type, blob }; }, async finish() {} }; };
+async function chooseSink(zipName) {
+  if ('showDirectoryPicker' in window) {
+    try { const dir = await window.showDirectoryPicker({ id: 'tintwork-export', mode: 'readwrite' }); return dirSink(dir); }
+    catch (err) { if (err?.name === 'AbortError') return null; toast(`Folder access unavailable (${err.message}); downloading a zip instead.`, 4000); }
+  }
+  return zipSink(zipName);
+}
+/** Progress panel with Cancel; returns { signal, update(i, n, text), done() }. */
+function progressUI(title) {
+  const ctl = new AbortController(), el = document.createElement('div'); el.id = 'batchProgress'; el.setAttribute('role', 'status');
+  el.innerHTML = `<b>${escapeHtml(title)}</b><progress max="1" value="0"></progress><span class="muted" id="bpText">Starting…</span><button type="button">Cancel</button>`;
+  el.querySelector('button').onclick = () => { ctl.abort(); el.querySelector('#bpText').textContent = 'Cancelling after the current file…'; };
+  document.body.append(el);
+  return { signal: ctl.signal, update(i, n, text) { const p = el.querySelector('progress'); p.max = n; p.value = i; el.querySelector('#bpText').textContent = text; status(`${title}: ${text}`); }, done() { el.remove(); } };
+}
+/** Export the active document in several sizes / formats. */
+async function exportVariants(variants, { pattern = '{name}-{preset}', sink, signal, onProgress, tokens = {} } = {}) {
+  const d = doc(), name = tokens.name || (d.name || 'Untitled').replace(/\.[^.]+$/, ''), uniq = uniqueNamer(), out = [];
+  const needWhite = variants.some((v) => (v.type || 'image/jpeg') === 'image/jpeg'), needAlpha = variants.some((v) => v.type !== 'image/jpeg');
+  const white = needWhite ? makeCanvas(d.width, d.height) : null, clear = needAlpha ? makeCanvas(d.width, d.height) : null;
+  if (white) composite(white, { background: '#ffffff', sync: true }); if (clear) composite(clear, { background: null, sync: true });
+  for (let i = 0; i < variants.length; i++) {
+    if (signal?.aborted) break;
+    const v = variants[i], r = await renderVariant(v, v.type === 'image/jpeg' ? white : clear);
+    const fname = uniq(`${formatName(pattern, { N: 1, ...tokens, name, n: i + 1, w: r.w, h: r.h, preset: variantLabel(v), ext: r.ext })}.${r.ext}`);
+    await sink.write(fname, r.blob); out.push({ name: fname, w: r.w, h: r.h, size: r.blob.size, type: r.blob.type });
+    onProgress?.(i + 1, variants.length, fname);
+  }
+  if (white) white.width = 0; if (clear) clear.width = 0;
+  return out;
+}
+function openExportVariantsDialog() {
+  const d = doc(), list = savedVariants(), body = document.createElement('div');
+  body.innerHTML = `<p class="muted">Export “${escapeHtml(d.name || 'Untitled')}” in several sizes and formats at once. Saved to a folder you choose${'showDirectoryPicker' in window ? '' : ' (this browser downloads a .zip)'}.</p>`;
+  body.append(variantEditor(list));
+  const pat = document.createElement('div'); pat.innerHTML = formHTML([{ label: 'File names', html: `<input type="text" id="vxPattern" value="${escapeHtml(localStorage.getItem('tintwork.exportPattern') || '{name}-{preset}')}" />` }]) +
+    '<p class="muted small">Tokens: {name} {preset} {w} {h} {n} {n:3} {date}</p>';
+  body.append(pat);
+  showModal({ title: 'Export multiple sizes', body, okLabel: 'Export', ok: () => {
+    const pattern = body.querySelector('#vxPattern').value || '{name}-{preset}';
+    try { localStorage.setItem(EXPORT_SETS_KEY, JSON.stringify(list)); localStorage.setItem('tintwork.exportPattern', pattern); } catch { /* ignore */ }
+    (async () => {
+      const sink = await chooseSink(`${(d.name || 'Untitled').replace(/\.[^.]+$/, '')}-export.zip`); if (!sink) { status('Export cancelled.'); return; }
+      const ui = progressUI('Export sizes');
+      try { const out = await exportVariants(list, { pattern, sink, signal: ui.signal, onProgress: (i, n, f) => ui.update(i, n, `${i}/${n} · ${f}`) }); await sink.finish(ui.signal.aborted); status(`Exported ${out.length} file${out.length === 1 ? '' : 's'} to ${sink.label}.`); }
+      catch (err) { toast(`Export failed: ${err.message}`, 5000); } finally { ui.done(); }
+    })();
+  } });
+}
+/**
+ * Batch: open each file in a temporary tab, apply an action and / or a look, export every variant, close the tab.
+ * sources: File[] or { name, getFile() }[]. Resolves { done, failed: [{ name, error }], cancelled, files }.
+ */
+async function runBatch(sources, { actionId = null, lookId = null, intensity = 100, variants, pattern = '{name}-{preset}', sink, signal, onProgress } = {}) {
+  const home = doc(), files = [], failed = []; let done = 0, n = 0;
+  const uniq = uniqueNamer(), wrapSink = { write: (name, blob) => sink.write(uniq(name), blob) };
+  for (const s of sources) {
+    if (signal?.aborted) break;
+    n++; const label = s.name;
+    onProgress?.(n - 1, sources.length, `${n}/${sources.length} · ${label}`);
+    let opened = null;
+    try {
+      const file = s instanceof Blob ? s : await s.getFile();
+      if (home && doc() !== home && tabs.some((t) => t.doc === home)) switchTab(tabs.findIndex((t) => t.doc === home));
+      const before = doc(); await openFile(file, 'open');
+      if (!doc() || doc() === before) throw new Error('could not open this file');
+      opened = doc();
+      if (actionId) { const r = await playAction(actionId, opened); if (!r.ok) throw new Error(r.errors[0] || 'action failed'); }
+      if (lookId && !applyLook(lookId, intensity)) throw new Error('look not found');
+      const base = label.replace(/\.[^.]+$/, '');
+      const out = await exportVariants(variants, { pattern: variants.length > 1 && !/\{(preset|w|h|n)/.test(pattern) ? `${pattern}-{preset}` : pattern, sink: wrapSink, tokens: { name: base, N: n } });
+      files.push(...out);
+      done++;
+    } catch (err) { failed.push({ name: label, error: err.message || String(err) }); }
+    finally { if (opened && tabs.some((t) => t.doc === opened)) await closeTab(tabs.findIndex((t) => t.doc === opened), { force: true }); }
+  }
+  if (home && tabs.some((t) => t.doc === home) && doc() !== home) switchTab(tabs.findIndex((t) => t.doc === home));
+  onProgress?.(n, sources.length, `${done} done${failed.length ? `, ${failed.length} failed` : ''}`);
+  return { done, failed, cancelled: !!signal?.aborted && n < sources.length, files };
+}
+async function collectFolderImages(dir, recurse = false, out = []) {
+  for await (const [name, h] of dir.entries()) {
+    if (h.kind === 'file' && /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(name)) out.push(h);
+    else if (recurse && h.kind === 'directory') await collectFolderImages(h, true, out);
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+function openBatchDialog() {
+  const list = savedVariants().slice(0, 1), body = document.createElement('div'); let sources = [];
+  const acts = allActions(), looks = allLooks();
+  body.innerHTML = `<div class="field two"><span>Source</span><span><button type="button" id="bSrcDir" ${'showDirectoryPicker' in window ? '' : 'disabled title="Folder access needs Chrome or Edge"'}>Choose folder…</button> <button type="button" id="bSrcFiles">Choose files…</button> <span id="bSrcInfo" class="muted">No images chosen</span></span></div>` +
+    formHTML([
+      { label: 'Action', html: `<select id="bAct"><option value="">(none)</option>${acts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('')}</select>` },
+      { label: 'Look', html: `<select id="bLook"><option value="">(none)</option>${looks.map((l) => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.name)}</option>`).join('')}</select>` },
+      { label: 'Look intensity (%)', html: `<input type="number" id="bInt" min="0" max="100" value="100" style="width:72px"/>` },
+      { label: 'File names', html: `<input type="text" id="bPattern" value="{name}-edited" />` },
+    ]) + '<p class="muted small">Tokens: {name} {preset} {w} {h} {N} (file number, {N:3} padded) {date}. Output goes to a folder you choose (or a .zip download).</p><b>Outputs</b>';
+  body.append(variantEditor(list));
+  const info = () => { body.querySelector('#bSrcInfo').textContent = sources.length ? `${sources.length} image${sources.length === 1 ? '' : 's'}` : 'No images chosen'; };
+  body.querySelector('#bSrcDir').onclick = async () => { try { const dir = await window.showDirectoryPicker({ id: 'tintwork-batch-in', mode: 'read' }); sources = await collectFolderImages(dir); info(); } catch (err) { if (err?.name !== 'AbortError') toast(err.message, 4000); } };
+  body.querySelector('#bSrcFiles').onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = 'image/*'; inp.onchange = () => { sources = [...inp.files]; info(); }; inp.click(); };
+  showModal({ title: 'Batch process', body, okLabel: 'Run batch', ok: () => {
+    if (!sources.length) { toast('Choose a folder or some images first.'); return false; }
+    const opts = { actionId: body.querySelector('#bAct').value || null, lookId: body.querySelector('#bLook').value || null, intensity: +body.querySelector('#bInt').value || 100, variants: list, pattern: body.querySelector('#bPattern').value || '{name}-edited' };
+    (async () => {
+      const sink = await chooseSink('tintwork-batch.zip'); if (!sink) { status('Batch cancelled.'); return; }
+      const ui = progressUI('Batch'); const src = sources;
+      try {
+        const r = await runBatch(src, { ...opts, sink, signal: ui.signal, onProgress: (i, n, t) => ui.update(i, n, t) });
+        await sink.finish(r.cancelled);
+        const msg = `Batch ${r.cancelled ? 'cancelled' : 'finished'}: ${r.done} of ${src.length} images, ${r.files.length} files written to ${sink.label}${r.failed.length ? `; ${r.failed.length} failed (${r.failed[0].name}: ${r.failed[0].error})` : ''}.`;
+        status(msg); toast(msg, 6000);
+      } catch (err) { toast(`Batch failed: ${err.message}`, 5000); } finally { ui.done(); }
+    })();
+  } });
+}
+/** Write the print resolution into PNG (pHYs) or JPEG (JFIF density) bytes. */
+async function withDpi(blob, dpi) {
+  const b = new Uint8Array(await blob.arrayBuffer());
+  if (blob.type === 'image/jpeg' && b[2] === 0xff && b[3] === 0xe0 && String.fromCharCode(...b.subarray(6, 10)) === 'JFIF') {
+    b[13] = 1; b[14] = dpi >> 8; b[15] = dpi & 255; b[16] = dpi >> 8; b[17] = dpi & 255; return new Blob([b], { type: blob.type });
+  }
+  if (blob.type === 'image/png' && b[12] === 0x49 && b[13] === 0x48) { // IHDR is first: insert pHYs after it
+    const ppm = Math.round(dpi / 0.0254), chunk = new Uint8Array(21), dv = new DataView(chunk.buffer);
+    dv.setUint32(0, 9); chunk.set([0x70, 0x48, 0x59, 0x73], 4); dv.setUint32(8, ppm); dv.setUint32(12, ppm); chunk[16] = 1;
+    dv.setUint32(17, crc32(chunk.subarray(4, 17)));
+    const at = 8 + 25; return new Blob([b.subarray(0, at), chunk, b.subarray(at)], { type: blob.type });
+  }
+  return blob;
+}
+let crcTable = null;
+function crc32(a) {
+  if (!crcTable) { crcTable = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crcTable[n] = c >>> 0; } }
+  let c = 0xffffffff; for (let i = 0; i < a.length; i++) c = crcTable[(c ^ a[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0;
+}
+function openLayerToDocDialog() {
+  const others = tabs.map((t, i) => [t, i]).filter(([t]) => t.doc !== doc());
+  if (!others.length) { toast('Open another image or canvas first (each opens in its own tab).'); return; }
+  const body = document.createElement('div');
+  body.innerHTML = formHTML([{ label: 'Copy to', html: `<select id="ltd">${others.map(([t, i]) => `<option value="${i}">${escapeHtml(t.doc.name || 'Untitled')} (${t.doc.width}×${t.doc.height})</option>`).join('')}</select>` }]) +
+    '<p class="muted small">Tip: you can also drag a layer from the Layers panel onto a document tab.</p>';
+  showModal({ title: `Duplicate “${activeLayer().name}” to document`, body, okLabel: 'Duplicate', ok: () => { copyLayerToDoc(activeLayer().id, +body.querySelector('#ltd').value); } });
+}
+
 window.tintwork = {
+  // v0.9
+  tabs, switchTab, closeTab, cycleTab, copyLayerToDoc, tabDirty, stashTab,
+  presets: { allPresets, presetById, presetPixels, centredRatioRect, constrainRect, saveCustomPreset, deleteCustomPreset, customPresets }, setCropPreset, applyCropTool, resizeToPreset, cropAspect,
+  recorder, startRecording, stopRecording, playAction, allActions, userActions, importActionsJSON, applyAdjustDirect, describeStep,
+  renderVariant, exportVariants, runBatch, memorySink, zipSink, formatName, variantSize, withDpi, autoOpts, saveAutoOpts, openAutoOptionsDialog,
   // v0.8
   pickLayer: (ids) => { const d = doc(); d.activeId = ids[ids.length - 1]; d.picked = new Set(ids.length > 1 ? ids : []); updateLayersPanel(); },
   pickedLayers: () => pickedLayers().map((l) => l.id), alignLayers, straightenBy, autoStraightenCmd, autoEnhanceCmd, autoWhiteBalanceCmd, wbPickAt,

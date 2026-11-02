@@ -15,8 +15,8 @@ export const EXPORT_TYPES = {
 };
 
 /** null when the user cancels the picker. */
-export async function pickOpen() {
-  try { const [h] = await window.showOpenFilePicker({ types: OPEN_TYPES, excludeAcceptAllOption: false, id: 'tintwork-open' }); return h || null; }
+export async function pickOpen(multiple = false) {
+  try { const hs = await window.showOpenFilePicker({ types: OPEN_TYPES, excludeAcceptAllOption: false, id: 'tintwork-open', multiple }); return multiple ? hs : hs[0] || null; }
   catch (err) { if (err && err.name === 'AbortError') return null; throw err; }
 }
 export async function pickSave(suggestedName, type = PROJECT_TYPE) {

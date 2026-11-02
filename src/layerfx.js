@@ -191,3 +191,64 @@ export function renderStyled(src, styles) {
   }
   return { canvas: out, x: ox, y: oy };
 }
+
+// ---- 16-bit effect pixels (v0.9) ------------------------------------------------------------------
+/** Separable Gaussian blur of a float plane (sigma in px), edges clamped to 0. */
+function blurPlane(a, w, h, sigma) {
+  if (sigma < 0.3) return a;
+  const R = Math.ceil(sigma * 3), k = new Float32Array(2 * R + 1); let t = 0;
+  for (let i = -R; i <= R; i++) { k[i + R] = Math.exp(-(i * i) / (2 * sigma * sigma)); t += k[i + R]; }
+  for (let i = 0; i < k.length; i++) k[i] /= t;
+  const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) { const row = y * w; for (let x = 0; x < w; x++) { let s = 0; const x0 = Math.max(0, x - R), x1 = Math.min(w - 1, x + R); for (let u = x0; u <= x1; u++) s += a[row + u] * k[u - x + R]; tmp[row + x] = s; } }
+  for (let y = 0; y < h; y++) { const y0 = Math.max(0, y - R), y1 = Math.min(h - 1, y + R); for (let x = 0; x < w; x++) { let s = 0; for (let v = y0; v <= y1; v++) s += tmp[v * w + x] * k[v - y + R]; out[y * w + x] = s; } }
+  return out;
+}
+/** Shift a plane by (dx, dy) with bilinear sampling. */
+function shiftPlane(a, w, h, dx, dy) {
+  if (!dx && !dy) return a;
+  const out = new Float32Array(w * h), fx = Math.floor(dx), fy = Math.floor(dy), tx = dx - fx, ty = dy - fy;
+  const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : a[y * w + x]);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const sx = x - fx, sy = y - fy; // sample src at (x - dx, y - dy)
+    out[y * w + x] = at(sx, sy) * (1 - tx) * (1 - ty) + at(sx - 1, sy) * tx * (1 - ty) + at(sx, sy - 1) * (1 - tx) * ty + at(sx - 1, sy - 1) * tx * ty;
+  }
+  return out;
+}
+/**
+ * The same effect geometry as renderStyled, as float coverage planes for 16-bit compositing:
+ * { w, h, ox, oy, under: [{ a, rgb, opacity }], over: [...], bodyFx } — under = shadow, outer glow and outside
+ * strokes; over = inside / centre strokes; bodyFx = effects that recolour the pixels themselves (overlay, inner
+ * glow / shadow), which stay on the 8-bit path. Returns null for an empty layer.
+ */
+export function effectStack(src, styles) {
+  const on = (styles || []).filter((s) => s.enabled && FX_TYPES[s.type]);
+  const sw = src.width, sh = src.height, all = ctx2(src).getImageData(0, 0, sw, sh).data;
+  const bb = bboxOfAlpha(all, sw, sh); if (!bb) return null;
+  const pad = stylePad(on), w = bb.w + 2 * pad, h = bb.h + 2 * pad, ox = bb.x - pad, oy = bb.y - pad;
+  const A = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) { const v = y + oy; if (v < 0 || v >= sh) continue; for (let x = 0; x < w; x++) { const u = x + ox; if (u >= 0 && u < sw) A[y * w + x] = all[(v * sw + u) * 4 + 3] / 255; } }
+  const ins = new Uint8Array(w * h); for (let i = 0; i < ins.length; i++) ins[i] = A[i] >= 0.5 ? 1 : 0;
+  const dOut = distanceField(ins, w, h), outs = new Uint8Array(w * h); for (let i = 0; i < outs.length; i++) outs[i] = ins[i] ? 0 : 1;
+  const dIn = distanceField(outs, w, h);
+  const off = (s) => { const a = (s.angle ?? 120) * Math.PI / 180; return [-Math.cos(a) * s.distance, Math.sin(a) * s.distance]; };
+  const under = [], over = [], item = (a, s) => ({ a, rgb: hex(s.color), opacity: (s.opacity ?? 100) / 100 });
+  for (const s of on) {
+    if (s.type === 'dropShadow') { const [dx, dy] = off(s); under.push(item(shiftPlane(blurPlane(A, w, h, s.size / 2), w, h, dx, dy), s)); }
+    else if (s.type === 'outerGlow') {
+      let shape = A;
+      if (s.spread > 0) { shape = new Float32Array(w * h); for (let i = 0; i < shape.length; i++) shape[i] = Math.max(A[i], Math.min(1, Math.max(0, s.spread + 1 - dOut[i]))); }
+      under.push(item(blurPlane(shape, w, h, s.size / 2), s));
+    }
+  }
+  for (const s of on) if (s.type === 'stroke' && s.position === 'outside') {
+    const a = new Float32Array(w * h); for (let i = 0; i < a.length; i++) a[i] = Math.min(1, Math.max(0, s.size + 1 - dOut[i])); under.push(item(a, s));
+  }
+  for (const s of on) if (s.type === 'stroke' && s.position !== 'outside') {
+    const a = new Float32Array(w * h);
+    if (s.position === 'inside') for (let i = 0; i < a.length; i++) a[i] = A[i] * Math.min(1, Math.max(0, s.size + 1 - dIn[i]));
+    else { const hs = s.size / 2; for (let i = 0; i < a.length; i++) { const sd = dIn[i] > 0 ? dIn[i] - 0.5 : dOut[i] - 0.5; a[i] = Math.min(1, Math.max(0, hs + 0.5 - Math.abs(sd))); } }
+    over.push(item(a, s));
+  }
+  return { w, h, ox, oy, under, over, bodyFx: on.some((s) => s.type === 'colorOverlay' || s.type === 'innerGlow' || s.type === 'innerShadow') };
+}

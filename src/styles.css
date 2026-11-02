@@ -341,3 +341,29 @@ input[type=text], input[type=number], textarea { -webkit-user-select: text; user
 #toolbar { min-height: 0; overflow-y: auto; scrollbar-width: none; }
 #toolbar button { flex-shrink: 0; }
 @media (max-height: 960px) and (min-width: 801px) { #toolbar button { height: 31px; } #toolbar .sep { margin: 3px 0; } }
+
+/* v0.9: document tabs */
+#tabbar { position: absolute; top: 0; left: 0; right: 0; z-index: 4; display: flex; gap: 1px; height: 28px; background: #18191d; border-bottom: 1px solid #2b2d33; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+#tabbar.hidden { display: none; }
+.doc-tab { display: flex; align-items: center; gap: 6px; max-width: 220px; min-width: 90px; padding: 0 6px 0 12px; font-size: 12px; color: #aeb2bb; background: #202227; cursor: pointer; user-select: none; border-top: 2px solid transparent; flex-shrink: 0; }
+.doc-tab:hover { background: #26282e; color: #e6e7ea; }
+.doc-tab.active { background: #111215; color: #fff; border-top-color: var(--accent); }
+.doc-tab.drop { outline: 2px dashed var(--accent); outline-offset: -3px; }
+.doc-tab .tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.doc-tab .tab-close { border: 0; background: none; color: inherit; padding: 0 4px; font-size: 14px; line-height: 1; opacity: .6; min-height: 0; }
+.doc-tab .tab-close:hover { opacity: 1; background: #ffffff1a; }
+/* v0.9: actions, batch, presets */
+.rec-badge { background: #c62828; color: #fff; border: 0; border-radius: 10px; padding: 1px 9px; margin-right: 8px; font-size: 11px; cursor: pointer; animation: recpulse 1.4s infinite; }
+.rec-badge.hidden { display: none; }
+@keyframes recpulse { 50% { opacity: .6; } }
+.action-list { list-style: none; padding: 0; margin: 8px 0 0; max-height: 300px; overflow: auto; }
+.action-list li { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 6px 4px; border-bottom: 1px solid #2b2d33; }
+.action-list .act-btns { display: flex; gap: 4px; flex-shrink: 0; }
+.small { font-size: 11px; }
+.row-btns { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+table.variants { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: 12px; }
+table.variants th { text-align: left; font-weight: 500; color: #8b8f98; }
+table.variants td { padding: 2px 3px; }
+#batchProgress { position: fixed; right: 16px; bottom: 34px; z-index: 60; background: #202227; border: 1px solid #3a3d44; border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; width: 300px; box-shadow: 0 8px 24px #0008; font-size: 12px; }
+#batchProgress progress { width: 100%; }
+.custom-presets summary { cursor: pointer; margin: 6px 0; }

@@ -50,25 +50,26 @@ function lumaStats(img) {
  * the picture is flat and a saturation lift when it is dull. Returns adjustment-layer specs (bottom → top);
  * steps that would change nothing are left out.
  */
-export function autoEnhance(img) {
-  const out = [];
-  const wb = autoWhiteBalance(img);
-  const wbOn = Math.abs(wb.temperature) + Math.abs(wb.tint) >= 4;
+/** Options (v0.9): { wb, tone, contrast, color } switch each step; strength (0–150 %) scales every correction. */
+export function autoEnhance(img, o = {}) {
+  const out = [], S = (o.strength ?? 100) / 100;
+  const wb0 = autoWhiteBalance(img), wb = { temperature: Math.round(wb0.temperature * S), tint: Math.round(wb0.tint * S) };
+  const wbOn = o.wb !== false && Math.abs(wb.temperature) + Math.abs(wb.tint) >= 4;
   if (wbOn) out.push({ type: 'whiteBalance', name: 'Auto white balance', params: wb });
   let cur = wbOn ? applyFns(img, pointFns('whiteBalance', wb)) : img;
   let s = lumaStats(cur); if (!s.n) return out;
-  const inBlack = clamp(s.lo, 0, 60), inWhite = clamp(s.hi, 190, 255);
+  const inBlack = Math.round(clamp(s.lo, 0, 60) * S), inWhite = Math.round(255 - (255 - clamp(s.hi, 190, 255)) * S);
   const range = Math.max(1, inWhite - inBlack), m = clamp((s.median - inBlack) / range, 0.02, 0.98);
-  const gamma = clamp(Math.round((Math.log(m) / Math.log(0.46)) * 100) / 100, 0.7, 1.6);
-  if (inBlack > 2 || inWhite < 253 || Math.abs(gamma - 1) > 0.03) {
+  const gamma = Math.round((1 + (clamp(Math.round((Math.log(m) / Math.log(0.46)) * 100) / 100, 0.7, 1.6) - 1) * S) * 100) / 100;
+  if (o.tone !== false && inBlack > 2 || inWhite < 253 || Math.abs(gamma - 1) > 0.03) {
     const p = { inBlack, inWhite, gamma, outBlack: 0, outWhite: 255 };
     out.push({ type: 'levels', name: 'Auto tone', params: p });
     cur = applyFns(cur, pointFns('levels', p)); s = lumaStats(cur);
   }
-  const k = Math.round(clamp((0.23 - s.std) * 110, 0, 16));
-  if (k >= 2) { const pts = [[0, 0], [64, 64 - k], [192, 192 + k], [255, 255]], id = [[0, 0], [255, 255]]; out.push({ type: 'curves', name: 'Auto contrast', params: { rgb: pts, r: id, g: id, b: id } }); }
-  const sat = Math.round(clamp((0.3 - s.chroma) * 90, 0, 22));
-  if (sat >= 3) out.push({ type: 'hueSaturation', name: 'Auto color', params: { hue: 0, saturation: sat, lightness: 0 } });
+  const k = Math.round(clamp((0.23 - s.std) * 110, 0, 16) * S);
+  if (o.contrast !== false && k >= 2) { const pts = [[0, 0], [64, 64 - k], [192, 192 + k], [255, 255]], id = [[0, 0], [255, 255]]; out.push({ type: 'curves', name: 'Auto contrast', params: { rgb: pts, r: id, g: id, b: id } }); }
+  const sat = Math.round(clamp((0.3 - s.chroma) * 90, 0, 22) * S);
+  if (o.color !== false && sat >= 3) out.push({ type: 'hueSaturation', name: 'Auto color', params: { hue: 0, saturation: sat, lightness: 0 } });
   return out;
 }
 

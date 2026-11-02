@@ -31,6 +31,7 @@
   <main id="workspace">
     <aside id="toolbar" aria-label="Tools"></aside>
     <section id="viewport" tabindex="0">
+      <div id="tabbar" class="hidden" role="tablist" aria-label="Open documents"></div>
       <canvas id="view"></canvas>
       <div id="modkeys" class="mobile-only" aria-label="Touch modifiers">
         <button data-mod="shift" title="Sticky Shift: add to selection, straight lines, constrain">⇧ Shift</button>
@@ -132,7 +133,7 @@
     </div>
   </div>
 
-  <input type="file" id="fileInput" accept="image/*,.json,.tintwork" hidden />
+  <input type="file" id="fileInput" accept="image/*,.json,.tintwork" multiple hidden />
   <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden />
   <script type="module" src="src/main.js"></script>
 </body>

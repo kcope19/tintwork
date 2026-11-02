@@ -63,6 +63,13 @@ void main() {
 }`,
 
   adjust: `uniform sampler2D uSrc, uLut; uniform int uOp; uniform vec3 uHsl; uniform float uAmount;
+uniform sampler2D uCube; uniform int uCubeN; uniform vec3 uDmin, uDmax;
+vec3 cubeAt(ivec3 q) { return texelFetch(uCube, ivec2(q.x + q.z * uCubeN, q.y), 0).rgb; }
+vec3 cube3(vec3 v) { vec3 t = clamp((v - uDmin) / (uDmax - uDmin), 0.0, 1.0) * float(uCubeN - 1);
+  ivec3 i = min(ivec3(floor(t)), ivec3(uCubeN - 2)); vec3 f = t - vec3(i);
+  vec3 c00 = mix(cubeAt(i), cubeAt(i + ivec3(1, 0, 0)), f.x), c10 = mix(cubeAt(i + ivec3(0, 1, 0)), cubeAt(i + ivec3(1, 1, 0)), f.x);
+  vec3 c01 = mix(cubeAt(i + ivec3(0, 0, 1)), cubeAt(i + ivec3(1, 0, 1)), f.x), c11 = mix(cubeAt(i + ivec3(0, 1, 1)), cubeAt(i + ivec3(1, 1, 1)), f.x);
+  return mix(mix(c00, c10, f.y), mix(c01, c11, f.y), f.z); }
 float lut1(float x, int ch) { x = clamp(x, 0.0, 1.0) * 4095.0; int i = int(floor(x)); int j = min(i + 1, 4095);
   return mix(texelFetch(uLut, ivec2(i, 0), 0)[ch], texelFetch(uLut, ivec2(j, 0), 0)[ch], x - float(i)); }
 vec3 rgb2hsl(vec3 c) { float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)), l = (mx + mn) * 0.5, h = 0.0, s = 0.0;
@@ -81,6 +88,7 @@ void main() {
     h.z = uHsl.z > 0.0 ? h.z + (1.0 - h.z) * uHsl.z : h.z * (1.0 + uHsl.z); v = hsl2rgb(h); }
   else if (uOp == 2) v = vec3(dot(v, vec3(0.2126, 0.7152, 0.0722)));
   else if (uOp == 3) { vec3 s = vec3(dot(v, vec3(0.393, 0.769, 0.189)), dot(v, vec3(0.349, 0.686, 0.168)), dot(v, vec3(0.272, 0.534, 0.131))); v = v + (s - v) * uAmount; }
+  else if (uOp == 4) v = mix(v, cube3(clamp(v, 0.0, 1.0)), uAmount);
   o = vec4(clamp(v, 0.0, 1.0) * c.a, c.a);
 }`,
 
@@ -134,8 +142,8 @@ void main() { ivec2 f = ivec2(gl_FragCoord.xy); ivec2 p = ivec2(f.x, uH - 1 - f.
 void main() { vec4 c = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0); o = vec4(straight(c), clamp(c.a, 0.0, 1.0)); }`,
 };
 
-export const GPU_OPS = new Set(['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'gaussianBlur', 'sharpen', 'noise', 'vignette', 'whiteBalance']);
-const ADJ_POINT = new Set(['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'whiteBalance']);
+export const GPU_OPS = new Set(['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'gaussianBlur', 'sharpen', 'noise', 'vignette', 'whiteBalance', 'lut3d']);
+const ADJ_POINT = new Set(['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'whiteBalance', 'lut3d']);
 const MARKERS = new Set(['groupBegin', 'groupEnd', 'passBegin', 'passEnd']);
 const BPP = { rgba8: 4, rgba16f: 8, rgba32f: 16 };
 
@@ -264,6 +272,15 @@ export function createEngine(opts = {}) {
     e = { t, slot, last: ++clock, pinned: true, straight: deep }; cache.set(key, e); return t;
   }
   const unpinAll = () => { for (const e of cache.values()) e.pinned = false; };
+  const cubeCache = new Map();
+  /** A 3D LUT as a 2D float texture (N*N wide, N tall: x = r + b*N, y = g), fetched with manual trilinear filtering. */
+  function cubeTex(T) {
+    let t = cubeCache.get(T); if (t) return t;
+    const N = T.size, data = new Float32Array(N * N * N * 4);
+    for (let b = 0; b < N; b++) for (let g = 0; g < N; g++) for (let r = 0; r < N; r++) { const s = ((b * N + g) * N + r) * 3, o = (g * N * N + b * N + r) * 4; data[o] = T.data[s]; data[o + 1] = T.data[s + 1]; data[o + 2] = T.data[s + 2]; data[o + 3] = 1; }
+    if (cubeCache.size >= 6) { const [k, old] = cubeCache.entries().next().value; freeTex(old); cubeCache.delete(k); }
+    t = makeTex(N * N, N, 'rgba32f'); upload(t, data, true); cubeCache.set(T, t); return t;
+  }
   const lutCache = new Map();
   function lutTex(op, params) {
     const key = op + JSON.stringify(params || {});
@@ -307,6 +324,7 @@ export function createEngine(opts = {}) {
       if (name === 'hueSaturation') run('adjust', r, w, h, { uSrc: a, uOp: 1, uHsl: [(params.hue || 0) / 360, (params.saturation || 0) / 100, (params.lightness || 0) / 100] });
       else if (name === 'grayscale') run('adjust', r, w, h, { uSrc: a, uOp: 2 });
       else if (name === 'sepia') run('adjust', r, w, h, { uSrc: a, uOp: 3, uAmount: (params.amount ?? 100) / 100 });
+      else if (name === 'lut3d') { const T = params.table; if (!T) { release(r); return a; } run('adjust', r, w, h, { uSrc: a, uOp: 4, uCube: cubeTex(T), uCubeN: T.size, uDmin: T.domainMin || [0, 0, 0], uDmax: T.domainMax || [1, 1, 1], uAmount: (params.amount ?? 100) / 100 }); }
       else run('adjust', r, w, h, { uSrc: a, uOp: 0, uLut: lutTex(name, params) });
     } else if (name === 'gaussianBlur' || name === 'sharpen') {
       const sigma = name === 'gaussianBlur' ? params.radius || 0 : params.radius ?? 1.5;

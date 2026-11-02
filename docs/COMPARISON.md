@@ -6,6 +6,21 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v0.9: documents, presets, multi-size export, batch and actions (researched 2026-11-01)
+
+| Area | Photoshop | Affinity Photo | Tintwork v0.9 |
+|---|---|---|---|
+| Document tabs | Tabs by default; Ctrl+Tab / Shift+Ctrl+Tab cycle; drag a layer onto another tab, or Duplicate Layer to another document [55][56] | Tabs | Tabs above the canvas, each with its own history, view and autosave slot; Ctrl+Tab / Ctrl+F6 cycle; drag a layer from the Layers panel onto a tab, or Layer ▸ Duplicate to document (centred); closing a changed document asks first |
+| Crop presets | Ratio and W × H × Resolution, 1:1, 4:5, 5:7, 2:3, 16:9, New Crop Preset, swap orientation [57] | Ratio / absolute crop | Social (1:1, 4:5, 9:16, 16:9, 1.91:1), banners, print 4×6 / 5×7 / 8×10 / A4 at a chosen DPI, free ratios, swap, ratio lock, custom presets; one undo step for crop + resize |
+| Resize to preset | Image Size with resolution [58] | Resize Document | Image ▸ Resize to preset: crop to fill (exact size) or fit inside, orientation auto / portrait / landscape, DPI written to JPEG/PNG |
+| Multi-size export | Export As: several relative sizes with suffixes in one go [59] | Batch job with several formats, one size per job [61] | File ▸ Export multiple sizes: any mix of original, long edge, width, scale % and preset sizes, JPEG / PNG / WebP, naming pattern, to a folder (File System Access) or a ZIP |
+| Actions | Record / stop / play; applied as one history step; editable steps [53] | Macros (record, library; export not recordable) [60] | Record / stop / replay (adjustments, filters, rotate / flip, crop & resize presets, looks, auto fixes, image size); 3 built-ins; import / export JSON; steps listed, not editable |
+| Batch | File ▸ Automate ▸ Batch: action, source folder (+ subfolders), destination, file naming [54] | New Batch Job: files, macros, formats, W/H [60][61] | File ▸ Batch process: folder (+ subfolders) or files, an action and/or a look, several output sizes, naming tokens {name} {n:3} {N} {w} {h} {preset} {date}, progress bar and Cancel, failed files listed |
+| v0.8 gaps closed | — | — | 3D LUT layers render on WebGL2 and WebGPU (match CPU within 3 levels); 16-bit shadow / glow / stroke pixels; options for auto enhance (which fixes, strength) and auto white balance (strength, warmth) [45] |
+
+### Summary
+Tintwork now covers the everyday "many files" workflow: several open documents, social/print presets, one-click multi-size export and folder batch processing with recorded actions. Still missing compared with the paid editors: editable / conditional action steps, droplets, recording tool strokes, saving back over originals, parallel batch processing, and floating or side-by-side document windows.
+
 ## v0.8: core structure, automatic tools and looks (researched 2026-11-01)
 
 | Feature | Tintwork status | How paid tools do it | Our improvement / gap |
@@ -134,6 +149,15 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 50. Adobe, "Edit photos with Presets in Lightroom" (Amount slider 0–200): https://helpx.adobe.com/lightroom/desktop/edit-photos/presets.html
 51. Adobe, "Apply Presets in Lightroom Classic": https://helpx.adobe.com/lightroom-classic/desktop/process-and-develop-photos/apply-presets.html
 52. Adobe, "Edit a photo with color lookup adjustment": https://helpx.adobe.com/ph_fil/photoshop/how-to/edit-photo-color-lookup-adjustment.html
+53. Adobe, "Use the Actions panel": https://helpx.adobe.com/photoshop/desktop/automate-tasks/automation-settings-and-presets/use-the-actions-panel.html, and "Record an action": https://helpx.adobe.com/photoshop/desktop/automate-tasks/create-record-actions/record-an-action.html
+54. Adobe, "Batch-process files": https://helpx.adobe.com/photoshop/desktop/automate-tasks/process-a-batch-of-files/batch-process-files.html
+55. Adobe, "Default keyboard shortcuts" (cycle through open documents): https://helpx.adobe.com/photoshop/using/default-keyboard-shortcuts.html
+56. Photoshop Essentials, "Moving Photos Between Tabbed Documents": https://www.photoshopessentials.com/basics/move-photos-tabbed-documents/, and Ask Tim Grey, "Dragging a Layer Across Tabs": https://asktimgrey.com/2024/06/26/dragging-a-layer-across-tabs/
+57. Adobe, "Crop tool options": https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html, and PetaPixel, "How to Crop in Photoshop": https://petapixel.com/how-to-crop-in-photoshop/
+58. Adobe, "Resize images" (Image Size parameters): https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/resize-adjust-resolution/resizing-parameters-in-photoshop.html
+59. Adobe, "Export files in different sizes": https://helpx.adobe.com/photoshop/desktop/save-and-export/export-files-to-different-formats/export-files-in-different-sizes.html
+60. MakeUseOf, "How to Automate and Batch Process Images in Affinity Photo": https://www.makeuseof.com/how-to-automate-batch-process-images-affinity-photo/
+61. Affinity forum, "export large amount of images in different sizes and folders": https://forum.affinity.serif.com/index.php?/topic/205542-is-this-possible-in-2024-with-photo-or-designer-to-export-large-amount-of-images-in-different-sizes-and-folders/, and Affinity Photo "Batch Processing" (official video): https://www.youtube.com/watch?v=4qrQjD_0LyI
 
 ### Benchmark caveat
 `scripts/bench.mjs` ran on a Linux box with no GPU. Headless Chromium used SwiftShader (software) for both WebGL2 and WebGPU and WebKit used software GL, so GPU timings there are slower than the CPU worker and are not representative of real hardware (see README).
@@ -142,5 +166,5 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 - ~~v0.6: WebGPU engine, mouse precision, File System Access, installable PWA, Windows conventions; shapes, gradients, dodge/burn, red-eye~~ (done)
 - ~~v0.7: groups, clipping masks, layer styles, warp and perspective, liquify, built-in benchmark~~ (done)
 - ~~v0.8: auto enhance, auto white balance, straighten, looks and presets~~ (done)
-- v0.9: multiple document tabs, crop presets, batch export
+- ~~v0.9: multiple document tabs, crop presets, batch export, actions~~ (done)
 - v1.0: onboarding, help, accessibility, error handling, iPhone memory tuning

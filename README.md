@@ -9,6 +9,18 @@ any third-party branding, assets or proprietary code.
 
 ![Workspace](screenshots/04-layer-blend-brush.png)
 
+## What's new in v0.9 (documents, presets, batch export, actions)
+
+![Tabs and crop presets](screenshots/9x-tabs-crop-presets.png)
+
+- **Document tabs**: every opened or new image gets a tab above the canvas with its own undo history, zoom and autosave slot. **Ctrl+Tab** / **Ctrl+Shift+Tab** (also Ctrl+F6) switch, **Ctrl+Alt+W** closes, middle-click closes a tab. Closing a document with unsaved changes asks first. Open several files at once from File ▸ Open.
+- **Copy layers between documents**: drag a layer from the Layers panel onto another tab, or Layer ▸ Duplicate to document…; it lands centred (16-bit data is kept when the target is 16-bit).
+- **Crop presets**: the Crop tool bar has social (1:1, 4:5, 9:16, 16:9, 1.91:1), banner and print (4×6, 5×7, 8×10 in, A4 at a DPI you pick) sizes, free ratios, an orientation swap, a ratio lock and "resize to preset". **Image ▸ Resize to preset…** crops to fill or fits inside; save your own presets there. Crop + resize is one undo step, and print sizes write their DPI into exported JPEG/PNG files.
+- **Export multiple sizes** (File ▸ Export multiple sizes…): one click exports any mix of original, long edge, width, scale % and preset sizes as JPEG, PNG or WebP, named by a pattern (`{name}`, `{w}`, `{h}`, `{preset}`, `{n:3}`, `{N}`, `{ext}`, `{date}`), into a folder (Chrome/Edge folder access) or a ZIP. A progress bar has Cancel.
+- **Actions** (new Actions menu): Record, Stop and replay adjustments, filters, rotate/flip, crop and resize presets, looks, auto fixes and image size. Three built-in actions; import/export as JSON (screenshot `9x-actions.png`).
+- **Batch** (File ▸ Batch process…): pick a folder (optionally with subfolders) or files, an action and/or a look, and output sizes; each image opens in a temporary tab, is processed, exported and closed. Shows progress, can be cancelled, and lists files that failed (screenshot `9x-batch-dialog.png`).
+- **v0.8 gaps closed**: 3D LUT layers now render on WebGL2 and WebGPU; drop shadow, outer glow and stroke pixels stay 16-bit in 16-bit documents; Image ▸ Auto enhance options… (which fixes, strength) and Auto white balance options… (strength, warmth).
+
 ## What's new in v0.8 (core structure, automatic tools, looks)
 
 ![Looks panel](screenshots/8x-looks-panel.png)
@@ -236,12 +248,13 @@ http(s) rather than opened as a `file://` URL because it uses ES modules.
 
 ```bash
 npx playwright install chromium webkit   # one time
-npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile, v0.7 and v0.8 tests
+npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile, v0.7, v0.8 and v0.9 tests
 npm run test:platform    # scripts/desktop-platform-test.mjs: Windows/Mac keyboard labels and shortcuts
 npm run bench            # scripts/bench.mjs: GPU vs CPU timings and banding
 npm run test:desktop     # scripts/smoke-test.mjs (Chromium)
 npm run test:v07         # scripts/v07-test.mjs: groups, clipping, styles, warp/perspective/liquify, benchmark, 16-bit dodge/burn/red eye on each engine
 npm run test:v08         # scripts/v08-test.mjs: pass-through groups per engine, 16-bit groups/styles/warp, multi-select/align, white balance, auto enhance, auto straighten, looks, LUTs
+npm run test:v09         # scripts/v09-test.mjs: GPU 3D LUT per engine, tabs (history, close prompt, layer drag), presets, actions, export sizes, batch + cancel, 16-bit effects, auto options
 npm run test:mobile      # scripts/mobile-test.mjs (WebKit iPhone 14 + Chromium Pixel 7, touch input)
 ```
 
@@ -337,6 +350,8 @@ src/layerfx.js        layer styles (shadows, glows, stroke, colour overlay) via 
 src/mesh.js           warp/perspective meshes, CPU mesh renderer, liquify displacement field
 src/bench.js          in-app benchmark and the automatic engine probe
 src/webgpu.js         WebGPU compute engine
+src/presets.js        crop / resize / print size presets and ratio maths
+src/batch.js          export naming patterns, output sizes, ZIP writer
 src/platform.js       Mac vs Windows/Linux modifiers, key labels, reserved shortcuts
 vendor/fflate/        bundled deflate library (MIT)
 docs/COMPARISON.md    living comparison with paid editors
@@ -373,15 +388,16 @@ test-assets/          generated test image (export outputs are git-ignored)
 - WebGPU: headless/software adapters use the readback output (slower). Direct canvas output is only used on real GPUs, and it has not been benchmarked on Windows hardware from this box. WebGL2 has no brush path, so brushes fall back to the CPU there. WebGPU brush stamping is an async engine call and only pays off on a real GPU.
 - Shapes are raster layers (not editable vector shapes). Gradients have no editor for multi-stop presets, no angle or diamond types, and no gradient fill layer.
 - Groups: a group that is itself clipped to the layer below composites at 8 bits in 16-bit documents. Align with several layers aligns to their combined bounds (not to a selection); distribute uses centres only (no equal-gap mode).
-- Layer styles: no bevel/emboss, satin, gradient/pattern overlay, contours or style presets, and one instance per effect. Shadow and glow blend modes apply within the layer's effects, not against the layers below. In 16-bit documents, pixels that effects change (stroke, glow, shadow) are computed at 8 bits; the rest of the layer stays 16-bit.
+- Layer styles: no bevel/emboss, satin, gradient/pattern overlay, contours or style presets, and one instance per effect. Shadow and glow blend modes apply within the layer's effects, not against the layers below. In 16-bit documents, shadow, glow and stroke pixels are 16-bit; layers with an inner glow, inner shadow, colour overlay or a mask still compute effect pixels at 8 bits.
 - Liquify: no twirl, freeze mask or face-aware tools; restore only undoes distortion within the current stroke (use undo for earlier strokes).
 - GPU and CPU warp results can differ by about one level at edge pixels.
 - The benchmark on this box runs on SwiftShader (software); its GPU numbers are not representative of real Windows GPUs.
 - Deferred by request: mouse side-button mapping, deep accessibility and input customization.
 - Brush has no pressure sensitivity, spacing or texture settings yet.
-- Single open document at a time (tabs are not implemented).
-- Auto tools: auto enhance and auto white balance have no options dialog (clip %, algorithm, target colours); white balance is a −100..100 scale, not Kelvin, and there are no camera presets. Auto straighten looks for one dominant line within ±20° and needs clear edges. Straightening crops (or leaves transparent corners) and has no content-aware fill.
-- Looks: intensity goes up to 100% (no exaggerate); looks are stored in this browser (export them to keep a copy). 3D LUTs: .cube only; LUT layers render on the CPU even when a GPU engine is active; the last 6 LUTs are remembered for autosave recovery, and project files always carry their LUTs.
+- Tabs: one document is visible at a time (no floating windows or side-by-side view); dragging a layer works from the Layers panel only, not from the canvas. Ctrl+Tab may be taken by the browser outside the installed app; Ctrl+F6 always works.
+- Actions record whole commands only (no brush strokes, selections, layer edits or text), steps cannot be edited, reordered or made conditional, and there are no droplets. Batch runs one image at a time, never overwrites originals, and can only write to a folder in Chrome/Edge (other browsers get a ZIP).
+- Auto tools: the options dialogs choose which fixes run and their strength, but there are no clip % or algorithm choices or target colours; white balance is a −100..100 scale, not Kelvin, and there are no camera presets. Auto straighten looks for one dominant line within ±20° and needs clear edges. Straightening crops (or leaves transparent corners) and has no content-aware fill.
+- Looks: intensity goes up to 100% (no exaggerate); looks are stored in this browser (export them to keep a copy). 3D LUTs: .cube only; the last 6 LUTs are remembered for autosave recovery, and project files always carry their LUTs.
 
 ## Roadmap
 
@@ -389,7 +405,7 @@ Milestones to 1.0 (Windows desktop, Chrome and Edge first; Mac and iPhone kept w
 - ~~**v0.6**: WebGPU engine (with WebGL2 then CPU fallback), File System Access, installable PWA, Windows conventions, mouse precision, shapes, gradients, dodge/burn, red-eye~~ (done).
 - ~~**v0.7**: groups, clipping masks, layer styles, warp and perspective transform, liquify, built-in benchmark~~ (done).
 - ~~**v0.8**: multi-layer selection, group transforms, pass-through and 16-bit fixes, auto enhance, auto white balance, straighten, looks and LUTs~~ (done).
-- **v0.9**: multi-document tabs, crop presets, batch export.
+- ~~**v0.9**: multi-document tabs, crop presets, multi-size and batch export, actions~~ (done).
 - **v1.0**: onboarding, help, accessibility, error handling, memory tuning, full tests, user guide.
 
 Longer-term items:
