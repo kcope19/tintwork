@@ -23,7 +23,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -4821,6 +4821,16 @@ function rawSettingsFor(choice) {
   return rawLastSettings();
 }
 const rawPresetOptions = (withNone) => `${withNone ? '<option value="">Choose…</option>' : ''}${hasRawLast() ? '<option value="last">Last used settings</option>' : ''}<option value="default">Default settings</option>${rawPresets().map((p) => `<option value="preset:${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('')}`;
+/** Local adjustment sliders: key, label, min, max, step, tooltip. */
+const LOCAL_SLIDERS = [
+  ['exposure', 'Exposure (EV)', -4, 4, 0.05], ['contrast', 'Contrast', -100, 100, 1], ['highlights', 'Highlights', -100, 100, 1, 'Pull down (−) or brighten (+) the bright tones'],
+  ['shadows', 'Shadows', -100, 100, 1, 'Lift (+) or deepen (−) the dark tones'], ['temp', 'Temperature', -100, 100, 1], ['tint', 'Tint', -100, 100, 1, 'Green (−) or magenta (+)'],
+  ['saturation', 'Saturation', -100, 100, 1], ['clarity', 'Clarity', -100, 100, 1, 'Mid-size local contrast (about 12 px at full size): adds punch, or softens with negative values'],
+  ['texture', 'Texture', -100, 100, 1, 'Fine detail such as skin, foliage or fabric (about 3 px); negative values smooth it'], ['sharpness', 'Sharpness', -100, 100, 1, 'Edge sharpening (+) or a slight blur (−)'],
+  ['noise', 'Noise reduction', 0, 100, 1, 'Extra luminance noise reduction inside the mask'], ['feather', 'Feather', 0, 100, 1],
+];
+const RAW_BRUSH_KEY = 'tintwork.rawBrush';
+const rawBrushPrefs = () => { const d = { size: 5, feather: 50, flow: 100, smooth: 50, auto: false }; try { return { ...d, ...JSON.parse(localStorage.getItem(RAW_BRUSH_KEY) || '{}') }; } catch { return d; } };
 /**
  * RAW develop dialog. opt (re-develop): { initial: settings to start from (also the "before" view), title, okLabel,
  * onApply(settings) } — without opt, Open develops the file into a new document.
@@ -4888,12 +4898,22 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
         ${slider('fringeGreenHi', 'Green hue to', 40, 190, 1, s.fringeGreenHi, 'Hue range treated as green fringe, in degrees')}
         <div class="raw-preset-save"><button type="button" id="rawFringePick" aria-pressed="false" title="Then click a coloured fringe in the preview: its hue range and amount are set for you (I)">Pick fringe colour</button><label class="raw-check"><input type="checkbox" id="rawFringeMask" /> Show affected areas</label></div>
         <div class="raw-sec">Local adjustments</div>
-        <div class="raw-preset-save"><button type="button" id="rawAddLinear" title="A graduated filter: full effect on one side of a line, fading out to the other (for skies and foregrounds)">Add graduated</button><button type="button" id="rawAddRadial" title="A radial filter: an ellipse with a soft edge, affecting its inside or outside">Add radial</button></div>
-        <label class="field two"><span>Edit</span><select id="rawLocalSel" aria-label="Local adjustment to edit"></select></label>
+        <div class="raw-preset-save"><button type="button" id="rawAddLinear" title="A graduated filter: full effect on one side of a line, fading out to the other (for skies and foregrounds)">Add graduated</button><button type="button" id="rawAddRadial" title="A radial filter: an ellipse with a soft edge, affecting its inside or outside">Add radial</button><button type="button" id="rawAddBrush" title="A brush mask: paint where the adjustment applies (hold Alt to erase)">Add brush</button></div>
+        <div id="rawMaskList" class="raw-masks" role="listbox" aria-label="Masks"></div>
+        <div class="raw-preset-save" id="rawMaskActs"><button type="button" id="rawMaskRename" title="Rename the selected mask (or double-click it)">Rename</button><button type="button" id="rawMaskDup" title="Copy the selected mask with its settings">Duplicate</button><button type="button" id="rawMaskInv" aria-pressed="false" title="Apply the adjustment everywhere except the mask">Invert</button><button type="button" id="rawLocalDel" title="Delete the selected mask (Delete key)">Delete</button></div>
+        <label class="raw-check" title="Tint the area the selected mask affects red (O)"><input type="checkbox" id="rawMaskOv" /> Show mask overlay (O)</label>
         <div id="rawLocalBox" class="hidden">
-          ${['exposure:Exposure (EV):-4:4:0.05', 'contrast:Contrast:-100:100:1', 'temp:Temperature:-100:100:1', 'feather:Feather:0:100:1'].map((t) => { const [k, label, lo, hi, st] = t.split(':'); return `<label class="field" data-lrow="${k}"><span>${label}</span><input type="range" data-l="${k}" min="${lo}" max="${hi}" step="${st}" value="0" aria-label="Local ${label}" /><output data-lo="${k}">0</output></label>`; }).join('')}
-          <label class="field two" data-lrow="invert"><span>Affects</span><select id="rawLocalInv" aria-label="Radial filter affects"><option value="0">Inside the ellipse</option><option value="1">Outside the ellipse</option></select></label>
-          <div class="raw-preset-save"><button type="button" id="rawLocalDel">Delete</button><span class="muted small">Drag the handles in the preview.</span></div>
+          ${LOCAL_SLIDERS.map(([k, label, lo, hi, st, tip]) => `<label class="field" data-lrow="${k}"${tip ? ` title="${escapeHtml(tip)}"` : ''}><span>${label}</span><input type="range" data-l="${k}" min="${lo}" max="${hi}" step="${st}" value="0" aria-label="Local ${label}" /><output data-lo="${k}">0</output></label>`).join('')}
+          <div id="rawBrushBox"><div class="raw-sub">Brush <span class="muted small">(adds to the mask; Alt erases)</span></div>
+          <div class="raw-preset-save"><button type="button" id="rawBrushBtn" aria-pressed="false" title="Paint the mask with the mouse; hold Alt to erase (B)">Paint</button><button type="button" id="rawEraseBtn" aria-pressed="false" title="Erase from the mask (or hold Alt while painting)">Erase</button><button type="button" id="rawBrushClear" title="Remove every brush stroke from this mask">Clear strokes</button></div>
+          ${[['size', 'Size', 0.5, 30, 0.5, 'Brush radius as a share of the long side of the photo ([ and ] keys)'], ['feather', 'Feather', 0, 100, 1, 'How soft the brush edge is'], ['flow', 'Flow', 5, 100, 1, 'How much each stroke adds; overlapping strokes build up'], ['smooth', 'Smoothing', 0, 100, 1, 'Steadies mouse strokes (the brush trails the pointer a little)']].map(([k, label, lo, hi, st, tip]) => `<label class="field" title="${escapeHtml(tip)}"><span>${label}</span><input type="range" data-b="${k}" min="${lo}" max="${hi}" step="${st}" value="0" aria-label="Brush ${label}" /><output data-bo="${k}">0</output></label>`).join('')}
+          <label class="raw-check" title="Paint stays on areas with a colour and brightness like the spot under the brush, and stops at edges"><input type="checkbox" id="rawAutoMask" /> Auto mask (stop at edges)</label></div>
+          <div class="raw-sub">Range masks <span class="muted small">(narrow the mask down)</span></div>
+          <div class="raw-preset-save"><label class="raw-check"><input type="checkbox" id="rawLumOn" /> Luminance range</label><button type="button" id="rawLumPick" title="Click a tone in the preview to centre the range on it">Pick</button></div>
+          ${[['lumLo', 'From', 0, 100], ['lumHi', 'To', 0, 100], ['lumSoft', 'Smoothness', 0, 50]].map(([k, label, lo, hi]) => `<label class="field" data-rrow="lum"><span>${label}</span><input type="range" data-r="${k}" min="${lo}" max="${hi}" step="1" value="0" aria-label="Luminance ${label}" /><output data-ro="${k}">0</output></label>`).join('')}
+          <div class="raw-preset-save"><label class="raw-check"><input type="checkbox" id="rawColOn" /> Color range</label><button type="button" id="rawColPick" title="Click a colour in the preview to select similar colours">Pick</button></div>
+          ${[['colHue', 'Hue', 0, 359], ['colRange', 'Range', 2, 90], ['colSoft', 'Smoothness', 0, 90]].map(([k, label, lo, hi]) => `<label class="field" data-rrow="color"><span>${label}</span><input type="range" data-r="${k}" min="${lo}" max="${hi}" step="1" value="0" aria-label="Color ${label}" /><output data-ro="${k}">0</output></label>`).join('')}
+          <p class="muted small" id="rawMaskHint">Drag the handles in the preview.</p>
         </div>
         ${opt.onApply ? `<p class="muted small" id="rawSrcNote">RAW file: ${opt.linked ? 'linked to the file on disk' : 'embedded in the project'}.</p>` : `<label class="field two" title="Embed keeps a copy of the RAW file inside the project (the project is self-contained but larger). Link keeps only a reference to the file on this computer (small projects; the file must stay where it is).">
           <span>RAW file</span><select id="rawStore" aria-label="RAW file in the project"><option value="embed">Embed in the project</option><option value="link" ${opt.handle ? '' : 'disabled'}>Link to the file on disk</option></select></label>${opt.handle ? '' : '<p class="muted small" id="rawStoreNote">Linking needs Chrome or Edge and a file opened with File ▸ Open, from recent files or by drag and drop.</p>'}`}
@@ -4947,7 +4967,7 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
     const refresh = async () => {
       if (busy) { again = true; return; }
       busy = true;
-      try { do { again = false; const p = await sess.preview({ ...s }); if (done) return; draw(p); } while (again); }
+      try { do { again = false; const p = await sess.preview(maskOn && s.local?.[localSel] ? { ...s, maskShow: localSel } : { ...s }); if (done) return; draw(p); } while (again); }
       catch (err) { if (!done) $q('#rawMs').textContent = `Preview failed: ${err.message}`; }
       finally { busy = false; ui.idle = !again; }
     };
@@ -4960,7 +4980,10 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
     const setBefore = (on) => setView(on ? 'before' : 'after');
     const setSplit = (f) => { splitF = Math.min(1, Math.max(0, f)); ui.split = splitF; compose(); };
     const ui = rawUI = { settings: s, info, previews: 0, idle: true, body, refresh: () => { ui.idle = false; refresh(); }, beforeShown: false, view: 'after', split: 0.5, setBefore, setView, setSplit, applyPreset: (v) => applyChoice(v), redevelop: !!opt.onApply,
-      addLocal: (t) => addLocal(t), setLocal: (i, p) => setLocal(i, p), selectLocal: (i) => { localSel = i; syncLocal(); }, deleteLocal: (i) => deleteLocal(i),
+      addLocal: (t) => addLocal(t), setLocal: (i, p) => setLocal(i, p), selectLocal: (i) => selectLocal(i), deleteLocal: (i) => deleteLocal(i),
+      duplicateLocal: (i) => duplicateLocal(i), renameLocal: (i, n) => renameLocal(i, n), invertLocal: (i) => invertLocal(i), setMaskOn: (on) => setMaskOn(on), maskOn: false,
+      setBrushMode: (on) => setBrushMode(on), get brushMode() { return brushMode; }, brush: () => ({ ...brush }), setBrush: (p) => { Object.assign(brush, p); saveBrush(); syncLocal(); },
+      rangeAt: (k, u, v) => rangeAt(k, u, v), setRangePick: (k) => setRangePick(k), get rangePick() { return rangePick; },
       pickAt: (u, v) => pickAt(u, v), setPicking: (on) => setPicking(on), get localSel() { return localSel; }, get picking() { return picking; }, get showGrid() { return showGrid; },
       lensKey, get lensFromProfile() { return lensFromProfile; }, overlay: () => ov };
     const changed = () => { ui.idle = false; refresh(); };
@@ -4977,13 +5000,13 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
     // ---- overlay: grid, local adjustment handles, eyedropper -----------------------------------------------
     const ov = $q('#rawOverlay');
     const locals = () => (s.local ||= []);
-    const activeOverlay = () => picking || localSel >= 0;
+    const activeOverlay = () => picking || localSel >= 0 || !!rangePick;
     const drawOverlay = () => {
       const r = contentRect(), dpr = window.devicePixelRatio || 1;
       Object.assign(ov.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
       const W = Math.max(1, Math.round(r.w * dpr)), H = Math.max(1, Math.round(r.h * dpr));
       if (ov.width !== W || ov.height !== H) { ov.width = W; ov.height = H; }
-      ov.classList.toggle('active', activeOverlay()); ov.classList.toggle('picking', picking);
+      ov.classList.toggle('active', activeOverlay()); ov.classList.toggle('picking', picking || !!rangePick);
       const g = ov.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H); g.scale(dpr, dpr);
       const w = r.w, h = r.h, P = (u, v) => [u * w, v * h];
       if (showGrid) {
@@ -4996,7 +5019,23 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       (s.local || []).forEach((a, i) => {
         const on = i === localSel;
         g.lineWidth = on ? 1.5 : 1; g.strokeStyle = on ? '#fff' : 'rgba(255,255,255,0.6)'; g.shadowColor = '#000'; g.shadowBlur = 2;
-        if (a.type === 'linear') {
+        if (a.type === 'brush') {
+          if (on && (a.strokes || []).length && (!maskOn || stroke)) { // stroke outlines (the overlay shows the real mask)
+            const L = Math.max(w, h);
+            for (const st of a.strokes) {
+              const p = st.pts; g.lineCap = g.lineJoin = 'round'; g.lineWidth = Math.max(1, st.size * L * 2); g.strokeStyle = st.erase ? 'rgba(90,170,255,0.28)' : 'rgba(255,90,90,0.28)';
+              g.beginPath(); g.moveTo(p[0] * w, p[1] * h); for (let j = 2; j < p.length; j += 2) g.lineTo(p[j] * w, p[j + 1] * h); if (p.length === 2) g.lineTo(p[0] * w + 0.01, p[1] * h); g.stroke();
+            }
+            g.lineWidth = 1;
+          }
+          if (on && brushMode && hover) { // brush cursor: outer = size, inner = where the feather starts
+            const R = brushR() * Math.max(w, h), [hx, hy] = P(hover.u, hover.v);
+            g.strokeStyle = hover.erase ? '#9cf' : '#fff'; g.beginPath(); g.arc(hx, hy, R, 0, Math.PI * 2); g.stroke();
+            g.setLineDash([3, 3]); g.beginPath(); g.arc(hx, hy, R * (1 - brush.feather / 100 * 0.999), 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
+            if (hover.erase) { g.beginPath(); g.moveTo(hx - 4, hy); g.lineTo(hx + 4, hy); g.stroke(); }
+            else { g.beginPath(); g.moveTo(hx - 4, hy); g.lineTo(hx + 4, hy); g.moveTo(hx, hy - 4); g.lineTo(hx, hy + 4); g.stroke(); }
+          }
+        } else if (a.type === 'linear') {
           const [ax, ay] = P(a.x0, a.y0), [bx, by] = P(a.x1, a.y1), dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1, nx = -dy / L * (w + h), ny = dx / L * (w + h);
           if (on) {
             g.beginPath(); for (const [px, py, dash] of [[ax, ay, []], [bx, by, []], [(ax + bx) / 2, (ay + by) / 2, [4, 4]]]) { g.setLineDash(dash); g.beginPath(); g.moveTo(px - nx, py - ny); g.lineTo(px + nx, py + ny); g.stroke(); }
@@ -5016,42 +5055,138 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
         g.shadowBlur = 0;
       });
     };
-    const LDEF = { linear: { exposure: -0.7, contrast: 0, temp: 0, x0: 0.5, y0: 0, x1: 0.5, y1: 0.45 }, radial: { exposure: 0.5, contrast: 0, temp: 0, cx: 0.5, cy: 0.5, rx: 0.3, ry: 0.3, feather: 0.5, invert: false } };
-    const localName = (a, i) => `${i + 1}. ${a.type === 'linear' ? 'Graduated' : 'Radial'} (${a.exposure > 0 ? '+' : ''}${(+a.exposure).toFixed(2)} EV)`;
-    const syncLocal = () => {
-      const list = s.local || [], sel = $q('#rawLocalSel');
-      if (localSel >= list.length) localSel = list.length - 1;
-      sel.innerHTML = `<option value="-1">${list.length ? 'None (hide handles)' : 'None yet'}</option>${list.map((a, i) => `<option value="${i}">${localName(a, i)}</option>`).join('')}`;
-      sel.value = String(localSel);
-      const a = list[localSel]; $q('#rawLocalBox').classList.toggle('hidden', !a);
-      $q('#rawAddLinear').disabled = $q('#rawAddRadial').disabled = list.length >= MAX_LOCALS;
-      if (a) {
-        for (const k of ['exposure', 'contrast', 'temp', 'feather']) {
-          const v = k === 'feather' ? Math.round((a.feather ?? 0) * 100) : a[k], el = $q(`[data-l=${k}]`); if (el) { el.value = v; $q(`[data-lo=${k}]`).textContent = k === 'exposure' ? `${v > 0 ? '+' : ''}${(+v).toFixed(2)}` : v; }
-        }
-        for (const row of body.querySelectorAll('[data-lrow=feather], [data-lrow=invert]')) row.classList.toggle('hidden', a.type !== 'radial');
-        $q('#rawLocalInv').value = a.invert ? '1' : '0';
-      }
+    const LDEF = { linear: { exposure: -0.7, x0: 0.5, y0: 0, x1: 0.5, y1: 0.45 }, radial: { exposure: 0.5, cx: 0.5, cy: 0.5, rx: 0.3, ry: 0.3, feather: 0.5, invert: false }, brush: { exposure: 0.5, strokes: [] } };
+    const TYPE_NAME = { linear: 'Graduated', radial: 'Radial', brush: 'Brush' };
+    const localName = (a, i) => a.name || `${TYPE_NAME[a.type] || 'Mask'} ${i + 1}`;
+    const localSummary = (a) => {
+      const bits = LOCAL_SLIDERS.filter(([k]) => k !== 'feather' && a[k]).slice(0, 3).map(([k, label]) => `${label.replace(' (EV)', '')} ${a[k] > 0 ? '+' : ''}${k === 'exposure' ? (+a[k]).toFixed(2) : a[k]}`);
+      if (a.lum) bits.push('lum'); if (a.color) bits.push('color'); if (a.invert) bits.push('inverted');
+      return bits.join(', ') || 'no effect yet';
+    };
+    const brush = rawBrushPrefs();
+    let maskOn = false, brushMode = false, eraseMode = false, rangePick = null, stroke = null, hover = null, renaming = -1;
+    const saveBrush = () => { try { localStorage.setItem(RAW_BRUSH_KEY, JSON.stringify(brush)); } catch { /* private mode */ } };
+    const setBrushMode = (on) => {
+      brushMode = !!on && s.local?.[localSel]?.type === 'brush'; stroke = null;
+      const b = $q('#rawBrushBtn'); b.setAttribute('aria-pressed', String(brushMode)); b.classList.toggle('on', brushMode);
+      if (brushMode) { setPicking(false); setRangePick(null); } else ov.style.cursor = '';
       drawOverlay();
     };
+    const setErase = (on) => { eraseMode = !!on; const b = $q('#rawEraseBtn'); b.setAttribute('aria-pressed', String(eraseMode)); b.classList.toggle('on', eraseMode); };
+    const setRangePick = (kind) => {
+      rangePick = kind && s.local?.[localSel] ? kind : null;
+      for (const [id, k] of [['#rawLumPick', 'lum'], ['#rawColPick', 'color']]) { $q(id).setAttribute('aria-pressed', String(rangePick === k)); $q(id).classList.toggle('on', rangePick === k); }
+      if (rangePick) { brushMode = false; $q('#rawBrushBtn').setAttribute('aria-pressed', 'false'); $q('#rawBrushBtn').classList.remove('on'); }
+      ov.style.cursor = rangePick ? 'crosshair' : ''; drawOverlay();
+    };
+    const setMaskOn = (on) => { maskOn = !!on; $q('#rawMaskOv').checked = maskOn; ui.maskOn = maskOn; if (s.local?.length) changed(); };
+    const fmtL = (k, v) => (k === 'exposure' ? `${v > 0 ? '+' : ''}${(+v).toFixed(2)}` : String(v));
+    const syncLocal = () => {
+      const list = s.local || [];
+      if (localSel >= list.length) localSel = list.length - 1;
+      if (renaming >= list.length) renaming = -1;
+      const host = $q('#rawMaskList');
+      const html = list.length ? list.map((a, i) => `<div class="raw-mask-item" role="option" tabindex="0" data-mi="${i}" aria-selected="false" title="Click to select, double-click to rename">${i === renaming ? `<input type="text" class="raw-mask-rename" maxlength="40" value="${escapeHtml(localName(a, i))}" aria-label="Mask name" />` : `<span class="raw-mask-name">${escapeHtml(localName(a, i))}</span>`}<span class="muted small">${escapeHtml(localSummary(a))}</span></div>`).join('') : '<p class="muted small">No masks yet: add a graduated, radial or brush mask.</p>';
+      if (host.dataset.html !== html) { host.innerHTML = html; host.dataset.html = html; } // rebuilt only when it changes, so a double-click survives selecting
+      for (const it of host.querySelectorAll('[data-mi]')) { const on = +it.dataset.mi === localSel; it.classList.toggle('on', on); it.setAttribute('aria-selected', String(on)); }
+      if (renaming >= 0) { const inp = host.querySelector('.raw-mask-rename'); inp?.focus(); inp?.select(); }
+      const a = list[localSel]; $q('#rawLocalBox').classList.toggle('hidden', !a);
+      for (const id of ['#rawMaskRename', '#rawMaskDup', '#rawMaskInv', '#rawLocalDel']) $q(id).disabled = !a;
+      $q('#rawMaskDup').disabled = !a || list.length >= MAX_LOCALS;
+      $q('#rawAddLinear').disabled = $q('#rawAddRadial').disabled = $q('#rawAddBrush').disabled = list.length >= MAX_LOCALS;
+      $q('#rawMaskInv').setAttribute('aria-pressed', String(!!a?.invert)); $q('#rawMaskInv').classList.toggle('on', !!a?.invert);
+      if (a) {
+        for (const [k] of LOCAL_SLIDERS) {
+          const v = k === 'feather' ? Math.round((a.feather ?? 0) * 100) : (a[k] || 0), el = $q(`[data-l=${k}]`); if (el) { el.value = v; $q(`[data-lo=${k}]`).textContent = fmtL(k, v); }
+        }
+        $q('[data-lrow=feather]').classList.toggle('hidden', a.type !== 'radial');
+        $q('#rawBrushBox').classList.toggle('hidden', a.type !== 'brush');
+        for (const k of ['size', 'feather', 'flow', 'smooth']) { $q(`[data-b=${k}]`).value = brush[k]; $q(`[data-bo=${k}]`).textContent = k === 'size' ? `${brush[k]}%` : brush[k]; }
+        $q('#rawAutoMask').checked = !!brush.auto;
+        const L = a.lum || { lo: 50, hi: 100, soft: 10 }, C = a.color || { hue: 30, range: 25, soft: 20 };
+        $q('#rawLumOn').checked = !!a.lum; $q('#rawColOn').checked = !!a.color;
+        for (const [k, v] of [['lumLo', L.lo], ['lumHi', L.hi], ['lumSoft', L.soft], ['colHue', C.hue], ['colRange', C.range], ['colSoft', C.soft]]) { $q(`[data-r=${k}]`).value = v; $q(`[data-ro=${k}]`).textContent = k === 'colHue' ? `${v}°` : v; }
+        for (const row of body.querySelectorAll('[data-rrow=lum]')) row.classList.toggle('disabled-row', !a.lum);
+        for (const row of body.querySelectorAll('[data-rrow=color]')) row.classList.toggle('disabled-row', !a.color);
+        $q('#rawMaskHint').textContent = a.type === 'brush' ? `Paint in the preview (B toggles the brush, Alt erases, [ and ] change the size). ${(a.strokes || []).length} stroke${(a.strokes || []).length === 1 ? '' : 's'}.` : 'Drag the handles in the preview.';
+      }
+      if (!a || a.type !== 'brush') { if (brushMode) { brushMode = false; $q('#rawBrushBtn').setAttribute('aria-pressed', 'false'); $q('#rawBrushBtn').classList.remove('on'); } }
+      if (!a && rangePick) setRangePick(null);
+      drawOverlay();
+    };
+    const selectLocal = (i) => { const prev = localSel; localSel = i; renaming = -1; if (i >= 0) setPicking(false); syncLocal(); if (maskOn && prev !== localSel) changed(); };
     const addLocal = (type) => {
       const list = locals(); if (list.length >= MAX_LOCALS) return -1;
-      list.push({ type, ...LDEF[type] }); localSel = list.length - 1; picking = false; setPicking(false);
+      list.push({ type, ...JSON.parse(JSON.stringify(LDEF[type])) }); localSel = list.length - 1; picking = false; setPicking(false);
       if (view === 'before') setView('after');
-      syncLocal(); changed(); return localSel;
+      syncLocal(); if (type === 'brush') setBrushMode(true); changed(); return localSel;
     };
-    const setLocal = (i, patch) => { const a = s.local?.[i]; if (!a) return; Object.assign(a, patch); syncLocal(); changed(); };
-    const deleteLocal = (i = localSel) => { if (!s.local?.[i]) return; s.local.splice(i, 1); if (!s.local.length) s.local = null; localSel = -1; syncLocal(); changed(); };
+    const setLocal = (i, patch) => { const a = s.local?.[i]; if (!a) return; Object.assign(a, patch); for (const k of Object.keys(patch)) if (patch[k] === null || patch[k] === undefined) delete a[k]; syncLocal(); changed(); };
+    const deleteLocal = (i = localSel) => { if (!s.local?.[i]) return; s.local.splice(i, 1); if (!s.local.length) s.local = null; localSel = -1; renaming = -1; setBrushMode(false); syncLocal(); changed(); };
+    const duplicateLocal = (i = localSel) => {
+      const list = s.local, a = list?.[i]; if (!a || list.length >= MAX_LOCALS) return -1;
+      const c = JSON.parse(JSON.stringify(a)); c.name = `${localName(a, i)} copy`.slice(0, 40);
+      list.splice(i + 1, 0, c); localSel = i + 1; syncLocal(); changed(); return localSel;
+    };
+    const renameLocal = (i, name) => { const a = s.local?.[i]; if (!a) return; const n = String(name ?? '').trim().slice(0, 40); if (n && n !== `${TYPE_NAME[a.type]} ${i + 1}`) a.name = n; else delete a.name; renaming = -1; syncLocal(); };
+    const invertLocal = (i = localSel) => { const a = s.local?.[i]; if (!a) return; a.invert = !a.invert; syncLocal(); changed(); };
+    const host = $q('#rawMaskList');
+    host.addEventListener('click', (e) => { if (e.target.closest('.raw-mask-rename')) return; const it = e.target.closest('[data-mi]'); if (it) selectLocal(+it.dataset.mi); });
+    host.addEventListener('dblclick', (e) => { const it = e.target.closest('[data-mi]'); if (!it) return; localSel = +it.dataset.mi; renaming = localSel; syncLocal(); });
+    host.addEventListener('keydown', (e) => {
+      const inp = e.target.closest('.raw-mask-rename');
+      if (inp) { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); renameLocal(renaming, inp.value); } else if (e.key === 'Escape') { e.preventDefault(); renaming = -1; syncLocal(); } return; }
+      const it = e.target.closest('[data-mi]'); if (!it) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectLocal(+it.dataset.mi); }
+      else if (e.key === 'F2') { e.preventDefault(); localSel = +it.dataset.mi; renaming = localSel; syncLocal(); }
+    });
+    host.addEventListener('focusout', (e) => { const inp = e.target.closest?.('.raw-mask-rename'); if (inp && renaming >= 0) renameLocal(renaming, inp.value); });
+    $q('#rawMaskRename').onclick = () => { if (localSel < 0) return; renaming = localSel; syncLocal(); };
+    $q('#rawMaskDup').onclick = () => duplicateLocal();
+    $q('#rawMaskInv').onclick = () => invertLocal();
     body.addEventListener('input', (e) => {
-      const k = e.target.dataset?.l; if (!k || !s.local?.[localSel]) return;
-      const v = +e.target.value; s.local[localSel][k] = k === 'feather' ? v / 100 : v;
-      $q(`[data-lo=${k}]`).textContent = k === 'exposure' ? `${v > 0 ? '+' : ''}${v.toFixed(2)}` : v;
-      $q('#rawLocalSel').options[localSel + 1].textContent = localName(s.local[localSel], localSel);
+      const t = e.target, a = s.local?.[localSel];
+      if (t.dataset?.b) { const k = t.dataset.b; brush[k] = +t.value; $q(`[data-bo=${k}]`).textContent = k === 'size' ? `${brush[k]}%` : brush[k]; saveBrush(); drawOverlay(); return; }
+      if (!a) return;
+      if (t.dataset?.r) {
+        const k = t.dataset.r, v = +t.value; $q(`[data-ro=${k}]`).textContent = k === 'colHue' ? `${v}°` : v;
+        if (k.startsWith('lum')) { const L = a.lum || { lo: 50, hi: 100, soft: 10 }; L[{ lumLo: 'lo', lumHi: 'hi', lumSoft: 'soft' }[k]] = v; a.lum = L; $q('#rawLumOn').checked = true; }
+        else { const C = a.color || { hue: 30, range: 25, soft: 20 }; C[{ colHue: 'hue', colRange: 'range', colSoft: 'soft' }[k]] = v; a.color = C; $q('#rawColOn').checked = true; }
+        for (const row of body.querySelectorAll('[data-rrow]')) row.classList.toggle('disabled-row', !a[row.dataset.rrow]);
+        changed(); return;
+      }
+      const k = t.dataset?.l; if (!k) return;
+      const v = +t.value; a[k] = k === 'feather' ? v / 100 : v;
+      $q(`[data-lo=${k}]`).textContent = fmtL(k, v);
+      const it = host.querySelector(`[data-mi="${localSel}"] .small`); if (it) it.textContent = localSummary(a);
       drawOverlay(); changed();
+    });
+    body.addEventListener('change', (e) => {
+      const t = e.target, a = s.local?.[localSel];
+      if (t.id === 'rawMaskOv') setMaskOn(t.checked);
+      else if (t.id === 'rawAutoMask') { brush.auto = t.checked; saveBrush(); }
+      else if (a && t.id === 'rawLumOn') { if (t.checked) a.lum = { lo: +$q('[data-r=lumLo]').value, hi: +$q('[data-r=lumHi]').value, soft: +$q('[data-r=lumSoft]').value }; else delete a.lum; syncLocal(); changed(); }
+      else if (a && t.id === 'rawColOn') { if (t.checked) a.color = { hue: +$q('[data-r=colHue]').value, range: +$q('[data-r=colRange]').value, soft: +$q('[data-r=colSoft]').value }; else delete a.color; syncLocal(); changed(); }
     });
     $q('#rawAddLinear').onclick = () => addLocal('linear');
     $q('#rawAddRadial').onclick = () => addLocal('radial');
+    $q('#rawAddBrush').onclick = () => addLocal('brush');
     $q('#rawLocalDel').onclick = () => deleteLocal();
+    $q('#rawBrushBtn').onclick = () => { if (view === 'before') setView('after'); setBrushMode(!brushMode); };
+    $q('#rawEraseBtn').onclick = () => { setErase(!eraseMode); if (!brushMode) setBrushMode(true); };
+    $q('#rawBrushClear').onclick = () => { const a = s.local?.[localSel]; if (a?.type !== 'brush' || !a.strokes?.length) return; a.strokes = []; syncLocal(); changed(); };
+    $q('#rawLumPick').onclick = () => { if (view === 'before') setView('after'); setRangePick(rangePick === 'lum' ? null : 'lum'); };
+    $q('#rawColPick').onclick = () => { if (view === 'before') setView('after'); setRangePick(rangePick === 'color' ? null : 'color'); };
+    const rangeAt = async (kind, u, v) => {
+      const a = s.local?.[localSel]; setRangePick(null); if (!a) return null;
+      let r; try { r = await sess.range({ ...s }, u, v); } catch (err) { toast(`The colour could not be read (${err.message}).`); return null; }
+      if (done) return r;
+      ui.lastRange = r;
+      if (kind === 'lum') { a.lum = { lo: Math.max(0, r.lum - 15), hi: Math.min(100, r.lum + 15), soft: a.lum?.soft ?? 10 }; status(`Luminance range set around ${r.lum} (${a.lum.lo}–${a.lum.hi}).`); }
+      else if (r.hue < 0 || r.sat < 0.04) { toast('That spot is almost grey: pick a coloured area for a color range (or use a luminance range).', 5000); return r; }
+      else { a.color = { hue: r.hue, range: a.color?.range ?? 25, soft: a.color?.soft ?? 20 }; status(`Color range set around hue ${r.hue}°.`); }
+      syncLocal(); changed(); return r;
+    };
     // eyedropper
     const setPicking = (on) => { picking = on; const b = $q('#rawFringePick'); b.setAttribute('aria-pressed', String(on)); b.classList.toggle('on', on); drawOverlay(); };
     const pickAt = async (u, v) => {
@@ -5064,11 +5199,28 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       sync(); changed(); status(`Picked a ${r.kind} fringe at ${r.hue}°: ${r.kind} hue range set to ${r.lo}–${r.hi}°.`); ui.lastPick = r;
       return r;
     };
-    $q('#rawFringePick').onclick = () => { if (view === 'before') setView('after'); setPicking(!picking); if (picking) localSel = -1, syncLocal(); };
-    // pointer: eyedropper click, or drag the selected local adjustment's handles
+    $q('#rawFringePick').onclick = () => { if (view === 'before') setView('after'); setPicking(!picking); if (picking) { localSel = -1; setRangePick(null); syncLocal(); } };
+    // brush strokes: points in output fractions; the brush trails the pointer by the smoothing amount
+    const brushR = () => brush.size / 100;
+    const addPt = (u, v, force) => {
+      const st = stroke, r = ov.getBoundingClientRect(), L = Math.max(r.width, r.height) || 1, k = 1 - 0.9 * (brush.smooth / 100);
+      st.su += (u - st.su) * k; st.sv += (v - st.sv) * k;
+      const p = st.s.pts, n = p.length, du = (st.su - p[n - 2]) * r.width / L, dv = (st.sv - p[n - 1]) * r.height / L;
+      if (force || Math.hypot(du, dv) >= Math.max(0.002, st.s.size * 0.12)) { if (n / 2 < 4000) p.push(+st.su.toFixed(5), +st.sv.toFixed(5)); }
+    };
+    const startStroke = (u, v, erase) => {
+      const a = s.local?.[localSel]; if (a?.type !== 'brush') return false;
+      if ((a.strokes ||= []).length >= 400) { toast('This mask has the most strokes it can hold: duplicate it or clear some strokes.'); return false; }
+      const st = { size: brushR(), feather: brush.feather / 100, flow: brush.flow / 100, pts: [+u.toFixed(5), +v.toFixed(5)] };
+      if (erase) st.erase = true; else if (brush.auto) st.auto = true;
+      stroke = { s: st, su: u, sv: v }; a.strokes.push(st); drawOverlay(); return true;
+    };
+    const endStroke = () => { if (!stroke) return; stroke = null; ui.strokes = (ui.strokes || 0) + 1; syncLocal(); changed(); };
+    // pointer: eyedroppers, brush, or drag the selected local adjustment's handles
     let ldrag = null;
     const uvOf = (e) => { const b = ov.getBoundingClientRect(); return [(e.clientX - b.left) / (b.width || 1), (e.clientY - b.top) / (b.height || 1)]; };
     const handleAt = (a, u, v) => {
+      if (a.type === 'brush') return null;
       const r = ov.getBoundingClientRect(), near = (pu, pv, rad = 9) => Math.hypot((pu - u) * r.width, (pv - v) * r.height) <= rad;
       if (a.type === 'linear') { if (near(a.x0, a.y0)) return 'a'; if (near(a.x1, a.y1)) return 'b'; if (near((a.x0 + a.x1) / 2, (a.y0 + a.y1) / 2, 11)) return 'move'; return null; }
       if (near(a.cx + a.rx, a.cy)) return 'rx'; if (near(a.cx, a.cy + a.ry)) return 'ry'; if (near(a.cx, a.cy, 11)) return 'move';
@@ -5078,13 +5230,20 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       if (e.button !== 0) return; e.stopPropagation(); e.preventDefault();
       const [u, v] = uvOf(e);
       if (picking) { pickAt(u, v); return; }
+      if (rangePick) { rangeAt(rangePick, u, v); return; }
+      if (brushMode) { if (startStroke(u, v, eraseMode || e.altKey)) ov.setPointerCapture(e.pointerId); return; }
       const list = s.local || []; let a = list[localSel], h = a && handleAt(a, u, v);
-      if (!h) { const j = list.findIndex((b, i) => i !== localSel && handleAt(b, u, v) === 'move'); if (j >= 0) { localSel = j; a = list[j]; h = 'move'; syncLocal(); } }
+      if (!h) { const j = list.findIndex((b, i) => i !== localSel && handleAt(b, u, v) === 'move'); if (j >= 0) { selectLocal(j); a = list[j]; h = 'move'; } }
       if (!h) return;
       ldrag = { h, u, v, start: { ...a } }; ov.setPointerCapture(e.pointerId);
     });
     ov.addEventListener('pointermove', (e) => {
-      if (!ldrag) { if (localSel >= 0 && s.local?.[localSel]) { const [u, v] = uvOf(e), h = handleAt(s.local[localSel], u, v); ov.style.cursor = h === 'move' ? 'move' : h ? 'grab' : 'default'; } return; }
+      if (brushMode) {
+        const [u, v] = uvOf(e); hover = { u, v, erase: eraseMode || e.altKey };
+        if (stroke) for (const ev of (e.getCoalescedEvents?.() || []).length ? e.getCoalescedEvents() : [e]) { const [cu, cv2] = uvOf(ev); addPt(cu, cv2); }
+        ov.style.cursor = 'none'; drawOverlay(); return;
+      }
+      if (!ldrag) { ov.style.cursor = rangePick || picking ? 'crosshair' : 'default'; if (localSel >= 0 && s.local?.[localSel] && !rangePick) { const [u, v] = uvOf(e), h = handleAt(s.local[localSel], u, v); ov.style.cursor = h === 'move' ? 'move' : h ? 'grab' : 'default'; } return; }
       const [u, v] = uvOf(e), a = s.local[localSel], o = ldrag.start, du = u - ldrag.u, dv = v - ldrag.v;
       if (a.type === 'linear') {
         if (ldrag.h === 'a') Object.assign(a, { x0: o.x0 + du, y0: o.y0 + dv });
@@ -5095,7 +5254,8 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       else Object.assign(a, { cx: o.cx + du, cy: o.cy + dv });
       drawOverlay(); changed();
     });
-    const endL = () => { ldrag = null; };
+    ov.addEventListener('pointerleave', () => { if (hover) { hover = null; drawOverlay(); } });
+    const endL = (e) => { ldrag = null; if (stroke) { if (e?.type === 'pointerup') { const [u, v] = uvOf(e); addPt(u, v, true); } endStroke(); } };
     ov.addEventListener('pointerup', endL); ov.addEventListener('pointercancel', endL);
     $q('#rawLensSave').onclick = () => {
       if (!lensKey) return;
@@ -5118,7 +5278,7 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       if (!v) return;
       const p = rawSettingsFor(v), keepWB = p.wb !== 'custom';
       Object.assign(s, p); if (keepWB) { s.temp = info.asShot.temp; s.tint = info.asShot.tint; }
-      if (s.local) s.local = s.local.map((a) => ({ ...a })); localSel = -1;
+      if (s.local) s.local = JSON.parse(JSON.stringify(s.local)); localSel = -1;
       if (!s.distortion) applyLensProfile(); // a preset without distortion keeps this lens's own correction
       sync(); changed();
       $q('#rawPresetDel').disabled = !v.startsWith('preset:');
@@ -5140,21 +5300,24 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       else if (e.target.id === 'rawPreset') applyChoice(e.target.value);
       else if (e.target.id === 'rawGrid') { showGrid = e.target.checked; drawOverlay(); }
       else if (e.target.id === 'rawFringeMask') { s.fringeMask = e.target.checked; if (view !== 'after') setView('after'); changed(); }
-      else if (e.target.id === 'rawLocalSel') { localSel = +e.target.value; if (localSel >= 0) setPicking(false); syncLocal(); }
-      else if (e.target.id === 'rawLocalInv') { if (s.local?.[localSel]) { s.local[localSel].invert = e.target.value === '1'; changed(); } }
       else if (e.target.id === 'rawStore') { try { localStorage.setItem(RAW_LINK_KEY, e.target.value === 'link' ? '1' : '0'); } catch { /* private mode */ } }
     });
     if (!opt.onApply && opt.handle) { try { if (localStorage.getItem(RAW_LINK_KEY) === '1') $q('#rawStore').value = 'link'; } catch { /* private mode */ } }
     $q('#rawBefore').onclick = () => setView(view === 'before' ? 'after' : 'before');
     $q('#rawSplitBtn').onclick = () => setView(view === 'split' ? 'after' : 'split');
+    body.addEventListener('keyup', (e) => { if (e.key === 'Alt') { e.preventDefault(); if (hover) { hover.erase = eraseMode; drawOverlay(); } } });
     body.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' && /text|number/.test(e.target.type)) return;
       if (e.key === '\\') { e.preventDefault(); setView(view === 'before' ? 'after' : 'before'); }
       else if (e.key === 'y' || e.key === 'Y') { e.preventDefault(); setView(view === 'split' ? 'after' : 'split'); }
       else if (e.key === 'g' || e.key === 'G') { e.preventDefault(); showGrid = !showGrid; $q('#rawGrid').checked = showGrid; drawOverlay(); }
       else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); $q('#rawFringePick').click(); }
+      else if (e.key === 'o' || e.key === 'O') { e.preventDefault(); setMaskOn(!maskOn); }
+      else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); if (view === 'before') setView('after'); if (s.local?.[localSel]?.type === 'brush') setBrushMode(!brushMode); else if (addLocal('brush') < 0) toast(`There can be at most ${MAX_LOCALS} masks.`); }
+      else if ((e.key === '[' || e.key === ']') && brushMode) { e.preventDefault(); brush.size = Math.min(30, Math.max(0.5, Math.round(brush.size * (e.key === ']' ? 1.2 : 1 / 1.2) * 2) / 2)); saveBrush(); syncLocal(); }
+      else if (e.key === 'Alt') { e.preventDefault(); if (hover) { hover.erase = true; drawOverlay(); } }
       else if ((e.key === 'Delete' || e.key === 'Backspace') && localSel >= 0 && e.target.tagName !== 'SELECT') { e.preventDefault(); deleteLocal(); }
-      else if (e.key === 'Escape' && (picking || localSel >= 0)) { e.preventDefault(); e.stopPropagation(); setPicking(false); localSel = -1; syncLocal(); }
+      else if (e.key === 'Escape' && (picking || rangePick || brushMode || localSel >= 0)) { e.preventDefault(); e.stopPropagation(); setPicking(false); if (rangePick) setRangePick(null); else if (brushMode) setBrushMode(false); else { localSel = -1; syncLocal(); if (maskOn) changed(); } }
       else if (e.target === divider && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setSplit(splitF + (e.key === 'ArrowLeft' ? -0.02 : 0.02)); }
     });
     // drag the divider (or click anywhere on the image) in split view

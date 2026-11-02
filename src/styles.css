@@ -426,3 +426,14 @@ table.variants td { padding: 2px 3px; }
 .raw-view canvas.raw-overlay.picking { cursor: crosshair; }
 .raw-check { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; white-space: nowrap; }
 #rawFringePick.on, #rawSplitBtn.on, #rawBefore.on { outline: 2px solid var(--accent, #e8553a); }
+
+/* v1.5 local adjustment masks */
+.raw-masks { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; max-height: 180px; overflow: auto; }
+.raw-mask-item { display: flex; flex-direction: column; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+.raw-mask-item:hover { background: rgba(127,127,127,.12); }
+.raw-mask-item.on { border-color: var(--accent, #4a90e2); background: rgba(74,144,226,.15); }
+.raw-mask-item .raw-mask-name { font-size: 13px; }
+.raw-mask-rename { font: inherit; width: 100%; }
+.raw-sub { font-size: 12px; margin: 8px 0 2px; color: var(--muted); }
+.disabled-row { opacity: .5; }
+#rawMaskActs button, #rawBrushBox button { flex: 1; }

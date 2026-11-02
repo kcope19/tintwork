@@ -117,7 +117,7 @@ writeFileSync(fringeFile, makeDNG({ W: 900, H: 600, lens: false, scene: fringeSc
 
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
 await ctx.addInitScript(() => localStorage.setItem('tintwork.engine', 'cpu'));
-const page = await ctx.newPage(); page.on('pageerror', (e) => errors.push(e.message));
+const page = await ctx.newPage(); page.on('pageerror', (e) => { errors.push(e.message); if (process.env.DEBUG_ERR) console.log('PAGEERROR', e.message, e.stack); });
 await page.goto(`${base}?platform=win`); await page.waitForFunction(() => window.tintwork && document.readyState === 'complete');
 await page.evaluate(async () => { await window.tintwork.clearAutosave?.(); for (const k of ['tintwork.rawPresets', 'tintwork.rawLast', 'tintwork.lensProfiles', 'tintwork.rawLink']) localStorage.removeItem(k); });
 const settle = () => page.evaluate(async () => { await window.tintwork.idle(); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); });
@@ -199,7 +199,7 @@ const develop = async () => { await page.click('#modalOk'); await page.waitForFu
   const c1 = await prev(0.5, 0.5), k1 = await prev(0.03, 0.97);
   n = await previews(); await page.click('#rawAddLinear'); await waitPreview(n + 1);
   const t1 = await prev(0.5, 0.03), b1 = await prev(0.5, 0.97);
-  const st = await page.evaluate(() => ({ list: window.tintwork.rawUI.settings.local, sel: window.tintwork.rawUI.localSel, opts: document.querySelector('#rawLocalSel').options.length }));
+  const st = await page.evaluate(() => ({ list: window.tintwork.rawUI.settings.local, sel: window.tintwork.rawUI.localSel, opts: document.querySelectorAll('#rawMaskList [data-mi]').length + 1 /* v1.5: mask list replaced the select (was 'None' + masks) */ }));
   check(st.list?.length === 2 && st.list[0].type === 'radial' && st.list[1].type === 'linear' && st.sel === 1 && st.opts === 3 && L(c1) > L(c0) + 5 && Math.abs(L(k1) - L(await prev(0.03, 0.97))) < 1 && L(t1) < L(t0) - 5 && Math.abs(L(b1) - L(b0)) < 2,
     `+ Radial brightens the centre (luma ${L(c0).toFixed(0)} → ${L(c1).toFixed(0)}); + Graduated darkens the top (${L(t0).toFixed(0)} → ${L(t1).toFixed(0)}) and leaves the bottom (${L(b0).toFixed(0)} → ${L(b1).toFixed(0)})`);
   // drag the radial filter's centre with the mouse
