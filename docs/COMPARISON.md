@@ -6,6 +6,26 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.4: re-develop through transforms, linked RAW, local adjustments, distortion, defringe picker (researched 2026-11-02)
+
+Compared with Photoshop + Camera Raw, Lightroom Classic and Affinity Photo 2.
+
+| Feature | Photoshop / Camera Raw | Lightroom Classic | Affinity Photo | Tintwork 1.4 |
+|---|---|---|---|---|
+| Re-develop after transforms | ✅ A Smart Object keeps the RAW and replays its transforms [80] | ✅ Non-destructive catalogue (no pixel layers) | ✅ RAW layers stay editable [81] | ✅ The layer records its transform map (crop, resize, rotate, flip, free transform) and replays it on the new pixels. Exact for quarter turns, flips and moves; otherwise within 1 level. 🟡 Not after transforms of selected pixels, warp or liquify (there is no smart-object container). |
+| Linked vs embedded RAW | 🟡 Linked Smart Objects | ✅ Files stay on disk, referenced by the catalogue | ✅ RAW Layer (Embedded) or (Linked) [81] | ✅ Embed (default) or link through File System Access handles kept in IndexedDB [91][92]. A relink prompt (Locate, Embed, Cancel) appears if the file was moved or permission is gone, and Layer ▸ Embed linked RAW file is available. 🟡 Chrome and Edge only; handles stay on one computer. |
+| Defringe eyedropper and preview | ✅ Eyedropper sets the hue range (and refuses spots that are "too neutral"); Alt shows a preview mask [89] | ✅ same engine | 🟡 Defringe sliders | ✅ The eyedropper sets the purple or green hue range ±20° and refuses neutral spots. **Show affected areas** mask. 🟡 Works at preview resolution; no brush defringe. |
+| Lens profiles and distortion | ✅ A large built-in profile library matched by EXIF, plus a manual Distortion amount [89][90] | ✅ same profiles | ✅ Lens corrections from a database | 🟡 Automatic for DNG opcodes. Otherwise there is a manual Distortion slider with a grid overlay, and the user can save profiles per lens and focal length, which are interpolated and applied by EXIF (batch too). ❌ No bundled database: lensfun's data is CC BY-SA 3.0 and its library is LGPL [93]. |
+| Local adjustments in develop | ✅ Linear and radial gradients, brush, range and AI masks, with the full slider set [88] | ✅ same masking [88][94] | 🟡 Brush and gradient overlays | 🟡 Graduated and radial filters (up to 8), each with Exposure, Contrast and Temperature, feather and invert. They are dragged with mouse handles and run in the band workers. ❌ No brush, range or AI masks, and no other local sliders. |
+
+### Summary
+v1.4 closes the main v1.3 gaps. Re-developing works after the transforms people actually use, which brings RAW layers close to a Camera Raw Smart Object for everything except edits to selected pixels. Linked layers match Affinity's Linked option, and a clear relink flow handles moved files. The defringe eyedropper and the affected-areas mask follow the Camera Raw interaction model. Local adjustments cover the two most used manual masks with the three most used controls. Remaining gaps:
+- breadth of lens profiles: there is no database we can legally bundle, so users build their own profiles;
+- brush and AI masks;
+- Upright perspective correction;
+- a true smart-object container;
+- AI denoise.
+
 ## v1.3: re-developable RAW, split view, preset files, defringe, threaded decode (researched 2026-11-02)
 
 Compared with Photoshop + Camera Raw (RAW as a Smart Object), Lightroom Classic (Develop module) and Affinity Photo 2 (RAW layers).
@@ -267,6 +287,13 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 85. MDN, "Window: crossOriginIsolated property": https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated
 86. Netlify Docs, "Custom headers" (`_headers` file): https://docs.netlify.com/routing/headers/
 87. Cloudflare Pages docs, "Headers" (`_headers` file): https://developers.cloudflare.com/pages/configuration/headers/
+88. Adobe, "Lightroom Classic Masking" (Linear and Radial Gradient, feather, invert): https://helpx.adobe.com/lightroom-classic/desktop/process-and-develop-photos/masking.html
+89. Adobe, "Correct lens distortions in Camera Raw" (profiles from EXIF, manual Distortion amount, defringe eyedropper, "too neutral" message, Alt preview): https://helpx.adobe.com/ca/camera-raw/using/correct-lens-distortions-camera-raw.html
+90. Adobe, "Supported lenses" (Camera Raw lens profiles): https://helpx.adobe.com/uk/camera-raw/kb/supported-lenses.html
+91. Chrome for Developers, "The File System Access API" (handles can be stored in IndexedDB; queryPermission and requestPermission): https://developer.chrome.com/docs/capabilities/web-apis/file-system-access
+92. Chrome for Developers, "Persistent permissions for the File System Access API": https://developer.chrome.com/blog/persistent-permissions-for-the-file-system-access-api
+93. Lensfun, "License" (database CC BY-SA 3.0, libraries LGPL-3): https://lensfun.github.io/manual/latest/license.html
+94. Adobe, "Lightroom Classic Radial Filter": https://helpx.adobe.com/uk/lightroom-classic/help/lightroom-radial-filter.html
 
 ### Benchmark caveat
 `scripts/bench.mjs` ran on a Linux box with no GPU. Headless Chromium used SwiftShader (software) for both WebGL2 and WebGPU and WebKit used software GL, so GPU timings there are slower than the CPU worker and are not representative of real hardware (see README).
@@ -279,3 +306,5 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 - ~~v1.0: onboarding, help, accessibility, error handling, iPhone memory tuning~~ (done)
 - ~~v1.1: camera RAW develop, PSD/PSB import and layered PSD export~~ (done)
 - ~~v1.2: parallel/progressive RAW develop, sharpening, curve, vibrance, CA, presets, batch RAW settings~~ (done)
+- ~~v1.3: re-developable RAW layers, split view, preset files, defringe, threaded decode~~ (done)
+- ~~v1.4: re-develop through transforms, linked RAW, local adjustments, distortion and lens profiles, defringe eyedropper and mask~~ (done)
