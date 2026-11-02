@@ -49,7 +49,9 @@ export async function openRawSession(bytes, settings) {
     ...res, session, firstPreview: res.preview,
     preview: (s) => call('rawPreview', { session, settings: s }).then((r) => r.preview),
     /** Full-resolution develop; onHalf({ width, height, rows, data }) receives half-resolution bands as they finish. */
-    develop: (s, maxPixels, onHalf = null) => call('rawDevelop', { session, settings: s, maxPixels, half: !!onHalf }, [], onHalf),
+    develop: (s, maxPixels, onHalf = null, xform = null) => call('rawDevelop', { session, settings: s, maxPixels, half: !!onHalf, xform }, [], onHalf),
+    /** Defringe eyedropper at (u, v), fractions of the preview: { kind, hue, sat, lo, hi } (see raw.js pickFringe). */
+    pick: (s, u, v) => call('rawPick', { session, settings: s, u, v }),
     jpeg: () => call('rawJpeg', { session }),
     close: () => call('rawClose', { session }).catch(() => {}),
   };

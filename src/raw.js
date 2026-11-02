@@ -12,13 +12,59 @@ export const DEFAULT_SETTINGS = Object.freeze({
   caAuto: false, caRed: 0, caBlue: 0, // lateral chromatic aberration: automatic estimate + manual red/cyan, blue/yellow
   // axial (longitudinal) CA / purple fringing: desaturate purple and green fringes on high-contrast edges, by hue range
   fringePurple: 0, fringePurpleLo: 260, fringePurpleHi: 320, fringeGreen: 0, fringeGreenLo: 80, fringeGreenHi: 150,
+  distortion: 0, // manual lens distortion: + straightens barrel (lines bowing out), − straightens pincushion
+  local: null, // local adjustments: [{ type: 'linear' | 'radial', exposure, contrast, temp, ...shape }] (see cleanLocal)
 });
 export const RANGES = {
   temp: [2000, 50000], tint: [-150, 150], exposure: [-5, 5], highlights: [0, 100], shadows: [-100, 100], contrast: [-100, 100],
   vibrance: [-100, 100], saturation: [-100, 100], sharpen: [0, 150], sharpRadius: [0.5, 3], sharpDetail: [0, 100], sharpMask: [0, 100],
   nrLuma: [0, 100], nrColor: [0, 100], vignette: [-100, 100], caRed: [-100, 100], caBlue: [-100, 100],
   fringePurple: [0, 100], fringePurpleLo: [200, 340], fringePurpleHi: [200, 340], fringeGreen: [0, 100], fringeGreenLo: [40, 190], fringeGreenHi: [40, 190],
+  distortion: [-100, 100],
 };
+/** Local adjustment limits: exposure in EV, contrast and temperature as −100..100. */
+export const LOCAL_RANGES = { exposure: [-4, 4], contrast: [-100, 100], temp: [-100, 100] };
+export const MAX_LOCALS = 8;
+const clampN = (v, lo, hi, d = 0) => (Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : d);
+/**
+ * Local adjustments, validated. Positions are fractions of the developed (oriented) image: 0..1 across, 0..1 down.
+ *   linear (graduated filter): full effect on the (x0, y0) side, fading to none at the (x1, y1) line.
+ *   radial: ellipse centre (cx, cy), radii rx (fraction of the width), ry (of the height), feather 0..1 (share of the
+ *     radius that fades), invert: false = effect inside the ellipse, true = outside.
+ * Returns null when there are none.
+ */
+export function cleanLocal(list) {
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const a of list) {
+    if (out.length >= MAX_LOCALS) break;
+    if (!a || typeof a !== 'object' || (a.type !== 'linear' && a.type !== 'radial')) continue;
+    const e = { type: a.type };
+    for (const [k, [lo, hi]] of Object.entries(LOCAL_RANGES)) e[k] = clampN(a[k], lo, hi);
+    if (a.type === 'linear') {
+      Object.assign(e, { x0: clampN(a.x0, -1, 2, 0.5), y0: clampN(a.y0, -1, 2, 0), x1: clampN(a.x1, -1, 2, 0.5), y1: clampN(a.y1, -1, 2, 0.5) });
+      if (Math.hypot(e.x1 - e.x0, e.y1 - e.y0) < 1e-3) e.y1 = e.y0 + 0.01;
+    } else Object.assign(e, { cx: clampN(a.cx, -1, 2, 0.5), cy: clampN(a.cy, -1, 2, 0.5), rx: clampN(a.rx, 0.01, 2, 0.3), ry: clampN(a.ry, 0.01, 2, 0.3), feather: clampN(a.feather, 0, 1, 0.5), invert: !!a.invert });
+    out.push(e);
+  }
+  return out.length ? out : null;
+}
+/**
+ * Weight 0..1 of local adjustment `a` at output position (u, v) (fractions of width / height); aspect = width / height
+ * (the graduated filter's fade runs at right angles to its line in image pixels, not in stretched fractions).
+ */
+export function localWeight(a, u, v, aspect = 1) {
+  if (a.type === 'linear') {
+    const ax = a.x0 * aspect, bx = a.x1 * aspect, dx = bx - ax, dy = a.y1 - a.y0, L = dx * dx + dy * dy;
+    const t = ((u * aspect - ax) * dx + (v - a.y0) * dy) / (L || 1e-9);
+    return 1 - smooth(0, 1, t);
+  }
+  const dx = (u - a.cx) / a.rx, dy = (v - a.cy) / a.ry, d = Math.sqrt(dx * dx + dy * dy), f = Math.max(1e-3, a.feather);
+  const w = 1 - smooth(1 - f, 1, d);
+  return a.invert ? 1 - w : w;
+}
+/** Temperature ±100 of a local adjustment = ±0.5 EV of red against blue. */
+export const LOCAL_TEMP_EV = 0.5;
 /** Lateral CA slider ±100 = ±0.4 % radial scale of the red or blue channel against green. */
 export const CA_UNIT = 0.004;
 /** Settings with every key valid (unknown keys dropped, numbers clamped): used for presets read from storage. */
@@ -27,6 +73,7 @@ export function cleanSettings(s) {
   for (const k of Object.keys(DEFAULT_SETTINGS)) {
     const v = s?.[k]; if (v === undefined) continue;
     if (k === 'wb') { if (['as-shot', 'auto', 'custom'].includes(v)) out.wb = v; }
+    else if (k === 'local') out.local = cleanLocal(v);
     else if (k === 'curve') { out.curve = v && typeof v === 'object' ? Object.fromEntries(['rgb', 'r', 'g', 'b'].map((c) => [c, Array.isArray(v[c]) && v[c].length >= 2 ? v[c].map(([x, y]) => [+x || 0, +y || 0]) : [[0, 0], [255, 255]]])) : null; }
     else if (typeof DEFAULT_SETTINGS[k] === 'boolean') out[k] = !!v;
     else if (Number.isFinite(+v)) { const r = RANGES[k]; out[k] = r ? Math.min(r[1], Math.max(r[0], +v)) : +v; }
@@ -272,6 +319,17 @@ function orientMap(o, W, H) {
     default: return [1, 0, 0, 0, 1, 0];
   }
 }
+/** Manual distortion slider ±100 = ∓0.15 radial term (r² at the corners): enough for typical zooms at their ends. */
+export const DISTORTION_K = 0.0015;
+/** Distortion slider value that a user lens profile gives at a focal length (linear between saved focal lengths). */
+export function profileDistortion(entries, focal) {
+  const e = (entries || []).filter((p) => Number.isFinite(p.focal) && Number.isFinite(p.k)).sort((a, b) => a.focal - b.focal);
+  if (!e.length) return null;
+  if (!Number.isFinite(focal) || e.length === 1 || focal <= e[0].focal) return e[0].k;
+  if (focal >= e[e.length - 1].focal) return e[e.length - 1].k;
+  for (let i = 1; i < e.length; i++) if (focal <= e[i].focal) { const a = e[i - 1], b = e[i], t = (focal - a.focal) / (b.focal - a.focal || 1); return Math.round((a.k + (b.k - a.k) * t) * 10) / 10; }
+  return e[e.length - 1].k;
+}
 /** Full source size of a (possibly cropped-out) source region. */
 const fullOf = (src) => [src.fullW || src.width, src.fullH || src.height];
 /**
@@ -287,8 +345,14 @@ function geometry(src, opts) {
   const wp = warp ? [0, 1, 2].map((c) => warp.planes[Math.min(c, warp.planes.length - 1)]) : null;
   const ca = opts.ca || null, ks = ca ? [1 + ca[0], 1, 1 + ca[1]] : null;
   const cc = wg || geo([0.5, 0.5]);
+  // manual distortion (original model): one radial term around the image centre, r = 1 at the corners,
+  // scaled so the image still fills the frame (no empty corners or edges)
+  const kd = -(opts.distortion || 0) * DISTORTION_K;
+  const dcx = fr.offX + (FW * factor) / 2, dcy = fr.offY + (FH * factor) / 2, dm = Math.hypot(FW * factor, FH * factor) / 2;
+  const rmin = Math.min(FW, FH) / Math.hypot(FW, FH), dn = kd < 0 ? 1 + kd * rmin * rmin : 1 + kd;
   /** out[0], out[1] = stored position (opcode frame) for output-frame position X, Y and channel c */
   const at = (X, Y, c, out) => {
+    if (kd) { const dx = (X - dcx) / dm, dy = (Y - dcy) / dm, f = (1 + kd * (dx * dx + dy * dy)) / dn; X = dcx + (X - dcx) * f; Y = dcy + (Y - dcy) * f; }
     let sx = X, sy = Y;
     if (wp) {
       const p = wp[c], dx = (X - wg.px) / wg.m, dy = (Y - wg.py) / wg.m, r2 = dx * dx + dy * dy;
@@ -299,7 +363,7 @@ function geometry(src, opts) {
     if (ks && c !== 1) { sx = cc.px + (sx - cc.px) * ks[c]; sy = cc.py + (sy - cc.py) * ks[c]; }
     out[0] = sx; out[1] = sy;
   };
-  return { fr, at, vg, vig, inv: !!lens?.invertVignette, factor, moves: !!(wp || ks) };
+  return { fr, at, vg, vig, inv: !!lens?.invertVignette, factor, moves: !!(wp || ks || kd) };
 }
 /**
  * Develop a source into RGBA. opts: { pipe, orientation, lens: { warp, vignette, invertVignette, frame } | null, vignette (manual, -1..1),
@@ -327,10 +391,18 @@ export function develop(src, opts) {
     return (g(x0, y0) * (1 - fx) + g(x1, y0) * fx) * (1 - fy) + (g(x0, y1) * (1 - fx) + g(x1, y1) * fx) * fy;
   };
   const slow = !!(G.moves || vig || manV), pos = [0, 0], ch = [0, 0, 0];
-  let r, g, b;
+  // local adjustments (graduated / radial): positions are fractions of the output frame, so bands and previews agree
+  const locs = opts.settings?.local ? cleanLocal(opts.settings.local) : null, nl = locs ? locs.length : 0, aspect = OW / OH;
+  const lEV = LOCAL_TEMP_EV / 100, conC = (v, k) => { v = 32767.5 + (v - 32767.5) * k; return v < 0 ? 0 : v > 65535 ? 65535 : v; };
+  let r, g, b, lev = 0, ltemp = 0, lcon = 0;
   for (let oy = r0; oy < r1; oy++) {
     let x = bx * oy + cx, y = by * oy + cy;
+    const lv = (oy + 0.5) / OH;
     for (let ox = 0, o = (oy - r0) * OW * 4; ox < OW; ox++, o += 4, x += ax, y += ay) {
+      if (nl) {
+        lev = 0; ltemp = 0; lcon = 0; const lu = (ox + 0.5) / OW;
+        for (let k = 0; k < nl; k++) { const a = locs[k], w = localWeight(a, lu, lv, aspect); if (w > 0) { lev += a.exposure * w; ltemp += a.temp * w; lcon += a.contrast * w; } }
+      }
       if (!slow) {
         const i = ((y - Y0) * W + (x - X0)) * 3;
         if (half) { r = half[d[i]]; g = half[d[i + 1]]; b = half[d[i + 2]]; } else { r = d[i]; g = d[i + 1]; b = d[i + 2]; }
@@ -348,6 +420,7 @@ export function develop(src, opts) {
       }
       // white balance + exposure
       let R = c0 * r + c1 * g + c2 * b, Gc = c3 * r + c4 * g + c5 * b, B = c6 * r + c7 * g + c8 * b;
+      if (lev || ltemp) { const e = Math.pow(2, lev), t = ltemp * lEV; R *= e * Math.pow(2, t); Gc *= e; B *= e * Math.pow(2, -t); }
       // clipped highlights: neutralise where every channel was near the sensor limit (avoids pink / cyan casts)
       const lo = Math.min(r, g, b);
       if (lo > 0.75) { const t = smooth(0.75, 1, lo), m = Math.max(R, Gc, B); R += (m - R) * t; Gc += (m - Gc) * t; B += (m - B) * t; }
@@ -365,7 +438,10 @@ export function develop(src, opts) {
       // output curve
       R = R <= 0 ? 0 : R >= 1 ? LS : R * LS; Gc = Gc <= 0 ? 0 : Gc >= 1 ? LS : Gc * LS; B = B <= 0 ? 0 : B >= 1 ? LS : B * LS;
       const ri = R | 0, gi = Gc | 0, bi = B | 0;
-      const vr = lr[ri] + (lr[ri + 1 > LS ? LS : ri + 1] - lr[ri]) * (R - ri), vg2 = lg[gi] + (lg[gi + 1 > LS ? LS : gi + 1] - lg[gi]) * (Gc - gi), vb = lb[bi] + (lb[bi + 1 > LS ? LS : bi + 1] - lb[bi]) * (B - bi);
+      let vr = lr[ri] + (lr[ri + 1 > LS ? LS : ri + 1] - lr[ri]) * (R - ri), vg2 = lg[gi] + (lg[gi + 1 > LS ? LS : gi + 1] - lg[gi]) * (Gc - gi), vb = lb[bi] + (lb[bi + 1 > LS ? LS : bi + 1] - lb[bi]) * (B - bi);
+      if (lcon) { // local contrast: around mid grey on the display values
+        const k = 1 + lcon / 100; vr = conC(vr, k); vg2 = conC(vg2, k); vb = conC(vb, k);
+      }
       if (o16) { o16[o] = vr + 0.5; o16[o + 1] = vg2 + 0.5; o16[o + 2] = vb + 0.5; o16[o + 3] = 65535; }
       if (o8) { o8[o] = vr / 257 + 0.5; o8[o + 1] = vg2 / 257 + 0.5; o8[o + 2] = vb / 257 + 0.5; o8[o + 3] = 255; }
     }
@@ -426,7 +502,7 @@ export function developRows(src, opts) {
   const t1b = now();
   defringe(px, w, hh, set, scale);
   const t1c = now();
-  sharpen(px, w, hh, set, scale);
+  if (!set.fringeMask) sharpen(px, w, hh, set, scale);
   const t2 = now() - (t1c - t1b);
   const cut = (arr) => (h0 === a && h1 === b ? arr : arr.slice((a - h0) * w * 4, (b - h0) * w * 4));
   return { width: w, height: b - a, rows: [a, b], fullHeight: OH, data: cut(px), bits, ms: { nr: t1 - t0, sharpen: t2 - t1, defringe: t1c - t1b } };
@@ -441,8 +517,50 @@ const hueWeight = (h, lo, hi, f) => (h >= lo && h <= hi ? 1 : h < lo ? Math.max(
  * Edge strength = luma max − min over a (2r+1)² window, r = 3 px at full resolution (scaled for previews).
  */
 export function defringe(px, w, h, set, scale = 1) {
-  const ap = (set.fringePurple || 0) / 100, ag = (set.fringeGreen || 0) / 100;
+  const ap = (set.fringePurple || 0) / 100, ag = (set.fringeGreen || 0) / 100, mask = !!set.fringeMask;
+  if (mask) { // preview of the affected areas: white = untouched, darker = more colour removed
+    const max = px instanceof Uint16Array ? 65535 : 255, wgt = (ap > 0 || ag > 0) && w >= 3 && h >= 3 ? defringeWeights(px, w, h, set, scale) : null;
+    for (let i = 0, j = 0, n = w * h; i < n; i++, j += 4) { const v = Math.round(max * (1 - (wgt ? wgt[i] : 0) * 0.9)); px[j] = v; px[j + 1] = wgt && wgt[i] > 0 ? Math.round(v * 0.75) : v; px[j + 2] = v; }
+    return;
+  }
   if (!(ap > 0 || ag > 0) || w < 3 || h < 3) return;
+  const wgt = defringeWeights(px, w, h, set, scale), max = px instanceof Uint16Array ? 65535 : 255, inv = 1 / max;
+  for (let i = 0, j = 0, n = w * h; i < n; i++, j += 4) {
+    const k = 1 - wgt[i]; if (k >= 1) continue;
+    const R = px[j], G = px[j + 1], B = px[j + 2], l = (0.2126 * R + 0.7152 * G + 0.0722 * B) * inv * max;
+    px[j] = Math.round(l + (R - l) * k); px[j + 1] = Math.round(l + (G - l) * k); px[j + 2] = Math.round(l + (B - l) * k);
+  }
+}
+/** Hue in degrees (0..360) of an RGB triple, or -1 for grey. */
+export function hueOf(R, G, B) {
+  const hi = Math.max(R, G, B), lo = Math.min(R, G, B), c = hi - lo; if (c <= 0) return -1;
+  let h = hi === R ? ((G - B) / c) % 6 : hi === G ? (B - R) / c + 2 : (R - G) / c + 4; h *= 60; return h < 0 ? h + 360 : h;
+}
+/**
+ * Defringe eyedropper: the fringe colour near (x, y) of an RGBA image = its most saturated pixel within `r` pixels.
+ * Returns { kind: 'purple' | 'green' | null, hue, sat, lo, hi } (lo / hi: a hue range ±20° around it, inside that
+ * colour's slider range) — kind is null for neutral or non-fringe colours (reds, oranges, yellows).
+ */
+export function pickFringe(px, w, h, x, y, r = 3) {
+  const max = px instanceof Uint16Array ? 65535 : 255;
+  let best = -1, bi = -1;
+  for (let yy = Math.max(0, Math.round(y) - r); yy <= Math.min(h - 1, Math.round(y) + r); yy++) for (let xx = Math.max(0, Math.round(x) - r); xx <= Math.min(w - 1, Math.round(x) + r); xx++) {
+    const j = (yy * w + xx) * 4, hi = Math.max(px[j], px[j + 1], px[j + 2]), lo = Math.min(px[j], px[j + 1], px[j + 2]), sat = hi > 0 ? (hi - lo) / hi : 0;
+    const sc = sat * Math.min(1, hi / (max * 0.1)); // ignore near-black noise
+    if (sc > best) { best = sc; bi = j; }
+  }
+  if (bi < 0) return { kind: null, hue: -1, sat: 0 };
+  const hue = hueOf(px[bi], px[bi + 1], px[bi + 2]), sat = Math.max(0, best);
+  if (sat < 0.08 || hue < 0) return { kind: null, hue: Math.round(hue), sat, why: 'neutral' };
+  const range = hue >= 200 && hue <= 340 ? [200, 340, 'purple'] : hue >= 40 && hue <= 190 ? [40, 190, 'green'] : null;
+  if (!range) return { kind: null, hue: Math.round(hue), sat, why: 'hue' };
+  let lo = Math.max(range[0], Math.round(hue - 20)), hi = Math.min(range[1], Math.round(hue + 20));
+  if (hi - lo < 10) { if (lo === range[0]) hi = lo + 10; else lo = hi - 10; }
+  return { kind: range[2], hue: Math.round(hue), sat, lo, hi };
+}
+/** Per-pixel defringe strength 0..1 (amount × hue window × edge contrast). */
+function defringeWeights(px, w, h, set, scale) {
+  const ap = (set.fringePurple || 0) / 100, ag = (set.fringeGreen || 0) / 100;
   const max = px instanceof Uint16Array ? 65535 : 255, inv = 1 / max, n = w * h, r = Math.max(1, Math.round(3 * scale));
   const pLo = set.fringePurpleLo ?? 260, pHi = set.fringePurpleHi ?? 320, gLo = set.fringeGreenLo ?? 80, gHi = set.fringeGreenHi ?? 150;
   const Y = new Float32Array(n);
@@ -465,16 +583,15 @@ export function defringe(px, w, h, set, scale = 1) {
       for (let x = 0; x < w; x++) { const a = tx[q + x], b = tn[q + x]; if (a > mx[o + x]) mx[o + x] = a; if (b < mn[o + x]) mn[o + x] = b; }
     }
   }
+  const out = tx; out.fill(0); // reuse a scratch buffer for the weights
   for (let i = 0, j = 0; i < n; i++, j += 4) {
     const edge = smooth(0.08, 0.3, mx[i] - mn[i]); if (edge <= 0) continue;
     const R = px[j], G = px[j + 1], B = px[j + 2], hi = Math.max(R, G, B), lo = Math.min(R, G, B), c = hi - lo;
     if (c <= max * 0.01) continue;
     let hue = hi === R ? ((G - B) / c) % 6 : hi === G ? (B - R) / c + 2 : (R - G) / c + 4; hue *= 60; if (hue < 0) hue += 360;
-    const wgt = Math.min(1, ap * hueWeight(hue, pLo, pHi, 15) + ag * hueWeight(hue, gLo, gHi, 15)) * edge;
-    if (wgt <= 0) continue;
-    const l = Y[i] * max, k = 1 - wgt;
-    px[j] = Math.round(l + (R - l) * k); px[j + 1] = Math.round(l + (G - l) * k); px[j + 2] = Math.round(l + (B - l) * k);
+    out[i] = Math.min(1, ap * hueWeight(hue, pLo, pHi, 15) + ag * hueWeight(hue, gLo, gHi, 15)) * edge;
   }
+  return out;
 }
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
@@ -730,3 +847,54 @@ export function findEmbeddedJpeg(bytes) {
   }
   return best ? { data: bytes.subarray(best.start, best.end), width: best.width, height: best.height, mimeType: 'image/jpeg' } : null;
 }
+
+// ---- re-develop into a transformed layer ------------------------------------------------------------------------
+/**
+ * Resample a developed RGBA image (16- or 8-bit) through an affine map into a w × h image. m = { a, b, c, d, e, f }
+ * maps output positions (continuous pixel coordinates, pixel centres at +0.5) to source positions:
+ * X = a·x + c·y + e, Y = b·x + d·y + f. Quarter turns, flips and integer offsets are copied exactly; other maps use
+ * bilinear sampling, after an integer box pre-shrink when the map shrinks the image by more than 1.33×. Output
+ * pixels whose centre falls outside the source are transparent.
+ */
+export function resampleAffine(src, W, H, m, w, h) {
+  const deep = src instanceof Uint16Array, out = deep ? new Uint16Array(w * h * 4) : new Uint8ClampedArray(w * h * 4), A = deep ? 65535 : 255;
+  const ints = [m.a, m.b, m.c, m.d].every((v) => Math.abs(v - Math.round(v)) < 1e-9 && Math.abs(Math.round(v)) <= 1);
+  const perm = ints && Math.abs(Math.round(m.a) * Math.round(m.d) - Math.round(m.b) * Math.round(m.c)) === 1 && Math.abs(m.e - Math.round(m.e)) < 1e-6 && Math.abs(m.f - Math.round(m.f)) < 1e-6;
+  if (perm) {
+    const a = Math.round(m.a), b = Math.round(m.b), c = Math.round(m.c), d = Math.round(m.d), e = Math.round(m.e), f = Math.round(m.f);
+    for (let y = 0, o = 0; y < h; y++) for (let x = 0; x < w; x++, o += 4) {
+      // pixel (x, y) covers [x, x+1): its centre maps to a source pixel centre, so floor gives the exact source pixel
+      const X = Math.floor(a * (x + 0.5) + c * (y + 0.5) + e), Y = Math.floor(b * (x + 0.5) + d * (y + 0.5) + f);
+      if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+      const i = (Y * W + X) * 4; out[o] = src[i]; out[o + 1] = src[i + 1]; out[o + 2] = src[i + 2]; out[o + 3] = src[i + 3];
+    }
+    return out;
+  }
+  // shrink factor of the map (source pixels per output pixel)
+  const s = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c));
+  let S = src, SW = W, SH = H, k = 1;
+  if (s > 1.33) { // box pre-shrink by an integer factor so bilinear does not alias
+    k = Math.floor(s); SW = Math.max(1, Math.floor(W / k)); SH = Math.max(1, Math.floor(H / k));
+    S = deep ? new Uint16Array(SW * SH * 4) : new Uint8ClampedArray(SW * SH * 4);
+    const acc = new Float64Array(4);
+    for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) {
+      acc.fill(0);
+      for (let yy = y * k; yy < y * k + k; yy++) for (let xx = x * k; xx < x * k + k; xx++) { const i = (yy * W + xx) * 4; acc[0] += src[i]; acc[1] += src[i + 1]; acc[2] += src[i + 2]; acc[3] += src[i + 3]; }
+      const o = (y * SW + x) * 4, kk = k * k; for (let c = 0; c < 4; c++) S[o + c] = Math.round(acc[c] / kk);
+    }
+  }
+  const sw = SW * k, sh = SH * k; // the part of the source the shrunk copy covers
+  for (let y = 0, o = 0; y < h; y++) for (let x = 0; x < w; x++, o += 4) {
+    const px = x + 0.5, py = y + 0.5, X = m.a * px + m.c * py + m.e, Y = m.b * px + m.d * py + m.f;
+    if (X < 0 || Y < 0 || X > W || Y > H) continue;
+    const fx = Math.min(SW - 1, Math.max(0, Math.min(X, sw) / k - 0.5)), fy = Math.min(SH - 1, Math.max(0, Math.min(Y, sh) / k - 0.5));
+    const x0 = fx | 0, y0 = fy | 0, x1 = Math.min(SW - 1, x0 + 1), y1 = Math.min(SH - 1, y0 + 1), tx = fx - x0, ty = fy - y0;
+    const i00 = (y0 * SW + x0) * 4, i10 = (y0 * SW + x1) * 4, i01 = (y1 * SW + x0) * 4, i11 = (y1 * SW + x1) * 4;
+    for (let c = 0; c < 3; c++) out[o + c] = Math.round((S[i00 + c] * (1 - tx) + S[i10 + c] * tx) * (1 - ty) + (S[i01 + c] * (1 - tx) + S[i11 + c] * tx) * ty);
+    out[o + 3] = A;
+  }
+  return out;
+}
+/** Affine helpers ({ a, b, c, d, e, f } as in resampleAffine): compose(m, t) = m after t (first t, then m). */
+export const affineCompose = (m, t) => ({ a: m.a * t.a + m.c * t.b, b: m.b * t.a + m.d * t.b, c: m.a * t.c + m.c * t.d, d: m.b * t.c + m.d * t.d, e: m.a * t.e + m.c * t.f + m.e, f: m.b * t.e + m.d * t.f + m.f });
+export const affineIdentity = () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });

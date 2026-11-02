@@ -93,7 +93,7 @@ function caFor(s, set) {
   return R.caScales(set, s.ca);
 }
 function devOpts(s, set, pipe, factor, scale, bits) {
-  return { pipe, orientation: s.orientation, factor, lens: lensFor(s, set), vignette: (set.vignette || 0) / 100, ca: caFor(s, set), settings: set, scale, bits };
+  return { pipe, orientation: s.orientation, factor, lens: lensFor(s, set), vignette: (set.vignette || 0) / 100, ca: caFor(s, set), distortion: set.distortion || 0, settings: set, scale, bits };
 }
 async function previewOf(s, settings) {
   const pipe = R.pipeline(s.meta, s.model, settings, s.autoW);
@@ -144,6 +144,8 @@ const handlers = {
       width: ow, height: oh, knownCamera: s.model.known, asShot: s.model.asShotTT, auto: s.model.tempTintFor(s.autoW),
       lens: s.lensOpts || s.lensOff ? { distortion: !!lens.warp, vignette: !!(lens.vignette || lens.baked) } : null, incomplete: !!frame.incomplete,
       warnings: (frame.warnings || []).map((w) => w.message || String(w.kind)), baselineExposure: meta.dng?.baselineExposure || 0,
+      lensModel: meta.lens?.model || null, lensMake: meta.lens?.make || null, focal: +meta.exposure?.focalLength || null,
+      camera: meta.camera?.canonicalModel ? `${meta.camera.canonicalMake || ''} ${meta.camera.canonicalModel}`.trim() : meta.camera?.name || null,
     });
     const preview = await previewOf(s, { ...R.DEFAULT_SETTINGS, ...settings });
     info.decoder = decoder;
@@ -153,8 +155,21 @@ const handlers = {
     const s = sessions.get(session); if (!s?.src) throw new Error('RAW session closed');
     return { preview: await previewOf(s, { ...R.DEFAULT_SETTINGS, ...settings }) };
   },
-  /** Full-resolution develop to 16 bits/channel (with an 8-bit copy for the canvas). */
-  async rawDevelop({ session, settings, maxPixels, half }, progress) {
+  /**
+   * Defringe eyedropper: the fringe colour around (u, v) (fractions of the preview) in a preview developed without
+   * defringe, so the picked colour is the fringe itself and not what is left of it.
+   */
+  async rawPick({ session, settings, u, v }) {
+    const s = sessions.get(session); if (!s?.src) throw new Error('RAW session closed');
+    const p = await previewOf(s, { ...R.DEFAULT_SETTINGS, ...settings, fringePurple: 0, fringeGreen: 0, fringeMask: false });
+    return R.pickFringe(p.data, p.width, p.height, u * p.width - 0.5, v * p.height - 0.5, Math.max(2, Math.round(p.width / 400)));
+  },
+  /**
+   * Full-resolution develop to 16 bits/channel (with an 8-bit copy for the canvas). xform (re-develop into a layer
+   * that was cropped, resized, rotated, flipped or transformed): { m, w, h, fullW, fullH } — the result is resampled
+   * through m (layer pixels → developed pixels of a fullW × fullH develop) into w × h.
+   */
+  async rawDevelop({ session, settings, maxPixels, half, xform }, progress) {
     const s = sessions.get(session); if (!s?.src) throw new Error('RAW session closed');
     const set = { ...R.DEFAULT_SETTINGS, ...settings }, t = performance.now();
     let src = s.src, factor = 1;
@@ -170,6 +185,14 @@ const handlers = {
       half: !!half,
       onHalf: half ? (b) => { firstHalf ||= performance.now() - t; progress({ stage: 'half', width: HW, height: HH, rows: b.rows, data: b.data, ms: Math.round(performance.now() - t) }, [b.data.buffer]); } : null,
     });
+    if (xform) {
+      const tx = performance.now(), k = OW / (xform.fullW || OW), m = xform.m;
+      const mm = k === 1 ? m : { a: m.a * k, b: m.b * k, c: m.c * k, d: m.d * k, e: m.e * k, f: m.f * k };
+      const d16 = R.resampleAffine(out.data, OW, OH, mm, xform.w, xform.h);
+      const total = Math.round(performance.now() - t);
+      return { width: xform.w, height: xform.h, developed: [OW, OH], data16: d16, data8: R.to8(d16), scaled: factor > 1, bands: out.bands, workers: out.workers,
+        ms: { ...Object.fromEntries(Object.entries(out.ms).map(([q, v]) => [q, Math.round(v)])), xform: Math.round(performance.now() - tx), total } };
+    }
     const total = Math.round(performance.now() - t);
     return { width: OW, height: OH, data16: out.data, data8: out.data8, scaled: factor > 1, bands: out.bands,
       workers: out.workers, ms: { ...Object.fromEntries(Object.entries(out.ms).map(([k, v]) => [k, Math.round(v)])), half: Math.round(firstHalf), total, ca: s.ca?.ms } };
