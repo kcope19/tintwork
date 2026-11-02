@@ -2,7 +2,7 @@
 // Network-first for app files (so updates show up immediately when online), falling
 // back to the cache when offline. All paths are relative to this file, so the app
 // can live in any sub-folder of any static host.
-const CACHE = 'tintwork-shell-v1.3.0';
+const CACHE = 'tintwork-shell-v1.4.0';
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
   './src/main.js', './src/pixels.js', './src/selection.js', './src/ops.js', './src/worker.js', './src/icons.js',

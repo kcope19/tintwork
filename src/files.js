@@ -73,3 +73,31 @@ export async function addRecent(handle, kind) {
 }
 export async function removeRecent(id) { try { await tx('readwrite', (s) => { s.delete(id); }); } catch { /* ignore */ } }
 export async function clearRecent() { try { await tx('readwrite', (s) => { s.clear(); }); } catch { /* ignore */ } }
+
+// ---- linked RAW files --------------------------------------------------------------------------------
+// A RAW layer can link to its file on disk instead of embedding it in the project. The handle is kept here under
+// the link id the project stores ({ id, name, size, lastModified }); handles survive reloads but not other browsers
+// or computers, where the relink prompt asks the user to locate the file.
+const LINK_DB = 'tintwork-links', LINK_STORE = 'links';
+function linkDb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(LINK_DB, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(LINK_STORE, { keyPath: 'id' });
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+async function linkTx(mode, fn) {
+  const d = await linkDb();
+  try { return await new Promise((res, rej) => { const t = d.transaction(LINK_STORE, mode), s = t.objectStore(LINK_STORE); const out = fn(s); t.oncomplete = () => res(out && 'result' in out ? out.result : out); t.onerror = () => rej(t.error); }); }
+  finally { d.close(); }
+}
+export const newLinkId = () => `L-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+export async function putLink(id, handle, meta = {}) { await linkTx('readwrite', (s) => { s.put({ id, handle, ...meta, time: Date.now() }); }); }
+/** { id, handle, name, size, lastModified } or null. */
+export async function getLink(id) { try { return (await linkTx('readonly', (s) => s.get(id))) || null; } catch { return null; } }
+export async function deleteLink(id) { try { await linkTx('readwrite', (s) => { s.delete(id); }); } catch { /* ignore */ } }
+/** Picker for one camera RAW file (relink). null when cancelled. */
+export async function pickRaw() {
+  try { const hs = await window.showOpenFilePicker({ types: [{ description: 'Camera RAW', accept: RAW_ACCEPT }], excludeAcceptAllOption: false, id: 'tintwork-relink', multiple: false }); return hs[0] || null; }
+  catch (err) { if (err && err.name === 'AbortError') return null; throw err; }
+}

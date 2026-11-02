@@ -12,7 +12,7 @@ import { createWebGPUEngine, webgpuAvailable } from './webgpu.js';
 import { runBenchmark, benchText, probeEngines, stackId, BENCH_SIZES, BENCH_OPS } from './bench.js';
 import * as mesh from './mesh.js';
 import { FX_TYPES, FX_ORDER, defaultEffect, hasActiveStyles, normalizeStyles, renderStyled, effectStack, BODY_BLENDS } from './layerfx.js';
-import { fsaSupported, pickOpen, pickSave, writeFile, ensurePermission, listRecent, addRecent, removeRecent, clearRecent, EXPORT_TYPES } from './files.js';
+import { fsaSupported, pickOpen, pickSave, writeFile, ensurePermission, listRecent, addRecent, removeRecent, clearRecent, EXPORT_TYPES, putLink, getLink, newLinkId, pickRaw } from './files.js';
 import { blendIndex, createDeep, cloneDeep, deepFromImageData, deepToImageData, reconcileDeep, compositeDeep, accToDeep, runDeep, DEEP_OPS } from './deep.js';
 import { decodePNG, encodePNG, pngInfo } from './png.js';
 import { BUILTIN_PRESETS, RATIO_ONLY, allPresets, presetById, presetPixels, centredRatioRect, constrainRect, describePreset, saveCustomPreset, deleteCustomPreset, customPresets } from './presets.js';
@@ -20,10 +20,10 @@ import { formatName, variantSize, uniqueNamer, zipFiles } from './batch.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
 import { isRawName, isPsdName, isPsdBytes, readPSDAsync, writePSDAsync, openRawSession, setDevelopEnv, RAW_EXTS, PSD_EXTS } from './codecs.js';
 import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEYS } from './psd.js';
-import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile } from './raw.js';
+import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -247,7 +247,9 @@ function ensureCoversDoc(layer) {
     return;
   }
   if (layer.deep) { layer.deepOX = (layer.deepOX || 0) + layer.x - x0; layer.deepOY = (layer.deepOY || 0) + layer.y - y0; }
+  const sameRaw = layer.raw && layer.raw.rev === layer.rev, ox = x0 - layer.x, oy = y0 - layer.y;
   layer.canvas = c; layer.x = x0; layer.y = y0; touch(layer);
+  if (layer.raw) trackRaw(layer, { a: 1, b: 0, c: 0, d: 1, e: ox, f: oy }, sameRaw); // grown with transparent edges
 }
 
 // ---------------------------------------------------------------------------
@@ -1741,7 +1743,7 @@ function startTransform() {
     if (!t) { status('This layer is empty: nothing to transform.'); return; }
     const crop = (c) => { const k = makeCanvas(t.w, t.h); k.getContext('2d').drawImage(c, -t.x, -t.y); return k; };
     Object.assign(x, {
-      trim: t, piece: crop(l.canvas), w: t.w, h: t.h, cx: l.x + t.x + t.w / 2, cy: l.y + t.y + t.h / 2,
+      trim: t, piece: crop(l.canvas), w: t.w, h: t.h, cx: l.x + t.x + t.w / 2, cy: l.y + t.y + t.h / 2, rawSame: !!l.raw && l.raw.rev === l.rev,
       maskPiece: l.mask ? cloneCanvas(l.mask.canvas) : null, fmaskPiece: l.kind === 'smart' && l.fmask ? cloneCanvas(l.fmask.canvas) : null,
       sourcePiece: l.kind === 'smart' ? crop(l.source) : null,
     });
@@ -1763,7 +1765,7 @@ function startMultiTransform() {
     rasterize(l, 'the transform');
     const t = l.mask ? { x: 0, y: 0, w: l.canvas.width, h: l.canvas.height } : alphaBounds(l.canvas); if (!t) continue;
     const piece = makeCanvas(t.w, t.h); piece.getContext('2d').drawImage(l.canvas, -t.x, -t.y);
-    parts.push({ layer: l, piece, w: t.w, h: t.h, dx: l.x + t.x, dy: l.y + t.y, maskPiece: l.mask ? cloneCanvas(l.mask.canvas) : null });
+    parts.push({ layer: l, piece, w: t.w, h: t.h, dx: l.x + t.x, dy: l.y + t.y, tx: t.x, ty: t.y, rawSame: !!l.raw && l.raw.rev === l.rev, maskPiece: l.mask ? cloneCanvas(l.mask.canvas) : null });
   }
   if (!parts.length) { status('Nothing to transform: the selected layers are empty.'); return; }
   const x0 = Math.min(...parts.map((p) => p.dx)), y0 = Math.min(...parts.map((p) => p.dy));
@@ -1855,6 +1857,11 @@ function applyTransform() {
     l.source = drawTransformed(x.sourcePiece, M, l.x, l.y, l.canvas.width, l.canvas.height);
     renderSmartSync(l);
   }
+  // RAW layers stay re-developable: new pixel → document → piece (M⁻¹) → old pixel (piece offset in the old canvas)
+  const rawXf = (L, Mx, tx, ty, same) => { if (L.raw) trackRaw(L, affineCompose({ a: 1, b: 0, c: 0, d: 1, e: tx, f: ty }, affineCompose(invertM(Mx), { a: 1, b: 0, c: 0, d: 1, e: L.x, f: L.y })), same); };
+  if (x.parts) for (const p of x.parts) rawXf(p.layer, mulOffset(M, p.ox, p.oy), p.tx, p.ty, p.rawSame);
+  else if (!x.sel && x.trim && l.kind !== 'smart') rawXf(l, M, x.trim.x, x.trim.y, x.rawSame);
+  else if (x.sel && !x.onMask && l.raw) l.raw = { ...l.raw, untracked: 'a transform of selected pixels' };
   compDirty = true; requestRender();
   commit(x.sel ? 'Transform selection' : 'Free transform');
   buildOptionsBar(); updateLayersPanel();
@@ -2963,7 +2970,7 @@ $('#layerList').addEventListener('contextmenu', (e) => {
     ['Duplicate layer', 'layerDuplicate'], ['Delete layer', 'layerDelete', d.layers.length < 2], ['Merge down', 'layerMergeDown', idx === 0], '-',
     [l.visible ? 'Hide layer' : 'Show layer', () => { l.visible = !l.visible; compDirty = true; requestRender(); commit(l.visible ? 'Show layer' : 'Hide layer'); }],
     ['Rename…', () => renameLayer(l)],
-    ...(l.kind ? [['Edit layer settings…', 'editLayer'], ['Convert to pixels', 'rasterizeLayer']] : [...(l.raw ? [['Re-develop RAW…', 'redevelopRaw']] : []), ['Convert to live layer', 'convertSmart']]), '-',
+    ...(l.kind ? [['Edit layer settings…', 'editLayer'], ['Convert to pixels', 'rasterizeLayer']] : [...(l.raw ? [['Re-develop RAW…', 'redevelopRaw'], ...(l.raw.link ? [['Embed linked RAW file', 'embedRaw']] : [])] : []), ['Convert to live layer', 'convertSmart']]), '-',
     ...(l.mask ? [['Enable / disable mask', 'toggleMask'], ['Invert mask', 'invertMask'], ['Apply mask', 'applyMask'], ['Delete mask', 'deleteMask']]
       : [['Add layer mask', 'addMask'], ['Add mask from selection', 'addMaskFromSelection', !d.selection]]), '-',
     ['Select layer pixels', 'selectLayerPixels'], ['Move up', 'layerUp', idx === d.layers.length - 1], ['Move down', 'layerDown', idx === 0], ['Flatten image', 'flatten'],
@@ -3177,6 +3184,7 @@ const cmds = {
   layerNew: needDoc(() => addLayer(createLayer(`Layer ${nextLayerId}`, doc().width, doc().height), 'New layer')),
   layerDuplicate: needDoc(() => duplicateActive()),
   redevelopRaw: needDoc(() => redevelopRaw()),
+  embedRaw: needDoc(() => embedLinkedRaw()),
   layerDelete: needDoc(() => deleteActive()),
   layerUp: needDoc(() => layerStep(1)),
   layerDown: needDoc(() => layerStep(-1)),
@@ -3308,7 +3316,7 @@ const MENUS = [
     ['New adjustment layer: Brightness / contrast…', 'adjLayer_brightnessContrast'], ['New adjustment layer: Hue / saturation…', 'adjLayer_hueSaturation'],
     ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: White balance…', 'adjLayer_whiteBalance'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
     ['New adjustment layer: 3D LUT from .cube file…', 'lutImport'],
-    ['Edit layer settings…', 'editLayer'], ['Re-develop RAW…', 'redevelopRaw'], ['Convert to live layer (editable filters)', 'convertSmart'], ['Convert text / live layer to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Duplicate to document…', 'layerToDoc'], ['Delete layer', 'layerDelete'], '-',
+    ['Edit layer settings…', 'editLayer'], ['Re-develop RAW…', 'redevelopRaw'], ['Embed linked RAW file', 'embedRaw'], ['Convert to live layer (editable filters)', 'convertSmart'], ['Convert text / live layer to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Duplicate to document…', 'layerToDoc'], ['Delete layer', 'layerDelete'], '-',
     ['Move up', 'layerUp', 'Ctrl+]'], ['Move down', 'layerDown', 'Ctrl+['], ['Merge down / merge group', 'layerMergeDown', 'Ctrl+E'], '-',
     ['New group', 'groupNew'], ['Group layer', 'groupLayers', 'Ctrl+G'], ['Ungroup', 'ungroup', 'Ctrl+Shift+G'], ['Create / release clipping mask', 'clipToggle', 'Ctrl+Alt+G'], '-',
     ['Align left edges', 'alignLeft'], ['Align horizontal centers', 'alignHCenter'], ['Align right edges', 'alignRight'],
@@ -3624,6 +3632,30 @@ function bakeAdjustmentBlended(adj, target) {
   for (let i = 3; i < r.length; i += 4) r[i] = o[i]; // the adjustment never changes coverage
   ctxOf(target.canvas).putImageData(res, 0, 0); touch(target);
 }
+/**
+ * RAW layers keep a map from layer pixels to developed pixels (l.raw.m, continuous coordinates), updated by crops,
+ * image resizes, rotations, flips and free transforms, so re-developing can resample a fresh develop into the
+ * layer exactly as it is now. rawMapOf: older files stored only the crop offset (cx, cy).
+ */
+const rawMapOf = (raw) => raw.m || { a: 1, b: 0, c: 0, d: 1, e: raw.cx || 0, f: raw.cy || 0 };
+/** t maps the layer's new pixel positions to its old ones; sameRaw = the pixels matched the develop before the change. */
+function trackRaw(l, t, sameRaw) {
+  if (!l.raw) return;
+  const m = affineCompose(rawMapOf(l.raw), t), shift = Math.abs(m.a - 1) < 1e-12 && Math.abs(m.d - 1) < 1e-12 && !m.b && !m.c;
+  l.raw = { ...l.raw, m, cx: shift ? m.e : null, cy: shift ? m.f : null, cw: l.canvas.width, ch: l.canvas.height };
+  if (sameRaw) l.raw.rev = l.rev;
+}
+/** Map from new to old pixel positions of rotatedCanvas(kind) on a w × h canvas. */
+function rotateMap(kind, w, h) {
+  switch (kind) {
+    case 'cw': return { a: 0, b: -1, c: 1, d: 0, e: 0, f: h };
+    case 'ccw': return { a: 0, b: 1, c: -1, d: 0, e: w, f: 0 };
+    case '180': return { a: -1, b: 0, c: 0, d: -1, e: w, f: h };
+    case 'fh': return { a: -1, b: 0, c: 0, d: 1, e: w, f: 0 };
+    case 'fv': return { a: 1, b: 0, c: 0, d: -1, e: 0, f: h };
+    default: return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+  }
+}
 function rotatedCanvas(src, kind) {
   const w = src.width, h = src.height, swap = kind === 'cw' || kind === 'ccw';
   const c = makeCanvas(swap ? h : w, swap ? w : h), x = c.getContext('2d');
@@ -3645,9 +3677,11 @@ function transformDoc(kind, label) {
     else if (kind === '180') [x, y] = [W - (l.x + w), H - (l.y + h)];
     else if (kind === 'fh') x = W - (l.x + w);
     else if (kind === 'fv') y = H - (l.y + h);
+    const sameRaw = l.raw && l.raw.rev === l.rev, cw0 = l.canvas.width, ch0 = l.canvas.height;
     if (l.kind === 'smart') smartGeom(l, (c) => rotatedCanvas(c, kind));
     else if (l.kind !== 'adjust') l.canvas = rotatedCanvas(l.canvas, kind);
     l.x = x; l.y = y; touch(l);
+    if (l.raw) trackRaw(l, rotateMap(kind, cw0, ch0), sameRaw);
     if (l.mask) { l.mask.canvas = rotatedCanvas(l.mask.canvas, kind); touchMask(l); }
   }
   if (kind === 'cw' || kind === 'ccw') { d.width = H; d.height = W; }
@@ -3656,9 +3690,11 @@ function transformDoc(kind, label) {
 }
 function transformLayer(kind, label) {
   const l = activeLayer(); if (l.kind === 'text') rasterize(l, 'the transform');
+  const sameRaw = l.raw && l.raw.rev === l.rev, cw0 = l.canvas.width, ch0 = l.canvas.height;
   if (l.kind === 'smart') smartGeom(l, (c) => rotatedCanvas(c, kind));
   else if (l.kind !== 'adjust') l.canvas = rotatedCanvas(l.canvas, kind);
   touch(l);
+  if (l.raw) trackRaw(l, rotateMap(kind, cw0, ch0), sameRaw);
   if (l.mask) { l.mask.canvas = rotatedCanvas(l.mask.canvas, kind); touchMask(l); }
   requestRender(); commit(label);
 }
@@ -3678,9 +3714,11 @@ function resizeImage(nw, nh) {
   };
   for (const l of d.layers) {
     if (l.kind === 'text') rasterize(l);
+    const sameRaw = l.raw && l.raw.rev === l.rev, cw0 = l.canvas.width, ch0 = l.canvas.height;
     if (l.kind === 'smart') smartGeom(l, scale);
     else if (l.kind !== 'adjust') l.canvas = scale(l.canvas);
     l.x = Math.round(l.x * sx); l.y = Math.round(l.y * sy); touch(l);
+    if (l.raw) trackRaw(l, { a: cw0 / l.canvas.width, b: 0, c: 0, d: ch0 / l.canvas.height, e: 0, f: 0 }, sameRaw);
     if (l.mask) { l.mask.canvas = scale(l.mask.canvas); touchMask(l); }
   }
   d.width = nw; d.height = nh; d.selection = null;
@@ -3714,10 +3752,9 @@ function cropTo(r, label = null) {
     if (!noPix) c.getContext('2d').drawImage(l.canvas, l.x - r.x, l.y - r.y);
     if (l.mask) { const m = makeCanvas(r.w, r.h); m.getContext('2d').drawImage(l.mask.canvas, l.x - r.x, l.y - r.y); l.mask.canvas = m; touchMask(l); }
     if (l.deep && l.kind !== 'adjust') { l.deepOX = (l.deepOX || 0) + l.x - r.x; l.deepOY = (l.deepOY || 0) + l.y - r.y; }
-    const sameRaw = l.raw && l.raw.rev === l.rev; // a crop keeps the layer re-developable: track the crop window instead
-    if (l.raw) l.raw = { ...l.raw, cx: l.raw.cx + r.x - l.x, cy: l.raw.cy + r.y - l.y, cw: r.w, ch: r.h };
+    const sameRaw = l.raw && l.raw.rev === l.rev, ox = r.x - l.x, oy = r.y - l.y; // a crop keeps the layer re-developable
     l.canvas = c; l.x = 0; l.y = 0; touch(l);
-    if (sameRaw) l.raw.rev = l.rev;
+    if (l.raw) trackRaw(l, { a: 1, b: 0, c: 0, d: 1, e: ox, f: oy }, sameRaw);
   }
   d.width = r.w; d.height = r.h; d.selection = null; state.crop = null;
   compDirty = true; fitToScreen(); buildOptionsBar(); commit(label ? `${label} (crop ${r.w}×${r.h})` : `Crop ${r.w}×${r.h}`);
@@ -4281,7 +4318,7 @@ async function openFile(file, mode = 'open', { interactive = true, rawSettings =
     }
     // layered PSD and camera RAW always open as a document (placing them would flatten the layers / skip develop)
     if (isPsdName(file.name) || file.type === PSD_TYPE) { if (mode === 'place' && doc()) toast('PSD files open as a new document so their layers are kept.', 4000); await openPSD(file, interactive); return; }
-    if (isRawName(file.name)) { if (mode === 'place' && doc()) toast('Camera RAW files open as a new document.', 4000); await openRAW(file, interactive, rawSettings); return; }
+    if (isRawName(file.name)) { if (mode === 'place' && doc()) toast('Camera RAW files open as a new document.', 4000); await openRAW(file, interactive, rawSettings, fileHandleOf.get(file) || null); return; }
     if (!file.type.startsWith('image/') && !/\.png$/i.test(file.name)) { status(`Unsupported file: ${file.name}`); return; }
     if (mode !== 'place' || !doc()) {
       if (file.type === 'image/png' || /\.png$/i.test(file.name)) {
@@ -4487,10 +4524,17 @@ async function flatPSD(canvas) {
 
 // ---- camera RAW ----
 let rawUI = null; // open develop dialog (tests read it through window.tintwork)
+/** File → FileSystemFileHandle it was read from (picker, recent files, OS launch, drag and drop): RAW files can be linked. */
+const fileHandleOf = new WeakMap();
+/** In-memory link id → handle (IndexedDB keeps them across reloads, see files.js putLink). */
+const linkHandles = new Map();
+const RAW_LINK_KEY = 'tintwork.rawLink'; // '1' = the user last chose "Link to the file"
+let relinkPicker = null; // test hook: replaces the file picker of the relink prompt
+const lastRelink = { name: null, why: null, open: false, count: 0 }; // the relink prompt (tests)
 let lastDecoder = null; // { threads, reason, binary, isolated } of the RAW decoder build in use
 let lastDevelopProgress = null; // { halfBands } of the develop in progress (or the last one)
 /** Open a camera RAW file: develop dialog (or the last settings in batch), then a 16 bits/channel document. */
-async function openRAW(file, interactive = true, rawSettings = null) {
+async function openRAW(file, interactive = true, rawSettings = null, handle = null) {
   const t0 = performance.now(); status(`Decoding ${file.name}…`);
   const bytes = new Uint8Array(await file.arrayBuffer()), tRead = performance.now();
   const settings = interactive ? { ...RAW_DEFAULTS } : cleanRawSettings(rawSettings || rawLastSettings());
@@ -4505,9 +4549,12 @@ async function openRAW(file, interactive = true, rawSettings = null) {
       await openRawJpeg(file, sess, `Tintwork cannot decode the sensor data of this ${sess.info.format} file (${sess.reason}).`, interactive);
       return;
     }
-    if (!interactive) { await developToDocument(file, sess, settings, timing, t0); return; }
+    if (!interactive) { // batch: the photo's own lens profile wins over the distortion in the chosen settings
+      const k = lensDistortionFor(sess.info); if (k != null) { settings.distortion = k; timing.lensProfile = k; }
+      await developToDocument(file, sess, settings, timing, t0); return;
+    }
     status(`${file.name} decoded in ${(sess.decodeMs / 1000).toFixed(2)} s`);
-    await rawDialog(file, sess, timing, t0);
+    await rawDialog(file, sess, timing, t0, { handle });
   } finally { sess.close(); }
 }
 async function openRawJpeg(file, sess, why, interactive) {
@@ -4546,7 +4593,7 @@ function developOverlay(first) {
     remove() { box.remove(); },
   };
 }
-async function developToDocument(file, sess, settings, timing, t0, { overlayFrom = null, remember = false } = {}) {
+async function developToDocument(file, sess, settings, timing, t0, { overlayFrom = null, remember = false, link = null } = {}) {
   const maxPixels = Math.min(MAX_PIXELS, Math.floor((DEEP_LIMIT_MB * 1048576) / 2 / 8));
   const tDev = performance.now(), ov = overlayFrom !== null ? developOverlay(overlayFrom) : null;
   let halfBands = 0, tHalfFirst = 0, tHalf = 0, bandsN = 0;
@@ -4559,6 +4606,7 @@ async function developToDocument(file, sess, settings, timing, t0, { overlayFrom
     ctxOf(l.canvas).putImageData(new ImageData(r.data8, r.width, r.height), 0, 0); touch(l);
     l.deep = createDeep(r.width, r.height, r.data16); l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0;
     l.raw = rawSource(file, sess.info.format, settings, r.width, r.height, l.rev);
+    if (link) l.raw = { ...l.raw, file: null, ...(await linkRaw(link, file)) }; // the bytes stay on disk, not in memory
     state.doc = { width: r.width, height: r.height, layers: [l], activeId: l.id, selection: null, name: file.name, depth: 16, raw: { format: sess.info.format, settings: { ...settings } } };
     afterDocChange('Open RAW');
     if (remember) try { localStorage.setItem(RAW_LAST_KEY, JSON.stringify(settings)); } catch { /* private mode */ } // batch runs leave "last used" alone
@@ -4576,27 +4624,101 @@ async function developToDocument(file, sess, settings, timing, t0, { overlayFrom
  * settings, and the crop window into the developed frame (cx, cy, cw × ch). `rev` is the layer revision the pixels
  * match: when the layer is painted or transformed afterwards, re-developing asks before replacing those edits.
  */
-function rawSource(file, format, settings, width, height, rev) {
-  return { file, name: file.name, size: file.size, type: file.type || '', format, settings: cleanRawSettings(settings), width, height, cx: 0, cy: 0, cw: width, ch: height, rev };
+function rawSource(file, format, settings, width, height, rev, about = null) {
+  const f = file || about || {};
+  return { file, name: f.name, size: f.size, type: f.type || '', format, settings: cleanRawSettings(settings), width, height, m: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, cx: 0, cy: 0, cw: width, ch: height, rev };
+}
+/** Link a RAW layer to its file on disk: the handle goes to IndexedDB (and memory) under a new link id. */
+async function linkRaw(handle, file) {
+  const id = newLinkId(), link = { id, name: file.name, size: file.size, lastModified: file.lastModified || 0 };
+  linkHandles.set(id, handle);
+  try { await putLink(id, handle, link); } catch (err) { console.warn('The file link could not be stored', err); }
+  return { link, handle };
+}
+/**
+ * The RAW file of a layer, as a File. Embedded: the stored copy. Linked: read through the file handle (asking for
+ * permission if needed); when the handle is gone, the file was moved or deleted, or access is refused, the relink
+ * prompt asks the user to locate it. Returns null when the user cancels.
+ */
+async function rawFileOf(l) {
+  const raw = l.raw;
+  if (!raw.link) return raw.file || null;
+  const id = raw.link.id;
+  let h = linkHandles.get(id) || raw.handle || null, why = 'missing';
+  if (!h) { const rec = await getLink(id); h = rec?.handle || null; if (h) linkHandles.set(id, h); }
+  if (h) {
+    try {
+      if (!(await ensurePermission(h, 'read'))) why = 'permission';
+      else {
+        const f = await h.getFile();
+        if (raw.link.size && f.size !== raw.link.size && !(await confirmAsync(`${f.name} has changed since it was developed (${fmtBytes(raw.link.size)} then, ${fmtBytes(f.size)} now). Re-develop from the file as it is now?`, 'Re-develop'))) return null;
+        return f;
+      }
+    } catch (err) { why = err?.name === 'NotFoundError' ? 'moved' : 'unreadable'; console.warn('linked RAW', err); }
+  }
+  return relinkPrompt(l, why, h);
+}
+const fmtBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+/** "Locate the linked file" prompt. Resolves to the chosen File (the link now points to it) or null. */
+function relinkPrompt(l, why, oldHandle) {
+  const raw = l.raw, name = raw.link.name || raw.name;
+  const reason = { missing: 'Tintwork has no access to it in this browser (the project may have been made on another computer or in another browser).',
+    moved: 'it was moved, renamed or deleted.', permission: 'access to it was not allowed.', unreadable: 'it could not be read.' }[why] || '';
+  const canAsk = why === 'permission' && oldHandle;
+  return new Promise((resolve) => {
+    const body = document.createElement('div'); body.className = 'relink';
+    body.innerHTML = `<p>This layer is linked to the camera RAW file <b>${escapeHtml(name)}</b>${raw.link.size ? ` (${fmtBytes(raw.link.size)})` : ''}, but ${escapeHtml(reason)}</p>
+      <p>${canAsk ? 'Allow access again, or locate the file' : 'Locate the file'} to re-develop the layer. The layer itself is not affected.</p>${!fsaSupported && !relinkPicker ? '<p class="muted small">Locating files needs Chrome or Edge.</p>' : ''}
+      ${canAsk ? '<p><button type="button" id="relinkOther">Locate a different file…</button></p>' : ''}`;
+    let done = false, busyRelink = false;
+    const finish = (v) => { if (!done) { done = true; lastRelink.open = false; resolve(v); } };
+    const locate = async () => {
+      let h;
+      try { h = relinkPicker ? await relinkPicker() : await pickRaw(); } catch (err) { toast(`The file could not be chosen (${err.message}).`, 6000); return finish(null); }
+      if (!h) { status('Relink cancelled.'); return finish(null); }
+      let f; try { f = await h.getFile(); } catch (err) { toast(`${h.name} could not be read (${err.message}).`, 6000); return finish(null); }
+      if (f.name.toLowerCase() !== String(name).toLowerCase() && !(await confirmAsync(`You chose ${f.name}, but the layer was developed from ${name}. Use ${f.name} anyway?`, 'Use it'))) return finish(null);
+      if (raw.link.size && f.size !== raw.link.size && !(await confirmAsync(`${f.name} is ${fmtBytes(f.size)}; the file the layer was developed from was ${fmtBytes(raw.link.size)}. It may be a different photo. Use it anyway?`, 'Use it'))) return finish(null);
+      linkHandles.set(raw.link.id, h);
+      try { await putLink(raw.link.id, h, { ...raw.link, name: f.name, size: f.size, lastModified: f.lastModified || 0 }); } catch { /* memory only */ }
+      status(`Relinked ${name} to ${f.name}.`);
+      finish(f);
+    };
+    showModal({
+      title: 'Linked RAW file not found', body, okLabel: canAsk ? 'Allow access' : 'Locate file…',
+      ok: () => {
+        busyRelink = true;
+        if (canAsk) { ensurePermission(oldHandle, 'read').then(async (ok) => { if (!ok) { toast('Access was not allowed.'); return finish(null); } try { finish(await oldHandle.getFile()); } catch { finish(null); } }); return; }
+        locate(); // runs inside the click, so the file picker may open
+      },
+      onClose: () => setTimeout(() => { if (!done && !busyRelink) finish(null); }, 0),
+    });
+    body.querySelector('#relinkOther')?.addEventListener('click', () => { busyRelink = true; closeModal(); locate(); });
+    Object.assign(lastRelink, { name, why, open: true, count: lastRelink.count + 1 });
+  });
 }
 /** Layer ▸ Re-develop RAW… (or double-click a RAW layer): reopen the develop dialog with the layer's settings. */
 async function redevelopRaw(l = activeLayer()) {
   if (!l?.raw) { status('This layer was not developed from a RAW file in Tintwork, so it has no RAW settings to re-open.'); return; }
-  const raw = l.raw, id = l.id, d = doc();
-  if (l.canvas.width !== raw.cw || l.canvas.height !== raw.ch) {
-    toast(`This layer was resized or rotated after developing, so it cannot be re-developed in place. Open ${raw.name} again to develop it as a new image.`, 7000); return;
+  const id = l.id, d = doc();
+  if (l.raw.untracked || l.canvas.width !== l.raw.cw || l.canvas.height !== l.raw.ch) {
+    toast(`This layer was changed in a way Tintwork cannot follow (${l.raw.untracked || 'its size changed outside crop, resize, rotate, flip, straighten and free transform'}), so it cannot be re-developed in place. Open ${l.raw.name} again to develop it as a new image.`, 8000); return;
   }
-  if (l.rev !== raw.rev && !(await confirmAsync('This layer was edited after it was developed (painting, filters or other pixel changes). Re-developing replaces those edits with a fresh develop of the RAW file. Continue?', 'Re-develop'))) return;
-  const t0 = performance.now(); status(`Decoding ${raw.name}…`);
+  if (l.rev !== l.raw.rev && !(await confirmAsync('This layer was edited after it was developed (painting, filters or other pixel changes). Re-developing replaces those edits with a fresh develop of the RAW file. Continue?', 'Re-develop'))) return;
+  const file = await rawFileOf(l); if (!file) return;
+  const raw = l.raw, t0 = performance.now(); status(`Decoding ${raw.name}…`);
   let sess;
-  try { sess = await openRawSession(new Uint8Array(await raw.file.arrayBuffer()), raw.settings); }
-  catch (err) { toast(`${raw.name} could not be read again (${err.message}).`, 7000); return; }
+  try { sess = await openRawSession(new Uint8Array(await file.arrayBuffer()), raw.settings); }
+  catch (err) {
+    if (raw.link && err?.name === 'NotReadableError') { toast(`${raw.name} changed on disk while it was open; try again.`, 7000); linkHandles.delete(raw.link.id); return; }
+    toast(`${raw.name} could not be read again (${err.message}).`, 7000); return;
+  }
   try {
     if (!sess.decoded) { toast(`${raw.name} cannot be decoded here (${sess.reason}).`, 7000); return; }
     const timing = { decode: sess.decodeMs, kind: 'raw-redevelop', format: sess.info.format };
     status(`${raw.name} decoded in ${(sess.decodeMs / 1000).toFixed(2)} s`);
     await rawDialog({ name: raw.name }, sess, timing, t0, {
-      initial: raw.settings, title: `Re-develop ${raw.name}`, okLabel: 'Apply',
+      initial: raw.settings, title: `Re-develop ${raw.name}`, okLabel: 'Apply', linked: !!raw.link,
       onApply: async (settings) => {
         if (doc() !== d) { toast('The document changed tabs; re-develop cancelled.'); return; }
         await applyRedevelop(id, sess, settings, timing, t0);
@@ -4604,26 +4726,40 @@ async function redevelopRaw(l = activeLayer()) {
     });
   } finally { sess.close(); }
 }
+const isIdentityMap = (m) => m.a === 1 && m.b === 0 && m.c === 0 && m.d === 1 && m.e === 0 && m.f === 0;
 async function applyRedevelop(id, sess, settings, timing, t0) {
   const d = doc(), l = d.layers.find((x) => x.id === id); if (!l?.raw) return;
-  const raw = l.raw, maxPixels = Math.min(MAX_PIXELS, Math.floor((DEEP_LIMIT_MB * 1048576) / 2 / 8));
+  const raw = l.raw, maxPixels = Math.min(MAX_PIXELS, Math.floor((DEEP_LIMIT_MB * 1048576) / 2 / 8)), m = rawMapOf(raw);
+  const plain = isIdentityMap(m) && raw.cw === raw.width && raw.ch === raw.height;
   setBusy(1); status(`Re-developing ${raw.name}…`);
   try {
-    const tDev = performance.now(), r = await sess.develop(settings, maxPixels, null);
-    if (r.width !== raw.width || r.height !== raw.height) throw new Error(`the develop came out at ${r.width}×${r.height} instead of ${raw.width}×${raw.height}`);
+    // the develop is resampled in the worker into the layer as it is now (crop, size, rotation, flips, transforms)
+    const tDev = performance.now(), r = await sess.develop(settings, maxPixels, null, plain ? null : { m, w: raw.cw, h: raw.ch, fullW: raw.width, fullH: raw.height });
+    const dev = r.developed || [r.width, r.height];
+    if (dev[0] !== raw.width || dev[1] !== raw.height) throw new Error(`the develop came out at ${dev[0]}×${dev[1]} instead of ${raw.width}×${raw.height}`);
     const c = makeCanvas(raw.cw, raw.ch);
-    c.getContext('2d').putImageData(new ImageData(r.data8, r.width, r.height), -raw.cx, -raw.cy); // the crop window
+    c.getContext('2d').putImageData(new ImageData(r.data8, r.width, r.height), 0, 0);
     l.canvas = c; touch(l);
-    if (d.depth === 16) { l.deep = createDeep(r.width, r.height, r.data16); l.deepRev = l.rev; l.deepOX = -raw.cx; l.deepOY = -raw.cy; }
+    if (d.depth === 16) { l.deep = createDeep(r.width, r.height, r.data16); l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0; }
     else { l.deep = null; }
     l.raw = { ...raw, settings: cleanRawSettings(settings), rev: l.rev };
     if (d.raw) d.raw = { ...d.raw, settings: { ...l.raw.settings } };
     compDirty = true; requestRender(); commit('Re-develop RAW');
     const now = performance.now();
-    lastImport = { ...timing, develop: Math.round(now - tDev), total: Math.round(now - t0), workers: r.workers, bands: r.bands, width: r.width, height: r.height, notes: [] };
-    status(`Re-developed ${raw.name} (${raw.cw}×${raw.ch}${raw.cw !== raw.width || raw.ch !== raw.height ? `, crop of ${raw.width}×${raw.height}` : ''}) in ${((now - tDev) / 1000).toFixed(1)} s`);
+    lastImport = { ...timing, develop: Math.round(now - tDev), total: Math.round(now - t0), workers: r.workers, bands: r.bands, width: r.width, height: r.height, xformMs: r.ms?.xform ?? null, notes: [] };
+    status(`Re-developed ${raw.name} (${raw.cw}×${raw.ch}${plain ? '' : `, fitted to the layer from ${raw.width}×${raw.height}`}) in ${((now - tDev) / 1000).toFixed(1)} s`);
   } catch (err) { reportError(`${raw.name} could not be re-developed`, err); }
   finally { setBusy(-1); }
+}
+/** Layer ▸ Embed linked RAW file: copy the linked file into the project so it no longer depends on the file on disk. */
+async function embedLinkedRaw(l = activeLayer()) {
+  if (!l?.raw?.link) { status('This layer has no linked RAW file.'); return false; }
+  const f = await rawFileOf(l); if (!f) return false;
+  const file = new File([await f.arrayBuffer()], f.name, { type: f.type || '' });
+  const same = l.raw.rev === l.rev, { link, handle, ...rest } = l.raw; // eslint-disable-line no-unused-vars
+  l.raw = { ...rest, file, size: file.size }; touch(l); if (same) l.raw.rev = l.rev;
+  commit('Embed RAW file'); updateLayersPanel(); status(`${file.name} is now embedded in the project (${fmtBytes(file.size)}).`);
+  return true;
 }
 const TEMP_MIN = 2000, TEMP_MAX = 50000;
 const tempToPos = (T) => Math.round(((500 - 1e6 / Math.min(TEMP_MAX, Math.max(TEMP_MIN, T))) / 480) * 1000); // mired scale: even steps for the eye
@@ -4659,6 +4795,24 @@ function exportRawPresets(only = null) {
   status(`Exported ${list.length} develop preset${list.length === 1 ? '' : 's'} to ${name}`);
   return true;
 }
+/**
+ * User lens profiles (localStorage): lens name → [{ focal (mm, 0 = unknown), k (Distortion slider value) }].
+ * Made by the user with "Save for this lens" — no third-party lens database is shipped or copied.
+ */
+const LENS_PROFILES_KEY = 'tintwork.lensProfiles';
+const lensKeyOf = (info) => (info?.lensModel ? String(info.lensModel).trim() : info?.camera ? `${info.camera} (built-in or unrecorded lens)` : null) || null;
+function lensProfiles() {
+  try { const o = JSON.parse(localStorage.getItem(LENS_PROFILES_KEY) || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch { return {}; }
+}
+function saveLensProfile(key, focal, k) {
+  const all = lensProfiles(), f = Number.isFinite(+focal) ? Math.round(+focal * 10) / 10 : 0;
+  const list = (Array.isArray(all[key]) ? all[key] : []).filter((p) => Math.abs((+p.focal || 0) - f) > 0.5);
+  list.push({ focal: f, k: Math.max(-100, Math.min(100, +k || 0)) }); list.sort((a, b) => a.focal - b.focal);
+  all[key] = list; try { localStorage.setItem(LENS_PROFILES_KEY, JSON.stringify(all)); } catch { /* private mode */ }
+}
+function forgetLensProfile(key) { const all = lensProfiles(); delete all[key]; try { localStorage.setItem(LENS_PROFILES_KEY, JSON.stringify(all)); } catch { /* private mode */ } }
+/** Distortion from the user's profile for the lens of a decoded file, or null. */
+const lensDistortionFor = (info) => { const key = lensKeyOf(info); return key ? profileDistortion(lensProfiles()[key], info.focal) : null; };
 const hasRawLast = () => { try { return !!localStorage.getItem(RAW_LAST_KEY); } catch { return false; } };
 /** Settings for a batch / preset choice: 'last', 'default' or 'preset:<name>'. */
 function rawSettingsFor(choice) {
@@ -4674,13 +4828,18 @@ const rawPresetOptions = (withNone) => `${withNone ? '<option value="">Choose…
 function rawDialog(file, sess, timing, t0, opt = {}) {
   return new Promise((resolve) => {
     const info = sess.info, s = opt.initial ? { ...cleanRawSettings(opt.initial) } : { ...RAW_DEFAULTS, temp: info.asShot.temp, tint: info.asShot.tint };
+    const lensKey = lensKeyOf(info), lensProf = () => (lensKey ? profileDistortion(lensProfiles()[lensKey], info.focal) : null);
+    let lensFromProfile = false;
+    const applyLensProfile = () => { const k = lensProf(); lensFromProfile = k != null; if (lensFromProfile) s.distortion = k; };
+    if (!opt.initial) applyLensProfile();
+    let localSel = -1, picking = false, showGrid = false;
     const beforeSettings = opt.initial ? { ...s } : { ...RAW_DEFAULTS };
     const body = document.createElement('div'); body.className = 'raw-dev';
     const slider = (key, label, min, max, step, val, title = '') =>
       `<label class="field"${title ? ` title="${escapeHtml(title)}"` : ''}><span>${label}</span><input type="range" data-k="${key}" min="${min}" max="${max}" step="${step}" value="${val}" aria-label="${label}" /><output data-o="${key}">${fmtK(key, val)}</output></label>`;
     const fmtK = (k, v) => (k === 'exposure' ? `${v > 0 ? '+' : ''}${(+v).toFixed(2)}` : k === 'sharpRadius' ? (+v).toFixed(1) : v);
     const beforeWhat = opt.initial ? 'the settings it was developed with' : 'the default settings';
-    body.innerHTML = `<div class="raw-view"><div class="raw-canvas-wrap" id="rawWrap"><canvas id="rawCanvas" aria-label="Develop preview"></canvas><span class="raw-ba hidden" id="rawBaTag">Before</span><span class="raw-ba raw-ba-r hidden" id="rawAfterTag">After</span>
+    body.innerHTML = `<div class="raw-view"><div class="raw-canvas-wrap" id="rawWrap"><canvas id="rawCanvas" aria-label="Develop preview"></canvas><canvas id="rawOverlay" class="raw-overlay" aria-hidden="true"></canvas><span class="raw-ba hidden" id="rawBaTag">Before</span><span class="raw-ba raw-ba-r hidden" id="rawAfterTag">After</span>
           <div class="raw-split hidden" id="rawSplit" role="slider" tabindex="0" aria-label="Before / after divider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" title="Drag to compare before (left) and after (right)"><span class="raw-split-grip"></span></div></div>
         <div class="raw-viewbar"><span class="raw-meta muted small">${escapeHtml(info.describe || info.format)}</span><span class="spacer"></span><button type="button" id="rawSplitBtn" aria-pressed="false" title="Split view: before on the left, after on the right; drag the divider (Y key)">Split</button><button type="button" id="rawBefore" aria-pressed="false" title="Show the image with ${beforeWhat} (\\ key)">Before / after</button></div></div>
       <div class="raw-controls">
@@ -4711,6 +4870,11 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
         ${slider('nrColor', 'Color', 0, 100, 1, s.nrColor)}
         <div class="raw-sec">Lens</div>
         <label class="field two"><span>Corrections</span><span><input type="checkbox" id="rawLens" ${info.lens ? 'checked' : 'disabled'} /> <span class="muted small">${info.lens ? `From the file: ${[info.lens.distortion && 'distortion', info.lens.vignette && 'vignetting'].filter(Boolean).join(' and ')}` : 'No lens correction data in this file'}</span></span></label>
+        <label class="field two"><span>Lens</span><span class="muted small" id="rawLensName">${escapeHtml(info.lensModel || (info.camera ? `${info.camera} (lens not recorded)` : 'Not recorded in the file'))}${info.focal ? ` · ${+info.focal.toFixed(1)} mm` : ''}</span></label>
+        ${slider('distortion', 'Distortion', -100, 100, 1, s.distortion, 'Positive values straighten lines that bow outward (barrel distortion, common at wide angles); negative values straighten lines that bow inward (pincushion, common at long zoom settings)')}
+        <label class="field two"><span>Grid</span><span><input type="checkbox" id="rawGrid" /> <span class="muted small">Show a grid to line up straight edges (G)</span></span></label>
+        <div class="raw-preset-save"><button type="button" id="rawLensSave" ${lensKey ? '' : 'disabled'} title="${lensKey ? `Remember this distortion for ${escapeHtml(lensKey)} at ${info.focal ? `${+info.focal.toFixed(1)} mm` : 'this focal length'}: it is applied to new photos from this lens (between saved focal lengths it is interpolated)` : 'The file does not say which lens was used'}">Save for this lens</button><button type="button" id="rawLensForget" title="Forget the saved distortion for this lens" ${lensProf() != null ? '' : 'disabled'}>Forget</button></div>
+        <p class="muted small" id="rawLensProf"></p>
         ${slider('vignette', 'Vignette fix', -100, 100, 1, s.vignette)}
         <label class="field two"><span>Color fringes</span><span><input type="checkbox" id="rawCaAuto" /> <span class="muted small">Remove chromatic aberration (automatic)</span> <span class="muted small" id="rawCaEst"></span></span></label>
         ${slider('caRed', 'Red / cyan', -100, 100, 1, s.caRed, 'Scales the red channel against green: removes red or cyan edges toward the corners')}
@@ -4722,6 +4886,17 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
         ${slider('fringeGreen', 'Green amount', 0, 100, 1, s.fringeGreen, 'Removes green fringes along high-contrast edges (often behind the focus plane)')}
         ${slider('fringeGreenLo', 'Green hue from', 40, 190, 1, s.fringeGreenLo, 'Hue range treated as green fringe, in degrees')}
         ${slider('fringeGreenHi', 'Green hue to', 40, 190, 1, s.fringeGreenHi, 'Hue range treated as green fringe, in degrees')}
+        <div class="raw-preset-save"><button type="button" id="rawFringePick" aria-pressed="false" title="Then click a coloured fringe in the preview: its hue range and amount are set for you (I)">Pick fringe colour</button><label class="raw-check"><input type="checkbox" id="rawFringeMask" /> Show affected areas</label></div>
+        <div class="raw-sec">Local adjustments</div>
+        <div class="raw-preset-save"><button type="button" id="rawAddLinear" title="A graduated filter: full effect on one side of a line, fading out to the other (for skies and foregrounds)">Add graduated</button><button type="button" id="rawAddRadial" title="A radial filter: an ellipse with a soft edge, affecting its inside or outside">Add radial</button></div>
+        <label class="field two"><span>Edit</span><select id="rawLocalSel" aria-label="Local adjustment to edit"></select></label>
+        <div id="rawLocalBox" class="hidden">
+          ${['exposure:Exposure (EV):-4:4:0.05', 'contrast:Contrast:-100:100:1', 'temp:Temperature:-100:100:1', 'feather:Feather:0:100:1'].map((t) => { const [k, label, lo, hi, st] = t.split(':'); return `<label class="field" data-lrow="${k}"><span>${label}</span><input type="range" data-l="${k}" min="${lo}" max="${hi}" step="${st}" value="0" aria-label="Local ${label}" /><output data-lo="${k}">0</output></label>`; }).join('')}
+          <label class="field two" data-lrow="invert"><span>Affects</span><select id="rawLocalInv" aria-label="Radial filter affects"><option value="0">Inside the ellipse</option><option value="1">Outside the ellipse</option></select></label>
+          <div class="raw-preset-save"><button type="button" id="rawLocalDel">Delete</button><span class="muted small">Drag the handles in the preview.</span></div>
+        </div>
+        ${opt.onApply ? `<p class="muted small" id="rawSrcNote">RAW file: ${opt.linked ? 'linked to the file on disk' : 'embedded in the project'}.</p>` : `<label class="field two" title="Embed keeps a copy of the RAW file inside the project (the project is self-contained but larger). Link keeps only a reference to the file on this computer (small projects; the file must stay where it is).">
+          <span>RAW file</span><select id="rawStore" aria-label="RAW file in the project"><option value="embed">Embed in the project</option><option value="link" ${opt.handle ? '' : 'disabled'}>Link to the file on disk</option></select></label>${opt.handle ? '' : '<p class="muted small" id="rawStoreNote">Linking needs Chrome or Edge and a file opened with File ▸ Open, from recent files or by drag and drop.</p>'}`}
         <p class="muted small" id="rawOut">Opens as ${info.width} × ${info.height} px, 16 bits/channel.${info.knownCamera ? '' : ' Camera colour data unknown: colours are approximate.'}${info.incomplete ? ' Some sensor data was missing and is shown black.' : ''}</p>
         <div class="raw-buttons"><button type="button" id="rawReset">Reset</button>${info.jpeg && !opt.onApply ? `<button type="button" id="rawJpeg" title="Open the camera's own ${info.jpeg.width}×${info.jpeg.height} JPEG rendering instead (8-bit)">Use camera JPEG</button>` : ''}<span class="muted small" id="rawMs"></span></div>
       </div>`;
@@ -4755,7 +4930,7 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
           const sx = Math.round(splitF * lastImg.width); if (sx > 0) cv.getContext('2d').putImageData(beforeImg, 0, 0, 0, 0, sx, lastImg.height);
         }
       }
-      placeDivider();
+      placeDivider(); drawOverlay();
     };
     const render = async () => {
       if (view !== 'after' && !beforeImg) { if (!before) before = sess.preview({ ...beforeSettings }); const b = await before; if (done) return; beforeImg = imgOf(b); }
@@ -4784,7 +4959,10 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
     };
     const setBefore = (on) => setView(on ? 'before' : 'after');
     const setSplit = (f) => { splitF = Math.min(1, Math.max(0, f)); ui.split = splitF; compose(); };
-    const ui = rawUI = { settings: s, info, previews: 0, idle: true, body, refresh: () => { ui.idle = false; refresh(); }, beforeShown: false, view: 'after', split: 0.5, setBefore, setView, setSplit, applyPreset: (v) => applyChoice(v), redevelop: !!opt.onApply };
+    const ui = rawUI = { settings: s, info, previews: 0, idle: true, body, refresh: () => { ui.idle = false; refresh(); }, beforeShown: false, view: 'after', split: 0.5, setBefore, setView, setSplit, applyPreset: (v) => applyChoice(v), redevelop: !!opt.onApply,
+      addLocal: (t) => addLocal(t), setLocal: (i, p) => setLocal(i, p), selectLocal: (i) => { localSel = i; syncLocal(); }, deleteLocal: (i) => deleteLocal(i),
+      pickAt: (u, v) => pickAt(u, v), setPicking: (on) => setPicking(on), get localSel() { return localSel; }, get picking() { return picking; }, get showGrid() { return showGrid; },
+      lensKey, get lensFromProfile() { return lensFromProfile; }, overlay: () => ov };
     const changed = () => { ui.idle = false; refresh(); };
     // tone curve editor (same editor as the Curves adjustment)
     let curveVals = null;
@@ -4796,16 +4974,152 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       $q('#rawCurveState').textContent = s.curve ? 'adjusted' : 'straight';
     };
     mountCurve();
+    // ---- overlay: grid, local adjustment handles, eyedropper -----------------------------------------------
+    const ov = $q('#rawOverlay');
+    const locals = () => (s.local ||= []);
+    const activeOverlay = () => picking || localSel >= 0;
+    const drawOverlay = () => {
+      const r = contentRect(), dpr = window.devicePixelRatio || 1;
+      Object.assign(ov.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+      const W = Math.max(1, Math.round(r.w * dpr)), H = Math.max(1, Math.round(r.h * dpr));
+      if (ov.width !== W || ov.height !== H) { ov.width = W; ov.height = H; }
+      ov.classList.toggle('active', activeOverlay()); ov.classList.toggle('picking', picking);
+      const g = ov.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H); g.scale(dpr, dpr);
+      const w = r.w, h = r.h, P = (u, v) => [u * w, v * h];
+      if (showGrid) {
+        const step = Math.max(12, Math.min(w, h) / 8); g.lineWidth = 1; g.strokeStyle = 'rgba(255,255,255,0.45)'; g.beginPath();
+        for (let x = (w % step) / 2; x <= w; x += step) { g.moveTo(Math.round(x) + 0.5, 0); g.lineTo(Math.round(x) + 0.5, h); }
+        for (let y = (h % step) / 2; y <= h; y += step) { g.moveTo(0, Math.round(y) + 0.5); g.lineTo(w, Math.round(y) + 0.5); }
+        g.stroke(); g.strokeStyle = 'rgba(0,0,0,0.25)'; g.translate(1, 1); g.stroke(); g.translate(-1, -1);
+      }
+      if (view !== 'after') return; // handles only over the current settings
+      (s.local || []).forEach((a, i) => {
+        const on = i === localSel;
+        g.lineWidth = on ? 1.5 : 1; g.strokeStyle = on ? '#fff' : 'rgba(255,255,255,0.6)'; g.shadowColor = '#000'; g.shadowBlur = 2;
+        if (a.type === 'linear') {
+          const [ax, ay] = P(a.x0, a.y0), [bx, by] = P(a.x1, a.y1), dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1, nx = -dy / L * (w + h), ny = dx / L * (w + h);
+          if (on) {
+            g.beginPath(); for (const [px, py, dash] of [[ax, ay, []], [bx, by, []], [(ax + bx) / 2, (ay + by) / 2, [4, 4]]]) { g.setLineDash(dash); g.beginPath(); g.moveTo(px - nx, py - ny); g.lineTo(px + nx, py + ny); g.stroke(); }
+            g.setLineDash([]); g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();
+            for (const [px, py] of [[ax, ay], [bx, by]]) { g.beginPath(); g.arc(px, py, 5, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill(); }
+            g.beginPath(); g.arc((ax + bx) / 2, (ay + by) / 2, 6, 0, Math.PI * 2); g.stroke();
+          } else { g.beginPath(); g.arc((ax + bx) / 2, (ay + by) / 2, 5, 0, Math.PI * 2); g.stroke(); }
+        } else {
+          const [cx, cy] = P(a.cx, a.cy), rx = a.rx * w, ry = a.ry * h;
+          if (on) {
+            g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); g.stroke();
+            if (a.feather > 0.02) { g.setLineDash([4, 4]); g.beginPath(); g.ellipse(cx, cy, rx * (1 - a.feather), ry * (1 - a.feather), 0, 0, Math.PI * 2); g.stroke(); g.setLineDash([]); }
+            for (const [px, py] of [[cx + rx, cy], [cx, cy + ry]]) { g.beginPath(); g.arc(px, py, 5, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill(); }
+            g.beginPath(); g.arc(cx, cy, 6, 0, Math.PI * 2); g.stroke();
+          } else { g.beginPath(); g.arc(cx, cy, 5, 0, Math.PI * 2); g.stroke(); }
+        }
+        g.shadowBlur = 0;
+      });
+    };
+    const LDEF = { linear: { exposure: -0.7, contrast: 0, temp: 0, x0: 0.5, y0: 0, x1: 0.5, y1: 0.45 }, radial: { exposure: 0.5, contrast: 0, temp: 0, cx: 0.5, cy: 0.5, rx: 0.3, ry: 0.3, feather: 0.5, invert: false } };
+    const localName = (a, i) => `${i + 1}. ${a.type === 'linear' ? 'Graduated' : 'Radial'} (${a.exposure > 0 ? '+' : ''}${(+a.exposure).toFixed(2)} EV)`;
+    const syncLocal = () => {
+      const list = s.local || [], sel = $q('#rawLocalSel');
+      if (localSel >= list.length) localSel = list.length - 1;
+      sel.innerHTML = `<option value="-1">${list.length ? 'None (hide handles)' : 'None yet'}</option>${list.map((a, i) => `<option value="${i}">${localName(a, i)}</option>`).join('')}`;
+      sel.value = String(localSel);
+      const a = list[localSel]; $q('#rawLocalBox').classList.toggle('hidden', !a);
+      $q('#rawAddLinear').disabled = $q('#rawAddRadial').disabled = list.length >= MAX_LOCALS;
+      if (a) {
+        for (const k of ['exposure', 'contrast', 'temp', 'feather']) {
+          const v = k === 'feather' ? Math.round((a.feather ?? 0) * 100) : a[k], el = $q(`[data-l=${k}]`); if (el) { el.value = v; $q(`[data-lo=${k}]`).textContent = k === 'exposure' ? `${v > 0 ? '+' : ''}${(+v).toFixed(2)}` : v; }
+        }
+        for (const row of body.querySelectorAll('[data-lrow=feather], [data-lrow=invert]')) row.classList.toggle('hidden', a.type !== 'radial');
+        $q('#rawLocalInv').value = a.invert ? '1' : '0';
+      }
+      drawOverlay();
+    };
+    const addLocal = (type) => {
+      const list = locals(); if (list.length >= MAX_LOCALS) return -1;
+      list.push({ type, ...LDEF[type] }); localSel = list.length - 1; picking = false; setPicking(false);
+      if (view === 'before') setView('after');
+      syncLocal(); changed(); return localSel;
+    };
+    const setLocal = (i, patch) => { const a = s.local?.[i]; if (!a) return; Object.assign(a, patch); syncLocal(); changed(); };
+    const deleteLocal = (i = localSel) => { if (!s.local?.[i]) return; s.local.splice(i, 1); if (!s.local.length) s.local = null; localSel = -1; syncLocal(); changed(); };
+    body.addEventListener('input', (e) => {
+      const k = e.target.dataset?.l; if (!k || !s.local?.[localSel]) return;
+      const v = +e.target.value; s.local[localSel][k] = k === 'feather' ? v / 100 : v;
+      $q(`[data-lo=${k}]`).textContent = k === 'exposure' ? `${v > 0 ? '+' : ''}${v.toFixed(2)}` : v;
+      $q('#rawLocalSel').options[localSel + 1].textContent = localName(s.local[localSel], localSel);
+      drawOverlay(); changed();
+    });
+    $q('#rawAddLinear').onclick = () => addLocal('linear');
+    $q('#rawAddRadial').onclick = () => addLocal('radial');
+    $q('#rawLocalDel').onclick = () => deleteLocal();
+    // eyedropper
+    const setPicking = (on) => { picking = on; const b = $q('#rawFringePick'); b.setAttribute('aria-pressed', String(on)); b.classList.toggle('on', on); drawOverlay(); };
+    const pickAt = async (u, v) => {
+      setPicking(false);
+      let r; try { r = await sess.pick({ ...s, fringeMask: false }, u, v); } catch (err) { toast(`The colour could not be read (${err.message}).`); return null; }
+      if (done) return r;
+      if (!r.kind) { toast(r.why === 'hue' ? `That colour (hue ${r.hue}°) is not a purple or green fringe: pick the coloured edge itself.` : 'That spot is too neutral to be a fringe: click right on the coloured edge (zoom the window larger if needed).', 5000); ui.lastPick = r; return r; }
+      const K = r.kind === 'purple' ? 'Purple' : 'Green';
+      s[`fringe${K}Lo`] = r.lo; s[`fringe${K}Hi`] = r.hi; if (!s[`fringe${K}`]) s[`fringe${K}`] = 50;
+      sync(); changed(); status(`Picked a ${r.kind} fringe at ${r.hue}°: ${r.kind} hue range set to ${r.lo}–${r.hi}°.`); ui.lastPick = r;
+      return r;
+    };
+    $q('#rawFringePick').onclick = () => { if (view === 'before') setView('after'); setPicking(!picking); if (picking) localSel = -1, syncLocal(); };
+    // pointer: eyedropper click, or drag the selected local adjustment's handles
+    let ldrag = null;
+    const uvOf = (e) => { const b = ov.getBoundingClientRect(); return [(e.clientX - b.left) / (b.width || 1), (e.clientY - b.top) / (b.height || 1)]; };
+    const handleAt = (a, u, v) => {
+      const r = ov.getBoundingClientRect(), near = (pu, pv, rad = 9) => Math.hypot((pu - u) * r.width, (pv - v) * r.height) <= rad;
+      if (a.type === 'linear') { if (near(a.x0, a.y0)) return 'a'; if (near(a.x1, a.y1)) return 'b'; if (near((a.x0 + a.x1) / 2, (a.y0 + a.y1) / 2, 11)) return 'move'; return null; }
+      if (near(a.cx + a.rx, a.cy)) return 'rx'; if (near(a.cx, a.cy + a.ry)) return 'ry'; if (near(a.cx, a.cy, 11)) return 'move';
+      const d = Math.hypot((u - a.cx) / a.rx, (v - a.cy) / a.ry); return d < 1 ? 'move' : null;
+    };
+    ov.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return; e.stopPropagation(); e.preventDefault();
+      const [u, v] = uvOf(e);
+      if (picking) { pickAt(u, v); return; }
+      const list = s.local || []; let a = list[localSel], h = a && handleAt(a, u, v);
+      if (!h) { const j = list.findIndex((b, i) => i !== localSel && handleAt(b, u, v) === 'move'); if (j >= 0) { localSel = j; a = list[j]; h = 'move'; syncLocal(); } }
+      if (!h) return;
+      ldrag = { h, u, v, start: { ...a } }; ov.setPointerCapture(e.pointerId);
+    });
+    ov.addEventListener('pointermove', (e) => {
+      if (!ldrag) { if (localSel >= 0 && s.local?.[localSel]) { const [u, v] = uvOf(e), h = handleAt(s.local[localSel], u, v); ov.style.cursor = h === 'move' ? 'move' : h ? 'grab' : 'default'; } return; }
+      const [u, v] = uvOf(e), a = s.local[localSel], o = ldrag.start, du = u - ldrag.u, dv = v - ldrag.v;
+      if (a.type === 'linear') {
+        if (ldrag.h === 'a') Object.assign(a, { x0: o.x0 + du, y0: o.y0 + dv });
+        else if (ldrag.h === 'b') Object.assign(a, { x1: o.x1 + du, y1: o.y1 + dv });
+        else Object.assign(a, { x0: o.x0 + du, y0: o.y0 + dv, x1: o.x1 + du, y1: o.y1 + dv });
+      } else if (ldrag.h === 'rx') a.rx = Math.max(0.01, Math.abs(u - a.cx));
+      else if (ldrag.h === 'ry') a.ry = Math.max(0.01, Math.abs(v - a.cy));
+      else Object.assign(a, { cx: o.cx + du, cy: o.cy + dv });
+      drawOverlay(); changed();
+    });
+    const endL = () => { ldrag = null; };
+    ov.addEventListener('pointerup', endL); ov.addEventListener('pointercancel', endL);
+    $q('#rawLensSave').onclick = () => {
+      if (!lensKey) return;
+      saveLensProfile(lensKey, info.focal, s.distortion); lensFromProfile = true; $q('#rawLensForget').disabled = false; lensNote();
+      status(`Saved distortion ${s.distortion > 0 ? '+' : ''}${s.distortion} for ${lensKey}${info.focal ? ` at ${+info.focal.toFixed(1)} mm` : ''}.`);
+    };
+    $q('#rawLensForget').onclick = () => { forgetLensProfile(lensKey); lensFromProfile = false; $q('#rawLensForget').disabled = true; lensNote(); status(`Forgot the saved distortion for ${lensKey}.`); };
+    const lensNote = () => {
+      const p = lensKey ? lensProfiles()[lensKey] : null;
+      $q('#rawLensProf').textContent = p?.length ? `Your profile for this lens: ${p.map((q) => `${q.focal ? `${q.focal} mm` : 'any'} → ${q.k > 0 ? '+' : ''}${q.k}`).join(', ')}${lensFromProfile ? ' (applied)' : ''}.` : '';
+    };
+    lensNote(); syncLocal();
     const sync = () => { // controls ← s
       body.querySelectorAll('[data-k]').forEach((el) => { el.value = s[el.dataset.k]; const o = $q(`[data-o=${el.dataset.k}]`); if (o) o.textContent = fmtK(el.dataset.k, s[el.dataset.k]); });
       $q('#rawWb').value = s.wb; $q('#rawTemp').value = s.temp; $q('#rawTempR').value = tempToPos(s.temp);
       if (info.lens) $q('#rawLens').checked = s.lens !== false;
-      $q('#rawCaAuto').checked = !!s.caAuto; mountCurve();
+      $q('#rawCaAuto').checked = !!s.caAuto; mountCurve(); syncLocal();
     };
     const applyChoice = (v) => {
       if (!v) return;
       const p = rawSettingsFor(v), keepWB = p.wb !== 'custom';
       Object.assign(s, p); if (keepWB) { s.temp = info.asShot.temp; s.tint = info.asShot.tint; }
+      if (s.local) s.local = s.local.map((a) => ({ ...a })); localSel = -1;
+      if (!s.distortion) applyLensProfile(); // a preset without distortion keeps this lens's own correction
       sync(); changed();
       $q('#rawPresetDel').disabled = !v.startsWith('preset:');
       if (v.startsWith('preset:')) $q('#rawPresetName').value = v.slice(7);
@@ -4824,13 +5138,23 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       else if (e.target.id === 'rawLens') { s.lens = e.target.checked; changed(); }
       else if (e.target.id === 'rawCaAuto') { s.caAuto = e.target.checked; changed(); }
       else if (e.target.id === 'rawPreset') applyChoice(e.target.value);
+      else if (e.target.id === 'rawGrid') { showGrid = e.target.checked; drawOverlay(); }
+      else if (e.target.id === 'rawFringeMask') { s.fringeMask = e.target.checked; if (view !== 'after') setView('after'); changed(); }
+      else if (e.target.id === 'rawLocalSel') { localSel = +e.target.value; if (localSel >= 0) setPicking(false); syncLocal(); }
+      else if (e.target.id === 'rawLocalInv') { if (s.local?.[localSel]) { s.local[localSel].invert = e.target.value === '1'; changed(); } }
+      else if (e.target.id === 'rawStore') { try { localStorage.setItem(RAW_LINK_KEY, e.target.value === 'link' ? '1' : '0'); } catch { /* private mode */ } }
     });
+    if (!opt.onApply && opt.handle) { try { if (localStorage.getItem(RAW_LINK_KEY) === '1') $q('#rawStore').value = 'link'; } catch { /* private mode */ } }
     $q('#rawBefore').onclick = () => setView(view === 'before' ? 'after' : 'before');
     $q('#rawSplitBtn').onclick = () => setView(view === 'split' ? 'after' : 'split');
     body.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' && /text|number/.test(e.target.type)) return;
       if (e.key === '\\') { e.preventDefault(); setView(view === 'before' ? 'after' : 'before'); }
       else if (e.key === 'y' || e.key === 'Y') { e.preventDefault(); setView(view === 'split' ? 'after' : 'split'); }
+      else if (e.key === 'g' || e.key === 'G') { e.preventDefault(); showGrid = !showGrid; $q('#rawGrid').checked = showGrid; drawOverlay(); }
+      else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); $q('#rawFringePick').click(); }
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && localSel >= 0 && e.target.tagName !== 'SELECT') { e.preventDefault(); deleteLocal(); }
+      else if (e.key === 'Escape' && (picking || localSel >= 0)) { e.preventDefault(); e.stopPropagation(); setPicking(false); localSel = -1; syncLocal(); }
       else if (e.target === divider && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setSplit(splitF + (e.key === 'ArrowLeft' ? -0.02 : 0.02)); }
     });
     // drag the divider (or click anywhere on the image) in split view
@@ -4840,7 +5164,7 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
     wrap.addEventListener('pointermove', (e) => { if (dragging) setSplit(toFrac(e)); });
     const endDrag = () => { dragging = false; };
     wrap.addEventListener('pointerup', endDrag); wrap.addEventListener('pointercancel', endDrag);
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => placeDivider()) : null; ro?.observe(cv);
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { placeDivider(); drawOverlay(); }) : null; ro?.observe(cv);
     $q('#rawPresetExport').onclick = () => exportRawPresets();
     $q('#rawPresetImport').onclick = () => $q('#rawPresetFile').click();
     $q('#rawPresetFile').addEventListener('change', async (e) => {
@@ -4867,6 +5191,7 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
     };
     $q('#rawReset').onclick = () => {
       Object.assign(s, RAW_DEFAULTS, { temp: info.asShot.temp, tint: info.asShot.tint }); if (!info.lens) s.lens = true;
+      s.fringeMask = $q('#rawFringeMask').checked; localSel = -1; applyLensProfile(); lensNote();
       $q('#rawPreset').value = ''; sync(); changed();
     };
     const finish = () => { ro?.disconnect(); if (!done) { done = true; rawUI = null; resolve(); } };
@@ -4889,7 +5214,8 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
         if (view !== 'after' && last) { first.getContext('2d').putImageData(new ImageData(last.data, last.width, last.height), 0, 0); }
         done = true; rawUI = null; closeModal(); status(`Developing ${file.name}…`);
         (async () => {
-          try { await developToDocument(file, sess, cleanRawSettings(s), timing, t0, { overlayFrom: first, remember: true }); }
+          const link = opt.handle && $q('#rawStore')?.value === 'link' ? opt.handle : null;
+          try { await developToDocument(file, sess, cleanRawSettings(s), timing, t0, { overlayFrom: first, remember: true, link }); }
           catch (err) { reportError(`${file.name} could not be developed`, err); }
           finally { resolve(); }
         })();
@@ -4911,7 +5237,7 @@ for (const id of ['#fileInput', '#cameraInput']) $(id).addEventListener('change'
 function serializeProject(rawData = null) {
   const d = doc();
   return {
-    format: PROJECT_FORMAT, version: 7, app: APP, width: d.width, height: d.height, name: d.name, depth: d.depth === 16 ? 16 : 8,
+    format: PROJECT_FORMAT, version: 8, app: APP, width: d.width, height: d.height, name: d.name, depth: d.depth === 16 ? 16 : 8,
     activeIndex: activeIndex(),
     layers: d.layers.map((l) => ({
       name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, data: l.canvas.toDataURL('image/png'),
@@ -4925,8 +5251,10 @@ function serializeProject(rawData = null) {
       ...(d.depth === 16 && !l.kind ? { deep: deepDataURL(deepOf(l)) } : {}), // v5: 16-bit pixels; `data` stays as the 8-bit fallback
       ...(l.kind === 'smart' ? { source: l.source.toDataURL('image/png'), filters: l.filters, fmask: l.fmask ? { enabled: l.fmask.enabled, data: l.fmask.canvas.toDataURL('image/png') } : null } : {}),
       // v7: RAW source (original file as a data URL) + develop settings and crop window, for Layer ▸ Re-develop RAW
+      // v8: m = layer pixel → developed pixel map (crops, resizes, rotations, flips, transforms); link = linked file
       ...(l.raw ? { raw: { name: l.raw.name, type: l.raw.type, size: l.raw.size, format: l.raw.format, settings: l.raw.settings, width: l.raw.width, height: l.raw.height,
-        cx: l.raw.cx, cy: l.raw.cy, cw: l.raw.cw, ch: l.raw.ch, edited: l.raw.rev !== l.rev, data: rawData?.get(l.raw.file) || null } } : {}),
+        cx: l.raw.cx, cy: l.raw.cy, cw: l.raw.cw, ch: l.raw.ch, m: rawMapOf(l.raw), edited: l.raw.rev !== l.rev, ...(l.raw.untracked ? { untracked: l.raw.untracked } : {}),
+        ...(l.raw.link ? { link: l.raw.link, data: null } : { data: rawData?.get(l.raw.file) || null }) } } : {}),
     })),
   };
 }
@@ -4944,7 +5272,7 @@ const blobDataURL = (b) => new Promise((res, rej) => { const r = new FileReader(
 /** serializeProject with the RAW source files embedded (read asynchronously first). */
 async function projectData() {
   const m = new Map();
-  for (const l of doc().layers) if (l.raw?.file && !m.has(l.raw.file)) m.set(l.raw.file, await blobDataURL(l.raw.file));
+  for (const l of doc().layers) if (l.raw?.file && !l.raw.link && !m.has(l.raw.file)) m.set(l.raw.file, await blobDataURL(l.raw.file));
   return serializeProject(m);
 }
 const projectBlob = async () => new Blob([JSON.stringify(await projectData())], { type: 'application/json' });
@@ -4992,6 +5320,7 @@ async function openHandle(h, { remember = true } = {}) {
   let file;
   try { if (!(await ensurePermission(h, 'read'))) { status(`Permission to read ${h.name} was denied.`); return false; } file = await h.getFile(); }
   catch (err) { status(`Could not open ${h.name}: ${err.message}`); return false; }
+  fileHandleOf.set(file, h); // RAW files can then be linked instead of embedded
   const before = doc();
   await openFile(file, 'open');
   const d = doc(); if (!d || d === before) return false;
@@ -5066,7 +5395,8 @@ function encodeHistory(d, dirty, hist = history) {
           parent: l.parent ?? null, clip: !!l.clip, styles: l.styles || null, collapsed: !!l.collapsed, look: l.look || null,
           ...(deepOk && sn === curSnap && l.deep ? { deep: dref(l.deep), deepRev: l.deepRev, deepOX: l.deepOX || 0, deepOY: l.deepOY || 0 } : {}),
           // RAW source file: stored once (same Blob in every step), up to AUTOSAVE_RAW_BYTES
-          ...(l.raw ? { raw: { ...l.raw, file: l.raw.file.size <= AUTOSAVE_RAW_BYTES ? rref(l.raw.file) : null } } : {}),
+          // (linked RAW files: only the link; the file handle itself is kept in IndexedDB under the link id)
+          ...(l.raw ? { raw: { ...l.raw, handle: null, file: !l.raw.link && l.raw.file && l.raw.file.size <= AUTOSAVE_RAW_BYTES ? rref(l.raw.file) : null } } : {}),
           mask: l.mask ? { enabled: l.mask.enabled, rev: l.mask.rev, canvas: ref(l.mask.canvas) } : null,
           ...(l.kind === 'smart' ? { source: ref(l.source), filters: l.filters, editFMask: l.editFMask,
             fmask: l.fmask ? { enabled: l.fmask.enabled, rev: l.fmask.rev, canvas: ref(l.fmask.canvas) } : null } : {}),
@@ -5136,7 +5466,9 @@ async function restoreAutosave(r) {
         maxId = Math.max(maxId, L.id); maxRev = Math.max(maxRev, L.rev, L.mask?.rev || 0, L.fmask?.rev || 0);
         const l = { ...L, canvas: get(L.canvas), mask: L.mask ? { ...L.mask, canvas: get(L.mask.canvas) } : null, styles: normalizeStyles(L.styles) };
         if (L.deep) l.deep = get(L.deep); else delete l.deep;
-        if (L.raw?.file && canv.has(L.raw.file)) l.raw = { ...L.raw, file: canv.get(L.raw.file) }; else l.raw = null;
+        if (L.raw?.file && canv.has(L.raw.file)) l.raw = { ...L.raw, file: canv.get(L.raw.file) };
+        else if (L.raw?.link) l.raw = { ...L.raw, file: null, handle: null };
+        else l.raw = null;
         if (L.kind === 'smart') Object.assign(l, { source: get(L.source), fmask: L.fmask ? { ...L.fmask, canvas: get(L.fmask.canvas) } : null });
         return l;
       }),
@@ -5254,7 +5586,7 @@ async function loadProject(data, filename) {
       const dd = deepFromDataURL(L.deep);
       if (dd.width === l.canvas.width && dd.height === l.canvas.height) setDeep(l, dd);
     }
-    if (L.raw?.data && !l.kind) l.rawPending = L.raw; // attached below, once the layer revisions are final
+    if ((L.raw?.data || L.raw?.link) && !l.kind) l.rawPending = L.raw; // attached below, once the layer revisions are final
     layers.push(l);
   }
   if (!layers.length) throw new Error('Project has no layers');
@@ -5266,10 +5598,17 @@ async function loadProject(data, filename) {
   for (const l of layers) if (l.rawPending) {
     const R = l.rawPending; delete l.rawPending;
     try {
-      const bin = atob(R.data.slice(R.data.indexOf(',') + 1)), b = new Uint8Array(bin.length);
-      for (let i = 0; i < b.length; i++) b[i] = bin.charCodeAt(i);
-      const file = new File([b], R.name || 'camera.raw', { type: R.type || '' });
-      l.raw = { ...rawSource(file, R.format, R.settings, R.width, R.height, R.edited ? -1 : l.rev), cx: +R.cx || 0, cy: +R.cy || 0, cw: +R.cw || l.canvas.width, ch: +R.ch || l.canvas.height };
+      let file = null;
+      if (R.data) {
+        const bin = atob(R.data.slice(R.data.indexOf(',') + 1)), b = new Uint8Array(bin.length);
+        for (let i = 0; i < b.length; i++) b[i] = bin.charCodeAt(i);
+        file = new File([b], R.name || 'camera.raw', { type: R.type || '' });
+      }
+      const m = R.m && ['a', 'b', 'c', 'd', 'e', 'f'].every((k) => Number.isFinite(+R.m[k])) ? Object.fromEntries(['a', 'b', 'c', 'd', 'e', 'f'].map((k) => [k, +R.m[k]])) : null;
+      l.raw = { ...rawSource(file, R.format, R.settings, R.width, R.height, R.edited ? -1 : l.rev, { name: R.name, size: R.size, type: R.type }),
+        m: m || { a: 1, b: 0, c: 0, d: 1, e: +R.cx || 0, f: +R.cy || 0 }, cx: m ? R.cx ?? null : +R.cx || 0, cy: m ? R.cy ?? null : +R.cy || 0, cw: +R.cw || l.canvas.width, ch: +R.ch || l.canvas.height,
+        ...(R.untracked ? { untracked: String(R.untracked) } : {}),
+        ...(R.link && typeof R.link.id === 'string' ? { link: { id: R.link.id, name: String(R.link.name || R.name || ''), size: +R.link.size || 0, lastModified: +R.link.lastModified || 0 }, handle: null } : {}) };
     } catch (err) { console.warn('RAW source in the project could not be read', err); }
   }
   afterDocChange('Open project');
@@ -5284,6 +5623,9 @@ window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', async (e) => {
   e.preventDefault(); dragDepth = 0; $('#dropzone').classList.add('hidden');
   const files = [...(e.dataTransfer?.files || [])];
+  // file handles (Chrome / Edge): must be asked for during the drop event; RAW files can then be linked
+  const hp = [...(e.dataTransfer?.items || [])].filter((it) => it.kind === 'file').map((it) => (typeof it.getAsFileSystemHandle === 'function' ? it.getAsFileSystemHandle().catch(() => null) : null));
+  if (hp.length === files.length) { const hs = await Promise.all(hp); hs.forEach((h, i) => { if (h?.kind === 'file' && h.name === files[i].name) fileHandleOf.set(files[i], h); }); }
   for (let i = 0; i < files.length; i++) {
     const isProject = /\.(json|tintwork)$/i.test(files[i].name);
     await openFile(files[i], doc() && !isProject && !(i === 0 && e.shiftKey) ? 'place' : 'open');
@@ -5654,12 +5996,13 @@ function updateLayersPanel() {
     } else if (l.kind === 'smart') { // live-filter badge
       tx.fillStyle = '#7a5cffdd'; tx.fillRect(26, 16, 14, 14); tx.fillStyle = '#fff'; tx.font = '700 12px sans-serif'; tx.textAlign = 'center'; tx.textBaseline = 'middle'; tx.fillText('≈', 33, 23);
     } else if (l.raw) { // re-developable RAW badge
-      tx.fillStyle = '#1d7a4ddd'; tx.fillRect(22, 18, 18, 12); tx.fillStyle = '#fff'; tx.font = '700 8px sans-serif'; tx.textAlign = 'center'; tx.textBaseline = 'middle'; tx.fillText('RAW', 31, 24.5);
+      tx.fillStyle = l.raw.link ? '#1d5f8add' : '#1d7a4ddd'; tx.fillRect(22, 18, 18, 12); tx.fillStyle = '#fff'; tx.font = '700 8px sans-serif'; tx.textAlign = 'center'; tx.textBaseline = 'middle'; tx.fillText('RAW', 31, 24.5);
+      if (l.raw.link) { tx.strokeStyle = '#1d5f8a'; tx.lineWidth = 2; tx.beginPath(); tx.arc(31, 13, 3, 0, Math.PI * 2); tx.stroke(); } // linked file
     } else if (l.kind === 'text') {
       tx.fillStyle = '#000a'; tx.fillRect(26, 16, 14, 14); tx.fillStyle = '#fff'; tx.font = '700 12px sans-serif'; tx.textAlign = 'center'; tx.textBaseline = 'middle'; tx.fillText('T', 33, 23.5);
     }
     th.className = 'thumb' + (l.id === d.activeId && l.mask && !editingMask(l) ? ' target' : '');
-    th.title = isGroup(l) ? `Group (${childrenOf(d, l.id).length} item${childrenOf(d, l.id).length === 1 ? '' : 's'}) — double-click for layer style` : l.kind === 'adjust' ? `${ADJ_LAYER[l.adj.type]} — double-click to edit` : l.kind === 'text' ? 'Text — double-click to edit' : l.kind === 'smart' ? 'Live filter layer — double-click to manage filters' : l.raw ? `Developed from ${l.raw.name} — double-click to re-develop` : 'Layer pixels';
+    th.title = isGroup(l) ? `Group (${childrenOf(d, l.id).length} item${childrenOf(d, l.id).length === 1 ? '' : 's'}) — double-click for layer style` : l.kind === 'adjust' ? `${ADJ_LAYER[l.adj.type]} — double-click to edit` : l.kind === 'text' ? 'Text — double-click to edit' : l.kind === 'smart' ? 'Live filter layer — double-click to manage filters' : l.raw ? `Developed from ${l.raw.name}${l.raw.link ? ' (linked file)' : ''} — double-click to re-develop` : 'Layer pixels';
     th.addEventListener('click', (e) => { e.stopPropagation(); if (state.xf) applyTransform(); d.activeId = l.id; l.editFMask = false; if (l.kind !== 'adjust') setMaskTarget(l, false); else updateLayersPanel(); buildOptionsBar(); requestRender(); });
     if (l.kind || l.raw) th.addEventListener('dblclick', (e) => { e.stopPropagation(); d.activeId = l.id; editLayer(l); });
     let mth = null;
@@ -5958,11 +6301,12 @@ function straightenBy(deg, crop = true) {
     if (l.kind === 'smart') rasterize(l, 'straightening');
     const box = l.kind === 'adjust' ? null : l.canvas, mbox = l.mask ? l.mask.canvas : null, ref = box || mbox; if (!ref) continue;
     const M = mulOffset(R, l.x, l.y), { x0, y0, x1, y1 } = xfBounds({ w: ref.width, h: ref.height }, M), w = x1 - x0, h = y1 - y0;
-    const deep = box && useDeep(l) ? deepOf(l) : null;
+    const deep = box && useDeep(l) ? deepOf(l) : null, sameRaw = l.raw && l.raw.rev === l.rev;
     if (box) l.canvas = drawTransformed(box, M, x0, y0, w, h);
     if (mbox) { l.mask.canvas = drawTransformed(mbox, M, x0, y0, w, h); touchMask(l); }
     delete l.deep; delete l.deepRev; delete l.deepOX; delete l.deepOY;
     l.x = x0; l.y = y0; touch(l);
+    if (l.raw && box) trackRaw(l, affineCompose(invertM(M), { a: 1, b: 0, c: 0, d: 1, e: x0, f: y0 }), sameRaw);
     if (deep) { // 16-bit: the same rotation through the CPU mesh renderer, sampled from the 16-bit pixels
       const pts = [[0, 0], [ref.width, 0], [ref.width, ref.height], [0, ref.height]].map(([u, v]) => { const q = applyM(M, u, v); return [q.x, q.y]; });
       const m = mesh.perspectiveMesh(ref.width, ref.height, pts);
@@ -6552,7 +6896,10 @@ function openLayerToDocDialog() {
 }
 
 window.tintwork = {
-  setDevelopEnv, get lastDecoder() { return lastDecoder; }, redevelopRaw, exportRawPresets, importRawPresets, parseRawPresetFile, projectData, loadProject, cropTo,
+  setDevelopEnv, get lastDecoder() { return lastDecoder; }, redevelopRaw,
+  // v1.4
+  openHandle, embedLinkedRaw, setRelinkPicker: (fn) => { relinkPicker = fn; }, forgetLinkHandles: () => linkHandles.clear(), get lastRelink() { return { ...lastRelink }; },
+  lensProfiles, saveLensProfile, forgetLensProfile, lensDistortionFor, trackRaw, rawMapOf, transformLayer, transformDoc, resizeImage, exportRawPresets, importRawPresets, parseRawPresetFile, projectData, loadProject, cropTo,
   // v1.1
   openPSD, openRAW, documentFromPSD, documentToPSD, flatPSD, get rawUI() { return rawUI; }, get lastImport() { return lastImport; }, get lastExportNotes() { return lastExportNotes; },
   readPSDAsync, writePSDAsync, openRawSession, isRawName, isPsdName, RAW_DEFAULTS, PSD_TYPE, DEEP_LIMIT_MB,

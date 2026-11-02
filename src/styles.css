@@ -420,3 +420,9 @@ table.variants td { padding: 2px 3px; }
 .raw-split-grip { position: absolute; top: 50%; left: -10px; width: 18px; height: 28px; margin-top: -14px; border-radius: 9px; background: #fff; box-shadow: 0 1px 4px #0008; }
 .raw-split:focus-visible .raw-split-grip { outline: 2px solid var(--accent, #e8553a); }
 .raw-canvas-wrap.splitting, .raw-canvas-wrap:has(.raw-split:not(.hidden)) canvas { cursor: ew-resize; }
+/* v1.4: develop overlay (grid, local adjustment handles, defringe eyedropper) */
+.raw-view canvas.raw-overlay { position: absolute; width: auto; max-height: none; background: transparent; border-radius: 0; pointer-events: none; z-index: 1; }
+.raw-view canvas.raw-overlay.active { pointer-events: auto; }
+.raw-view canvas.raw-overlay.picking { cursor: crosshair; }
+.raw-check { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; white-space: nowrap; }
+#rawFringePick.on, #rawSplitBtn.on, #rawBefore.on { outline: 2px solid var(--accent, #e8553a); }
