@@ -7,6 +7,49 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.6 (GPU develop and masks, live preview, combined mask shapes, more local controls)
+
+![A radial mask with a subtracted radial shape, the shapes list and the new local controls](screenshots/16a-raw-mask-shapes.png)
+
+- **GPU RAW develop** (`src/gpu-develop.js`):
+  - **WebGPU compute** shaders run the whole develop in float32. That covers white balance, the colour matrix, highlight recovery, tone and curves, vibrance and saturation, lens corrections, distortion, CA and every local mask, as well as the neighbourhood filters (colour and luminance NR, sharpening, defringe, local Clarity, Texture, Sharpness and Noise). Output is 16-bit, or 8-bit for previews.
+  - Full-resolution develops run in bands with the same halo as the CPU workers.
+  - The **WebGL2** fallback runs the per-pixel develop in a fragment shader into RGBA32F or RGBA16F targets, and the filters run on the CPU. Full-resolution WebGL2 develops use the CPU band workers.
+  - The CPU band workers stay as the reference and as the fallback when a device is lost.
+  - **Automatic** picks WebGPU, then WebGL2, then the CPU, and rejects software adapters such as SwiftShader, which are slower than the 7 CPU workers.
+  - View ▸ Rendering engine has a **RAW develop engine** select (Automatic, WebGPU, WebGL2 or CPU), stored in `localStorage` `tintwork.devEngine`. The dialog's timing label shows `preview|draft N ms · Engine`.
+- **CPU parity**: `scripts/lib/gpu-parity.mjs` develops the same synthetic scenes on the CPU and on each GPU engine.
+  - Develop stage: within **1 level in 16 bits** on all 7 cases, on both engines.
+  - Each filter on its own: ≤ 1 level (WebGL2: 0).
+  - Every filter chained: 99.95% of values within 1 level, max 6 (WebGPU) or 5 (WebGL2), at filter edges where a 1-level input difference is amplified.
+  - Dialog previews: GPU vs CPU max 1 in 8-bit.
+  - 8-bit stores now round once: Uint8ClampedArray already rounds, so the old +0.5 is gone. This makes 8-bit previews about 0.5 level darker, which is the correct value.
+- **Live preview while dragging and painting**:
+  - Sliders, handle drags and brush strokes re-render before mouse-up; paint updates are throttled to 16 ms.
+  - The brush raster is incremental. `cachedRaster` adds only the new strokes: 150 strokes take 110–170 ms from scratch, then 9–12 ms per added stroke.
+  - When the last full preview took more than 45 ms, drags render a half-size **draft** (700 px). The full preview follows 180 ms after the input rests.
+- **Add / Subtract / Intersect mask shapes**: each mask can hold up to 8 extra graduated or radial parts (`local[i].parts`), with `op` set to add (max), subtract (w·(1−q)) or intersect (w·q), plus a per-part invert.
+  - The order is the shape, then the strokes, then the parts, then the mask invert, then the range masks.
+  - The parts are listed under **Shapes**. Their handles are drawn green, red or yellow by operation.
+  - Presets, re-develop and project files keep them.
+- **More local controls**: **Whites** (up to ±0.9 EV, weighted to the brightest tones) and **Blacks** (a linear offset that fades out above the darkest 10%), **Dehaze** (removes a haze veil estimated from the darkest channel per pixel; negative values blend toward a haze colour) and **Hue shift** (±180°, a rotation around the grey axis that keeps luminance, so greys stay grey). They run on the CPU and both GPU engines.
+- **Develop benchmark**: Help ▸ Run performance benchmark has an **include the RAW develop tests** option, which times on each engine:
+  - a slider-drag preview and a brush-paint preview, both at 1.3 MP with 3 masks;
+  - full-resolution 16-bit develops at each selected size (1, 12, 24 MP) with 3 masks, colour NR and sharpening.
+  
+  Software GPUs are labelled in the results.
+- **Timings on this box (SwiftShader software GPU, not representative of real GPUs)**: CPU (7 workers) / WebGL2 / WebGPU.
+  - Drag preview: 236 / 546 / 743 ms.
+  - Paint preview: 200 / 444 / 733 ms.
+  - Full 16-bit at 12 MP: 1.40 s CPU vs 7.6 s WebGPU.
+  - Full 16-bit at 24 MP: 2.19 s CPU vs 17.7 s WebGPU.
+  
+  The < 50 ms preview target on real GPUs could not be verified here.
+- Tests: `npm run test:v16` (33 checks, about 2 min):
+  - Node: part combine maths, the new controls, bands vs whole image.
+  - Browser, with WebGPU and SwiftShader: stage-by-stage and filter-by-filter GPU parity on both engines; GPU vs CPU dialog previews; the shapes UI by mouse; live paint and slider drafts; the incremental raster; the engine select; the benchmark rows.
+  - Screenshots: `16a-raw-mask-shapes.png`, `16b-benchmark-raw-develop.png`.
+
 ## What's new in v1.5 (local adjustment masks: brush, range masks, more local controls, mask list and overlay)
 
 ![Brush masks with the mask overlay (O), the brush cursor and the mask list](screenshots/15a-raw-brush-mask-overlay.png)

@@ -6,6 +6,28 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.6: GPU develop and masks, live preview, combined mask shapes, more local controls (2026-11-02)
+
+Compared with Lightroom Classic / Camera Raw masking and Affinity Photo 2's Develop Persona. No new sources were needed; the references are the v1.5 ones.
+
+| Feature | Lightroom Classic / Camera Raw | Affinity Photo 2 (Develop) | Tintwork 1.6 |
+|---|---|---|---|
+| GPU develop | ✅ GPU for display and processing | ✅ GPU | ✅ **WebGPU compute** develops the preview, full-resolution 16-bit develops (float32 maths), every mask and every filter (noise reduction, sharpening, CA, defringe). **WebGL2** develops the per-pixel stages on the GPU and runs the filters on the CPU. The CPU band workers stay as the reference and the fallback. Automated parity tests check the develop stage within 1 level in 16 bits on every engine, and each filter alone within 1 level. 🟡 With every filter chained, fewer than 0.05% of values differ by 2 to 6 levels. Full-resolution WebGL2 develops use the CPU. |
+| Live preview | ✅ Updates while dragging and painting | ✅ | ✅ Slider drags, handle drags and brush strokes update the preview before mouse-up (paint updates every 16 ms at most). The brush raster is cached and only new strokes are added, about 10 ms per update. When a full preview takes more than 45 ms, a half-size draft is shown while dragging and the full preview follows 180 ms after the mouse stops. 🟡 The target of under 50 ms per preview on real GPUs could not be checked: the test machine only has SwiftShader. |
+| Combining mask components | ✅ Add, Subtract and Intersect any component (brush, gradients, ranges, AI) [88][95] | ❌ One shape per overlay | ✅ Up to eight extra graduated and radial shapes per mask, each set to **Add**, **Subtract** or **Intersect**, with its own invert. The outlines are coloured by operation. The order is the mask's own shape, then its strokes, then the shapes in list order, then the mask's invert, then the range masks. 🟡 Brush and range components cannot be added as separate parts; the ranges always intersect. |
+| Local controls | ✅ Full set [88] | 🟡 Basic panel per overlay [97][98] | ✅ Adds **Whites**, **Blacks**, **Dehaze** and **Hue shift** to the v1.5 set. ❌ No local Moiré or local Defringe. |
+| Engine choice and benchmark | — (automatic GPU use, with an on/off preference) | — | ✅ Automatic / WebGPU / WebGL2 / CPU in View ▸ Rendering engine. Automatic avoids software GPUs. Help ▸ Run performance benchmark times the drag preview, the paint preview and full 16-bit develops per engine, and labels software GPUs. |
+| Speed (this machine, **SwiftShader**, not representative) | ✅ GPU | ✅ GPU | With 3 masks, colour NR and sharpening, CPU / WebGL2 / WebGPU: drag preview at 1.3 MP took 236 / 546 / 743 ms, and paint preview 200 / 444 / 733 ms. Full 16-bit develop took 1.40 s on the CPU and 7.6 s on WebGPU at 12 MP, and 2.19 s and 17.7 s at 24 MP. A software GPU is several times slower than the 7 CPU workers, which is why Automatic picks the CPU there. Real-GPU numbers are still to be measured. |
+
+### Summary
+v1.6 moves develop and masking onto the GPU, with automated parity tests against the CPU reference. Editing is now live while dragging and painting. Masks can combine several shapes, and four more local controls cover the common Lightroom set. The main remaining gaps:
+- AI masks (subject, sky, background, people);
+- brush and range components as separately combinable parts;
+- measured real-GPU timings (the under-50 ms preview target is unverified);
+- full-resolution develops on WebGL2;
+- half-resolution streaming on the GPU path;
+- pen pressure and local Moiré/Defringe.
+
 ## v1.5: local adjustment masks in develop: brush, range masks, more local controls, mask list and overlay (researched 2026-11-02)
 
 Compared with Lightroom Classic / Camera Raw masking and Affinity Photo 2's Develop Persona overlays.
@@ -334,4 +356,5 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 - ~~v1.3: re-developable RAW layers, split view, preset files, defringe, threaded decode~~ (done)
 - ~~v1.4: re-develop through transforms, linked RAW, local adjustments, distortion and lens profiles, defringe eyedropper and mask~~ (done)
 - ~~v1.5: brush masks with auto mask, luminance and colour range masks, more local controls, mask list and overlay~~ (done)
-- Next: AI and multi-component masks, upright perspective, a smart-object container
+- ~~v1.6: GPU develop and masks with CPU parity tests, live drag/paint preview, add/subtract/intersect mask shapes, local whites/blacks/dehaze/hue, develop benchmark~~ (done)
+- Next: AI masks, brush/range mask parts, upright perspective, a smart-object container
