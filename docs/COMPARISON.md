@@ -6,6 +6,27 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.5: local adjustment masks in develop: brush, range masks, more local controls, mask list and overlay (researched 2026-11-02)
+
+Compared with Lightroom Classic / Camera Raw masking and Affinity Photo 2's Develop Persona overlays.
+
+| Feature | Lightroom Classic / Camera Raw | Affinity Photo 2 (Develop) | Tintwork 1.5 |
+|---|---|---|---|
+| Brush mask | ✅ Size, Feather, Flow and Density; Alt switches to the eraser; `[` `]` change the size; pressure changes Flow on tablets [88][95] | ✅ Overlay Paint and Overlay Erase tools [97] | ✅ Size, Feather, Flow (strokes build up), Smoothing for mouse strokes, Alt erase, `[` `]`, `B`. The cursor shows the outer size and the feather ring. 🟡 No Density cap and no pen pressure (the target is mouse users). |
+| Edge-aware brush | ✅ Auto Mask (`A`) confines strokes to areas of similar colour [88][95] | ✅ "Edge Aware" option [97] | ✅ **Auto mask**: each stroke samples the colour and brightness under the brush and stops where they change (log luminance plus chroma distance, evaluated per output pixel). 🟡 Fixed tolerances with no slider; no content-aware (AI) edges. |
+| Luminance and colour range masks | ✅ Luminance range with smoothness and a luminance map; colour range with up to 5 samples and Refine; both intersect with other mask components [88][95] | ❌ Not in Develop overlays | ✅ Luminance From/To/Smoothness and colour Hue/Range/Smoothness, with eyedroppers that sample the preview in the worker. Both intersect with the graduated, radial or brush shape. 🟡 One colour sample (hue only, refuses grey spots), no drag-to-sample area. |
+| Local controls | ✅ Full set: Temp, Tint, Exposure, Contrast, Highlights, Shadows, Whites, Blacks, Texture, Clarity, Dehaze, Hue, Saturation, Sharpness, Noise, Moiré, Defringe [88] | 🟡 The Basic panel (exposure, shadows/highlights, clarity, etc.) per overlay [97][98] | ✅ Exposure, Contrast, Highlights, Shadows, Temperature, Tint, Saturation, Clarity, Texture, Sharpness and Noise reduction. ❌ No Whites/Blacks, Dehaze, Hue, Moiré or local Defringe. |
+| Mask list and overlay | ✅ Masks panel with rename, duplicate, invert, delete; `O` toggles the overlay, with six overlay modes and colours [95][96] | 🟡 Overlays panel; red mask preview and Show Overlay [98] | ✅ Mask list with summaries; rename (double-click / F2), duplicate, invert, delete; `O` toggles a red overlay of the final mask (ranges and auto mask included). 🟡 One overlay style; one shape per mask (no add/subtract of several components). |
+| Speed | ✅ GPU | ✅ GPU | 🟡 CPU band workers. 24 MP full develop: +0 to +0.26 s for one mask, about +1.75 s for 8 masks with every control (see README). |
+
+### Summary
+v1.5 makes the local adjustments in develop usable for real edits: a brush with an edge-aware option, range masks that refine any shape, and most of the local sliders people use. The main remaining gaps:
+- AI masks (subject, sky, background, people);
+- combining several components into one mask (add, subtract);
+- pen pressure, a Density cap, and an Auto mask tolerance slider;
+- multi-sample colour ranges and a depth range;
+- GPU rendering of the masks for faster full-resolution develops.
+
 ## v1.4: re-develop through transforms, linked RAW, local adjustments, distortion, defringe picker (researched 2026-11-02)
 
 Compared with Photoshop + Camera Raw, Lightroom Classic and Affinity Photo 2.
@@ -294,6 +315,10 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 92. Chrome for Developers, "Persistent permissions for the File System Access API": https://developer.chrome.com/blog/persistent-permissions-for-the-file-system-access-api
 93. Lensfun, "License" (database CC BY-SA 3.0, libraries LGPL-3): https://lensfun.github.io/manual/latest/license.html
 94. Adobe, "Lightroom Classic Radial Filter": https://helpx.adobe.com/uk/lightroom-classic/help/lightroom-radial-filter.html
+95. Julieanne Kost, "Making Selective Edits Using the Masking Tools in Lightroom Classic" (O overlay, Alt eraser, [ ] size, Flow and Density, Auto Mask, colour and luminance range shortcuts, pressure): https://jkost.com/blog/2024/09/making-selective-edits-using-the-masking-tools-in-lightroom-classic.html
+96. Mastering Lightroom, "How to Use Overlays in Lightroom Classic's New Masks Panel" (Show Overlay, O, overlay colours and six modes): https://mastering-lightroom.com/overlays-lightroom-classic/
+97. Digital Camera World, "RAW editing with Affinity Photo" (Overlay Paint with Edge Aware, Overlay Erase, Overlay Gradient, Basic panel per overlay): https://www.digitalcameraworld.com/tutorials/raw-editing-with-affinity-photo
+98. Chris Wright Photography, "Overlays, Layers and Masks in Affinity Photo 2" (Gradient and Paint overlays, edge detection): https://chriswright.photography/layers-and-masks-in-affinity-photo-2/
 
 ### Benchmark caveat
 `scripts/bench.mjs` ran on a Linux box with no GPU. Headless Chromium used SwiftShader (software) for both WebGL2 and WebGPU and WebKit used software GL, so GPU timings there are slower than the CPU worker and are not representative of real hardware (see README).
@@ -308,3 +333,5 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 - ~~v1.2: parallel/progressive RAW develop, sharpening, curve, vibrance, CA, presets, batch RAW settings~~ (done)
 - ~~v1.3: re-developable RAW layers, split view, preset files, defringe, threaded decode~~ (done)
 - ~~v1.4: re-develop through transforms, linked RAW, local adjustments, distortion and lens profiles, defringe eyedropper and mask~~ (done)
+- ~~v1.5: brush masks with auto mask, luminance and colour range masks, more local controls, mask list and overlay~~ (done)
+- Next: AI and multi-component masks, upright perspective, a smart-object container
