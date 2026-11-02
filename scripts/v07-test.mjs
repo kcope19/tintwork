@@ -178,7 +178,8 @@ check(await page.evaluate(() => !window.tintwork.mxf && window.tintwork.history.
 // benchmark dialog (1 MP quick size)
 const docBefore = await page.evaluate(() => { const d = window.tintwork.state.doc; return d.layers.map((l) => [...l.canvas.getContext('2d').getImageData(Math.floor(l.canvas.width / 2), Math.floor(l.canvas.height / 2), 1, 1).data].join()).join('|'); });
 await page.evaluate(() => window.tintwork.run('benchmark'));
-await page.evaluate(() => { document.querySelector('#bench1').checked = true; document.querySelector('#bench12').checked = false; document.querySelector('#bench24').checked = false; document.querySelector('#benchRun').click(); });
+await page.evaluate(() => { document.querySelector('#bench1').checked = true; document.querySelector('#bench12').checked = false; document.querySelector('#bench24').checked = false; document.querySelector('#benchdev').checked = false; // develop rows: v16-test
+  document.querySelector('#benchRun').click(); });
 await page.waitForFunction(() => /Done in/.test(document.querySelector('#benchProgress')?.textContent || ''), null, { timeout: 180000 });
 const bench = await page.evaluate(async () => {
   const t = window.tintwork; await t.gfx.ready;
