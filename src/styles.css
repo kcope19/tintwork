@@ -1,6 +1,6 @@
 :root {
   --bg0: #16171b; --bg1: #1d1f24; --bg2: #25282e; --bg3: #2f333b; --line: #353a43;
-  --text: #d9dce2; --muted: #8a909b; --accent: #e8553a; --accent2: #7a5cff;
+  --text: #d9dce2; --muted: #9ba1ac; --accent: #e8553a; --accent2: #7a5cff;
   --radius: 6px; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 13px;
   color-scheme: dark;
 }
@@ -49,7 +49,18 @@ input[type=range] { accent-color: var(--accent); }
 #viewport { position: relative; overflow: hidden; background: #111215; outline: none; }
 #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 #dropzone { position: absolute; inset: 12px; border: 2px dashed var(--accent); border-radius: 12px; display: grid; place-items: center; font-size: 18px; background: #e8553a14; pointer-events: none; }
-#welcome { position: absolute; inset: 0; margin: auto; width: 380px; height: 180px; text-align: center; }
+#welcome { position: absolute; inset: 0; margin: auto; width: 520px; height: max-content; max-height: 90%; overflow: auto; text-align: center; }
+#welcome .wl-h { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 20px 0 0; font-weight: 600; }
+#welcome .wl-presets { flex-wrap: wrap; margin-top: 8px; }
+#welcome .recent-list { list-style: none; padding: 0; margin: 8px auto 0; max-width: 420px; text-align: left; }
+#welcome .recent-list button { width: 100%; text-align: left; }
+#welcome .wl-help { margin-top: 18px; }
+button.link { background: none; border: none; color: var(--accent2); padding: 0; cursor: pointer; text-decoration: underline; font: inherit; }
+:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
+.help-doc { max-width: 760px; max-height: 70vh; overflow: auto; line-height: 1.5; }
+.help-doc h1 { font-size: 20px; } .help-doc h2 { font-size: 16px; margin-top: 18px; } .help-doc h3 { font-size: 14px; }
+.help-doc code { background: var(--bg3); padding: 0 4px; border-radius: 3px; } .help-doc table { border-collapse: collapse; } .help-doc td, .help-doc th { border: 1px solid var(--line); padding: 2px 6px; }
+.help-toc { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; }
 #welcome h1 { font-weight: 600; margin: 0 0 6px; }
 #welcome .row { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
 

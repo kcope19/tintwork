@@ -11,7 +11,7 @@ import { createEngine } from './gpu.js';
 import { createWebGPUEngine, webgpuAvailable } from './webgpu.js';
 import { runBenchmark, benchText, probeEngines, stackId, BENCH_SIZES, BENCH_OPS } from './bench.js';
 import * as mesh from './mesh.js';
-import { FX_TYPES, FX_ORDER, defaultEffect, hasActiveStyles, normalizeStyles, renderStyled, effectStack } from './layerfx.js';
+import { FX_TYPES, FX_ORDER, defaultEffect, hasActiveStyles, normalizeStyles, renderStyled, effectStack, BODY_BLENDS } from './layerfx.js';
 import { fsaSupported, pickOpen, pickSave, writeFile, ensurePermission, listRecent, addRecent, removeRecent, clearRecent, EXPORT_TYPES } from './files.js';
 import { blendIndex, createDeep, cloneDeep, deepFromImageData, deepToImageData, reconcileDeep, compositeDeep, accToDeep, runDeep, DEEP_OPS } from './deep.js';
 import { decodePNG, encodePNG, pngInfo } from './png.js';
@@ -20,7 +20,7 @@ import { formatName, variantSize, uniqueNamer, zipFiles } from './batch.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '0.9.0';
+const APP_VERSION = '1.0.0';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -374,6 +374,13 @@ function composite(target = comp, opts = {}) {
   c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1;
   if (!opts.cpu && gfx.engine && gpuComposite(c, opts, target === comp)) { c.restore(); return target; }
   if (target === comp) gfx.path = 'cpu';
+  if (opts.rect) { // dirty-rectangle update (brush strokes): redraw only the touched area of the composite
+    const items = resolveItems(d, null);
+    if (!items.some((it) => it.kind === 'passBegin')) {
+      const r = opts.rect; c.beginPath(); c.rect(r.x, r.y, r.w, r.h); c.clip(); c.clearRect(r.x, r.y, r.w, r.h);
+      drawItems(c, items, [''], opts); c.restore(); return target;
+    }
+  }
   c.clearRect(0, 0, d.width, d.height);
   if (opts.background) { c.fillStyle = opts.background; c.fillRect(0, 0, d.width, d.height); }
   drawItems(c, resolveItems(d, null), [opts.background || ''], opts);
@@ -557,6 +564,17 @@ function pruneFxCaches(d) {
   for (const k of cpuMaskCache.keys()) if (!ids.has(+String(k).slice(1))) cpuMaskCache.delete(k);
 }
 /** Canvas 2D composite of draw items (used by the CPU engine and inside isolated groups). */
+// Big layers are drawn only over their opaque bounds. The bounds are measured the second time a layer is drawn
+// unchanged (so a layer being painted does not pay for the scan on every stroke) and cached per revision.
+const boundsCache = new WeakMap();
+const SOURCE_ONLY_BLENDS = new Set(['source-over', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity', 'lighter']);
+function drawBounds(l) {
+  const cv = l.canvas; if (!cv || cv.width * cv.height < 4_000_000) return undefined;
+  let e = boundsCache.get(cv);
+  if (!e || e.rev !== l.rev || e.w !== cv.width || e.h !== cv.height) { boundsCache.set(cv, { rev: l.rev, w: cv.width, h: cv.height, seen: 1 }); return undefined; }
+  if (e.b === undefined) { if (e.seen++ < 1) return undefined; e.b = alphaBounds(cv); }
+  return e.b;
+}
 function drawItems(c, items, below, opts) {
   const stack = [];
   for (const it of items) {
@@ -571,7 +589,10 @@ function drawItems(c, items, below, opts) {
         if (!e || e.key !== ck) { e = { key: ck, canvas: maskedCopy(it.plain ? it.l.canvas : it.src, it.x, it.y, it.mask, e?.canvas) }; cpuMaskCache.set(it.slot, e); }
         src = e.canvas;
       } else src = it.src;
-      c.globalAlpha = it.opacity; c.globalCompositeOperation = it.blend; c.drawImage(src, it.x, it.y);
+      c.globalAlpha = it.opacity; c.globalCompositeOperation = it.blend;
+      const b = !opts.rect && src === it.l.canvas ? drawBounds(it.l) : undefined;
+      if (b === null) { /* fully transparent: nothing to draw */ } else if (b && SOURCE_ONLY_BLENDS.has(it.blend)) c.drawImage(src, b.x, b.y, b.w, b.h, it.x + b.x, it.y + b.y, b.w, b.h);
+      else c.drawImage(src, it.x, it.y);
       c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
     }
     below.push(it.sig);
@@ -621,6 +642,19 @@ const ADJ_LAYER = {
   whiteBalance: 'White balance', lut3d: 'Color lookup (3D LUT)',
 };
 const ADJ_SYNC_PIXELS = 2_500_000;
+// Interactive preview: while an adjustment slider moves on a big document, adjustment layers are computed on a
+// ~2 MP proxy (about screen size) and the full-resolution result follows in the worker once the slider rests.
+const PROXY_PIXELS = 2_000_000;
+let adjProxyUntil = 0, adjProxyTimer = 0;
+const adjInteractive = (ms = 220) => { adjProxyUntil = performance.now() + ms; };
+let compRect = null; // pending dirty rectangle of the composite (CPU path), in document pixels
+function addCompRect(x, y, w, h) {
+  const d = doc(); if (!d) return;
+  const x0 = Math.max(0, Math.floor(x)), y0 = Math.max(0, Math.floor(y)), x1 = Math.min(d.width, Math.ceil(x + w)), y1 = Math.min(d.height, Math.ceil(y + h));
+  if (x1 <= x0 || y1 <= y0) return;
+  if (!compRect) compRect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  else { const a = Math.min(compRect.x, x0), b = Math.min(compRect.y, y0); compRect = { x: a, y: b, w: Math.max(compRect.x + compRect.w, x1) - a, h: Math.max(compRect.y + compRect.h, y1) - b }; }
+}
 const adjCache = new Map();
 let adjPending = 0;
 let adjScratch = null;
@@ -638,7 +672,24 @@ function drawAdjustmentLayer(c, l, below, opts, it = null) {
   const d = doc(), W = d.width, H = d.height;
   const key = `${W}x${H}|${below}|${JSON.stringify(l.adj)}`;
   let e = adjCache.get(l.id); if (!e) { e = { key: null, canvas: null, running: false }; adjCache.set(l.id, e); }
-  if (e.key !== key) {
+  const R = opts.rect;
+  let proxy = null; // a reduced-size result shown while a slider is being dragged on a big document
+  if (R && e.key !== key && e.canvas && e.canvas.width === W && e.canvas.height === H) {
+    // only the dirty rectangle changed below: patch the cached result there (synchronously; adjustments are per-pixel)
+    const img = c.getImageData(R.x, R.y, R.w, R.h); runOp(l.adj.type, img, adjParamsOf(l.adj));
+    e.canvas.getContext('2d').putImageData(img, R.x, R.y); e.key = key; if (e.proxy) e.proxy = null;
+  } else if (e.key !== key && !opts.sync && !R && W * H > ADJ_SYNC_PIXELS && performance.now() < adjProxyUntil) {
+    if (e.proxy?.key !== key) {
+      const k = Math.min(1, Math.sqrt(PROXY_PIXELS / (W * H))), pw = Math.max(1, Math.round(W * k)), ph = Math.max(1, Math.round(H * k));
+      const pc = e.proxy?.canvas?.width === pw && e.proxy.canvas.height === ph ? e.proxy.canvas : makeCanvas(pw, ph), px = pc.getContext('2d');
+      px.globalCompositeOperation = 'copy'; px.drawImage(c.canvas, 0, 0, pw, ph);
+      const img = px.getImageData(0, 0, pw, ph); runOp(l.adj.type, img, adjParamsOf(l.adj)); px.putImageData(img, 0, 0);
+      e.proxy = { key, canvas: pc };
+    }
+    proxy = e.proxy.canvas;
+    clearTimeout(adjProxyTimer); adjProxyTimer = setTimeout(() => { compDirty = true; requestRender(); }, Math.max(0, adjProxyUntil - performance.now()) + 20);
+  } // after the drag the full-size job starts below; the preview stays on screen until it lands
+  if (!proxy && e.key !== key) {
     if (!opts.sync && W * H > ADJ_SYNC_PIXELS && ops.workerStatus().available) {
       if (!e.running) {
         e.running = true; adjPending++;
@@ -647,16 +698,24 @@ function drawAdjustmentLayer(c, l, below, opts, it = null) {
           .catch((err) => status(`Adjustment layer failed: ${err.message}`))
           .finally(() => { e.running = false; adjPending--; compDirty = true; requestRender(); });
       }
-      if (!e.canvas || e.canvas.width !== W || e.canvas.height !== H) return; // first result not ready yet
+      if (e.proxy?.key === key) proxy = e.proxy.canvas;
+      else if (!e.canvas || e.canvas.width !== W || e.canvas.height !== H) return; // first result not ready yet
     } else {
       const img = c.getImageData(0, 0, W, H);
       runOp(l.adj.type, img, adjParamsOf(l.adj));
       e.canvas = putInto(e.canvas, img); e.key = key;
     }
   }
+  if (!mk && op >= 1 && bl === 'source-over') { // the cached result already is "below, adjusted": just copy it in
+    c.save(); c.globalAlpha = 1; c.globalCompositeOperation = 'copy';
+    if (proxy) { c.imageSmoothingQuality = 'medium'; c.drawImage(proxy, 0, 0, W, H); } else c.drawImage(e.canvas, 0, 0);
+    c.restore(); return;
+  }
   if (!adjScratch || adjScratch.width !== W || adjScratch.height !== H) adjScratch = makeCanvas(W, H);
   const sx = adjScratch.getContext('2d');
-  sx.save(); sx.globalAlpha = 1; sx.globalCompositeOperation = 'copy'; sx.drawImage(e.canvas, 0, 0);
+  sx.save(); if (R) { sx.beginPath(); sx.rect(R.x, R.y, R.w, R.h); sx.clip(); }
+  sx.globalAlpha = 1; sx.globalCompositeOperation = 'copy';
+  if (proxy) { sx.imageSmoothingQuality = 'medium'; sx.drawImage(proxy, 0, 0, W, H); } else sx.drawImage(e.canvas, 0, 0);
   const masked = !!mk;
   if (masked) {
     sx.globalCompositeOperation = 'destination-in'; sx.drawImage(mk.canvas, mk.x, mk.y);
@@ -918,7 +977,8 @@ function deepGroupOf(d, g) {
 /**
  * 16-bit styled layer (v0.9): shadow / glow / stroke coverage is computed in float (effectStack) and composited
  * with the 16-bit pixels, so effect gradients keep 16-bit precision. Effects that recolour the pixels
- * (overlay, inner glow / shadow) and masked layers use styledDeep8: 16-bit where the pixels show unchanged.
+ * v1.0: inner glow / shadow and colour overlay are applied in float too (separable blend modes); other blend modes
+ * and masked layers use styledDeep8: 16-bit where the pixels show unchanged.
  */
 function styledDeep(st, content8, cx, cy, deep, styles, fxSrc) {
   const fx = fxSrc === content8 ? effectStack(content8, styles) : null;
@@ -929,13 +989,20 @@ function styledDeep(st, content8, cx, cy, deep, styles, fxSrc) {
     for (let i = 0; i < n; i++) { const a = P[i] * k; if (a <= 0) continue; const q = 1 - a; R[i] = r * a + R[i] * q; G[i] = g * a + G[i] * q; B[i] = b * a + B[i] * q; A[i] = a + A[i] * q; }
   };
   fx.under.forEach(paint);
+  const body = fx.body || [];
   const D = deep.data, cw = deep.width, ch = deep.height;
   for (let y = 0; y < sh; y++) {
     const v = y + st.y - cy; if (v < 0 || v >= ch) continue;
     for (let x = 0; x < sw; x++) {
       const u = x + st.x - cx; if (u < 0 || u >= cw) continue;
       const j = (v * cw + u) * 4, a = D[j + 3] / 65535; if (a <= 0) continue;
-      const i = y * sw + x, q = 1 - a; R[i] = (D[j] / 65535) * a + R[i] * q; G[i] = (D[j + 1] / 65535) * a + G[i] * q; B[i] = (D[j + 2] / 65535) * a + B[i] * q; A[i] = a + A[i] * q;
+      const i = y * sw + x, q = 1 - a; let r = D[j] / 65535, g = D[j + 1] / 65535, b = D[j + 2] / 65535;
+      for (const f of body) { // inner glow / shadow / colour overlay, applied atop the pixels in float
+        const m = (f.full ? 1 : f.a[i]) * f.opacity; if (m <= 0) continue;
+        const fn = BODY_BLENDS[f.blend], fr = f.rgb[0] / 255, fg = f.rgb[1] / 255, fb = f.rgb[2] / 255;
+        r += (fn(r, fr) - r) * m; g += (fn(g, fg) - g) * m; b += (fn(b, fb) - b) * m;
+      }
+      R[i] = r * a + R[i] * q; G[i] = g * a + G[i] * q; B[i] = b * a + B[i] * q; A[i] = a + A[i] * q;
     }
   }
   fx.over.forEach(paint);
@@ -1010,7 +1077,7 @@ function newAdjustmentLayer(type) {
 function openAdjustmentLayerDialog(l, isNew = false) {
   const before = l.adj, type = before.type;
   const values = structuredClone(before.params || {});
-  const apply = () => { l.adj = { type, params: structuredClone(values) }; compDirty = true; requestRender(); };
+  const apply = () => { l.adj = { type, params: structuredClone(values) }; adjInteractive(); compDirty = true; requestRender(); };
   const body = document.createElement('div');
   if (type === 'curves') {
     // histogram of what the curve will act on (everything below this layer)
@@ -1267,7 +1334,7 @@ function render() {
   vctx.fillStyle = '#111215'; vctx.fillRect(0, 0, w, h);
   const d = doc();
   if (!d) return;
-  if (compDirty) { composite(); compDirty = false; }
+  freshComp();
   const { zoom: z, panX: px, panY: py } = state;
   const sx = px, sy = py, sw = d.width * z, sh = d.height * z;
   vctx.save();
@@ -1499,7 +1566,7 @@ function magicWand(p, mode) {
   if (x < 0 || y < 0 || x >= d.width || y >= d.height) return;
   let img;
   if (state.opts.wandSampleAll) {
-    if (compDirty) { composite(); compDirty = false; }
+    freshComp();
     img = compCtx.getImageData(0, 0, d.width, d.height);
   } else {
     const l = activeLayer(), c = makeCanvas(d.width, d.height);
@@ -2161,7 +2228,11 @@ function applyStroke() {
     c.drawImage(cover, 0, 0);
   }
   c.restore();
-  touchTarget(l); requestRender();
+  const wasDirty = compDirty;
+  touchTarget(l);
+  // CPU path: only the stroke's rectangle of the composite needs redrawing
+  if (!wasDirty && !gfx.engine && !editingFMask(l)) { compDirty = false; addCompRect(rx + (l.x || 0), ry + (l.y || 0), rw, rh); }
+  requestRender();
 }
 
 /**
@@ -2675,7 +2746,7 @@ function pickColor(p) {
   let px;
   if (state.opts.sampleAll) {
     if (x < 0 || y < 0 || x >= doc().width || y >= doc().height) return;
-    if (compDirty) { composite(); compDirty = false; }
+    freshComp();
     px = compCtx.getImageData(x, y, 1, 1).data;
   } else {
     const l = activeLayer(); const lx = x - l.x, ly = y - l.y;
@@ -3001,6 +3072,7 @@ const cmds = {
   mode16: needDoc(() => setDepth(16)),
   engine: () => openEngineDialog(),
   benchmark: () => openBenchmarkDialog(),
+  userGuide: () => openUserGuide(),
   perspective: needDoc(() => startMeshXf('perspective')),
   warp: needDoc(() => startMeshXf('warp')),
   mxfApply: () => applyMeshXf(),
@@ -3194,7 +3266,7 @@ const SHORTCUTS = {
   // Alternates for combos the browser or OS keeps (see RESERVED in platform.js); the menus show these where needed.
   'mod+alt+n': 'new', 'mod+shift+alt+n': 'layerNew', 'mod+alt+t': 'freeTransform', 'mod+shift+m': 'curves',
   'shift+f7': 'invertSelection', 'mod+shift+alt+c': 'copyMerged', 'mod+alt+0': 'zoom100',
-  'x': 'swapColors', 'd': 'resetColors', '?': 'shortcuts', 'shift+?': 'shortcuts',
+  'f1': 'userGuide', 'x': 'swapColors', 'd': 'resetColors', '?': 'shortcuts', 'shift+?': 'shortcuts',
 };
 /** Neutral spec ('Ctrl+Shift+N') → combo ('mod+shift+n'), in comboOf()'s modifier order. */
 function specCombo(spec) {
@@ -3245,7 +3317,7 @@ const MENUS = [
   ['Filter', [['Convert to live layer', 'convertSmart'], '-', ['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
   ['Actions', [['Actions…', 'actions'], ['Start recording', 'actionRecord'], ['Stop recording and save…', 'actionStop'], '-', ['Batch process…', 'batch']]],
   ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1'], '-', ['Rendering engine…', 'engine']]],
-  ['Help', [['Keyboard shortcuts', 'shortcuts', '?'], ['Run performance benchmark…', 'benchmark'], [`About ${APP}`, 'about']]],
+  ['Help', [['Keyboard shortcuts', 'shortcuts', '?'], ['User guide', 'userGuide', 'F1'], ['Run performance benchmark…', 'benchmark'], [`About ${APP}`, 'about']]],
 ];
 
 // ---------------------------------------------------------------------------
@@ -3643,7 +3715,7 @@ function cropTo(r, label = null) {
 function copySelection(merged) {
   const d = doc(); const sel = d.selection || { x: 0, y: 0, w: d.width, h: d.height };
   const c = makeCanvas(sel.w, sel.h), x = c.getContext('2d');
-  if (merged) { if (compDirty) { composite(); compDirty = false; } x.drawImage(comp, -sel.x, -sel.y); }
+  if (merged) { freshComp(); x.drawImage(comp, -sel.x, -sel.y); }
   else { const l = activeLayer(); x.drawImage(renderSource(l), l.x - sel.x, l.y - sel.y); }
   if (d.selection) { x.globalCompositeOperation = 'destination-in'; x.drawImage(selectionCanvas(d.selection), -sel.x, -sel.y); }
   clipboard = { canvas: c, x: sel.x, y: sel.y };
@@ -3802,7 +3874,12 @@ const CR_MODES = [['sampled', 'Sampled color'], ['reds', 'Reds'], ['yellows', 'Y
   ['highlights', 'Highlights'], ['midtones', 'Midtones'], ['shadows', 'Shadows']];
 const hexArr = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const arrHex = (c) => rgbToHex(c[0], c[1], c[2]);
-function fullComposite() { if (compDirty) { composite(); compDirty = false; } return comp; }
+/** Bring the on-screen composite up to date (full redraw, or just the pending dirty rectangle). */
+function freshComp() {
+  if (compDirty) { composite(); compDirty = false; compRect = null; }
+  else if (compRect) { const r = compRect; compRect = null; composite(comp, { rect: r }); }
+}
+function fullComposite() { freshComp(); return comp; }
 function openColorRangeDialog() {
   const d = doc(), o = state.opts, src = fullComposite();
   const k = Math.min(1, 220 / Math.max(d.width, d.height)), pw = Math.max(1, Math.round(d.width * k)), ph = Math.max(1, Math.round(d.height * k));
@@ -3932,8 +4009,8 @@ function paramField(p, values, onChange, defaultValue) {
 // Modal dialogs
 // ---------------------------------------------------------------------------
 let modalHandlers = null;
-function showModal({ title, body, ok, cancel, okLabel = 'OK', cancelLabel = 'Cancel', preview = false, passive = false, onPreviewToggle, hideCancel = false }) {
-  closeSheet();
+function showModal({ title, body, ok, cancel, okLabel = 'OK', cancelLabel = 'Cancel', preview = false, passive = false, onPreviewToggle, hideCancel = false, onClose }) {
+  closeSheet(); if (modalHandlers) { const h = modalHandlers; modalHandlers = null; h.onClose?.(); }
   $('#modalTitle').textContent = title;
   const mb = $('#modalBody'); mb.innerHTML = '';
   if (typeof body === 'string') mb.innerHTML = body; else mb.append(body);
@@ -3944,10 +4021,10 @@ function showModal({ title, body, ok, cancel, okLabel = 'OK', cancelLabel = 'Can
   $('#modalPreview').onchange = onPreviewToggle || null;
   $('#modal').classList.toggle('passive', passive);
   $('#modal').classList.remove('hidden');
-  modalHandlers = { ok, cancel };
+  modalHandlers = { ok, cancel, onClose };
   if (!IS_TOUCH) setTimeout(() => mb.querySelector('textarea, input[type=number], input[type=text], select')?.focus(), 0);
 }
-function closeModal() { $('#modal').classList.add('hidden'); modalHandlers = null; viewport.focus(); }
+function closeModal() { $('#modal').classList.add('hidden'); const h = modalHandlers; modalHandlers = null; h?.onClose?.(); viewport.focus(); }
 $('#modalOk').addEventListener('click', () => { const h = modalHandlers; if (h?.ok?.() === false) return; closeModal(); });
 $('#modalCancel').addEventListener('click', () => { const h = modalHandlers; h?.cancel?.(); closeModal(); });
 function openInfo(title, html) { showModal({ title, body: html, hideCancel: true, okLabel: 'Close' }); }
@@ -3967,6 +4044,8 @@ function openNewDialog() {
   });
   showModal({ title: 'New canvas', body, okLabel: 'Create', ok: () => {
     const w = Math.min(16384, Math.max(1, +body.querySelector('#nW').value | 0)), h = Math.min(16384, Math.max(1, +body.querySelector('#nH').value | 0));
+    const g = guardSize(w, h, 1); if (g.level === 'refuse') { toast(g.msg, 6000); return false; }
+    if (g.level === 'warn') toast(g.msg, 6000);
     newDocument(w, h, body.querySelector('#nBg').value);
   } });
 }
@@ -3986,6 +4065,8 @@ function openImageSizeDialog() {
   P.addEventListener('input', () => { W.value = Math.max(1, Math.round((d.width * P.value) / 100)); H.value = Math.max(1, Math.round((d.height * P.value) / 100)); });
   showModal({ title: 'Image size', body, ok: () => {
     const w = Math.min(16384, Math.max(1, +W.value | 0)), h = Math.min(16384, Math.max(1, +H.value | 0));
+    const g = guardSize(w, h, d.layers.length, d.depth === 16); if (g.level === 'refuse') { toast(g.msg, 6000); return false; }
+    if (g.level === 'warn') toast(g.msg, 6000);
     if (w !== d.width || h !== d.height) { resizeImage(w, h); recordStep({ t: 'resize', w, h }); }
   } });
 }
@@ -4190,12 +4271,18 @@ async function openFile(file, mode = 'open') {
       }
     }
     const url = URL.createObjectURL(file);
-    const img = await loadImage(url);
+    let img;
+    try { img = await loadImage(url); } catch { URL.revokeObjectURL(url); toast(`${file.name} could not be read. The file may be damaged or in a format this browser cannot decode.`, 6000); return; }
+    URL.revokeObjectURL(url);
+    const g = guardSize(img.naturalWidth, img.naturalHeight, (doc()?.layers.length || 0) + 1, doc()?.depth === 16);
+    if (g.level === 'refuse') {
+      if (!(await confirmAsync(`${file.name} is ${img.naturalWidth}×${img.naturalHeight} (${g.mp} MP). ${g.msg} Open it scaled down to fit?`, 'Scale down'))) { status('Open cancelled.'); return; }
+      img = downscaleToFit(img, g.maxPixels);
+    } else if (g.level === 'warn') toast(g.msg, 6000);
     if (mode === 'place' && doc()) placeImage(img, file.name.replace(/\.[^.]+$/, ''));
     else documentFromImage(img, file.name);
-    URL.revokeObjectURL(url);
-    status(`${mode === 'place' && doc() ? 'Placed' : 'Opened'} ${file.name} (${img.naturalWidth}×${img.naturalHeight})`);
-  } catch (err) { status(`Error: ${err.message}`); console.error(err); }
+    status(`${mode === 'place' && doc() ? 'Placed' : 'Opened'} ${file.name} (${img.naturalWidth || img.width}×${img.naturalHeight || img.height})`);
+  } catch (err) { reportError(`${file.name} could not be opened`, err); }
 }
 for (const id of ['#fileInput', '#cameraInput']) $(id).addEventListener('change', async (e) => { const fs = [...e.target.files]; e.target.value = ''; for (const f of fs) await openFile(f, fileMode); });
 
@@ -4559,6 +4646,114 @@ window.addEventListener('beforeunload', (e) => { stashTab(); if (tabs.some(tabDi
 // ---------------------------------------------------------------------------
 // UI building
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// v1.0 polish: memory guardrails, global error handling, welcome screen, user guide, accessibility
+// ---------------------------------------------------------------------------
+/** Rough memory budget for a document: every layer keeps an RGBA canvas (16-bit documents add 8 bytes per pixel),
+ *  plus the composite, the adjustment caches and undo snapshots. Returns { level: 'ok' | 'warn' | 'refuse', msg, mp, maxPixels }. */
+const MEM_LIMIT_MB = (() => { const lim = performance.memory?.jsHeapSizeLimit; const dev = navigator.deviceMemory; return Math.max(1024, Math.min(lim ? lim / 2 ** 20 : 4096, dev ? dev * 1024 * 0.6 : 4096)); })();
+function estimateMB(w, h, layers = 1, deep = false) { return (w * h * (4 * (layers + 3) + (deep ? 8 * layers : 0))) / 2 ** 20; }
+function guardSize(w, h, layers = 1, deep = false) {
+  const mp = Math.round((w * h) / 1e5) / 10, mb = estimateMB(w, h, layers, deep);
+  const perPixel = (4 * (layers + 3) + (deep ? 8 * layers : 0)), maxPixels = Math.floor((MEM_LIMIT_MB * 0.8 * 2 ** 20) / perPixel);
+  if (w > 16384 || h > 16384 || w * h > 268_000_000 || mb > MEM_LIMIT_MB * 0.8)
+    return { level: 'refuse', mp, maxPixels: Math.min(maxPixels, 268_000_000), msg: `That needs about ${Math.round(mb)} MB, more than this browser can safely use (about ${Math.round(MEM_LIMIT_MB * 0.8)} MB). Try a smaller size or fewer layers.` };
+  if (mb > MEM_LIMIT_MB * 0.4) return { level: 'warn', mp, maxPixels, msg: `Large document (${mp} MP, about ${Math.round(mb)} MB). Editing may be slow; save often.` };
+  return { level: 'ok', mp, maxPixels, msg: '' };
+}
+function downscaleToFit(img, maxPixels) {
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height, k = Math.min(1, Math.sqrt(maxPixels / (w * h)), 16384 / w, 16384 / h);
+  const c = makeCanvas(Math.max(1, Math.floor(w * k)), Math.max(1, Math.floor(h * k))), x = ctxOf(c);
+  x.imageSmoothingQuality = 'high'; x.drawImage(img, 0, 0, c.width, c.height);
+  c.naturalWidth = c.width; c.naturalHeight = c.height; return c;
+}
+function confirmAsync(text, okLabel = 'OK') {
+  return new Promise((res) => {
+    const body = document.createElement('div'); body.innerHTML = `<p>${escapeHtml(text)}</p>`;
+    showModal({ title: APP, body, okLabel, ok: () => { res(true); }, onClose: () => res(false) });
+  });
+}
+/** Friendly message for a failure the user should hear about; the details go to the console. */
+function reportError(what, err) {
+  console.error(what, err);
+  const m = String(err?.message || err || '');
+  const why = /memory|allocation|RangeError|Array buffer/i.test(m) ? 'The browser ran out of memory. Try a smaller image or close other documents.'
+    : /quota/i.test(m) ? 'The browser storage is full.' : /permission|NotAllowed/i.test(m) ? 'Permission was denied.' : m ? `(${m.slice(0, 140)})` : '';
+  toast(`${what}. ${why}`.trim(), 7000);
+}
+let errorCount = 0, lastErrorAt = 0;
+function onGlobalError(err) {
+  const m = String(err?.message || err || '');
+  if (/ResizeObserver loop|Script error\.?$/.test(m) || err?.name === 'AbortError') return;
+  const now = Date.now(); errorCount++;
+  if (now - lastErrorAt > 4000) toast(`Something went wrong${m ? ` (${m.slice(0, 120)})` : ''}. Your work is being saved for recovery; if anything looks wrong, reload and choose Restore.`, 7000);
+  lastErrorAt = now; console.error('[Tintwork] unhandled', err);
+  try { if (doc()) autosaveNow().catch(() => {}); } catch { /* the autosave itself failed: nothing more to do */ }
+}
+addEventListener('error', (e) => onGlobalError(e.error || e.message));
+addEventListener('unhandledrejection', (e) => onGlobalError(e.reason));
+
+// Welcome screen
+async function refreshWelcome() {
+  const ul = $('#welcomeRecent'); if (!ul) return;
+  const list = fsaSupported ? (await listRecent()).slice(0, 6) : [];
+  ul.innerHTML = list.length ? list.map((r) => `<li><button class="recent-open" data-rid="${r.id}"><b>${escapeHtml(r.name)}</b> <span class="muted">${r.kind === 'project' ? 'project' : 'image'} · ${new Date(r.time).toLocaleDateString()}</span></button></li>`).join('')
+    : `<li class="muted">${fsaSupported ? 'No recent files yet. Files you open or save appear here.' : 'Recent files need Chrome or Edge.'}</li>`;
+  ul.onclick = async (e) => {
+    const b = e.target.closest('button[data-rid]'); if (!b) return; const r = list.find((x) => x.id === b.dataset.rid); if (!r) return;
+    if (!(await openHandle(r.handle))) { await removeRecent(r.id); toast(`${r.name} could not be opened (moved, deleted or permission denied) and was removed from the list.`, 5000); refreshWelcome(); }
+  };
+}
+$('#welcomePresets')?.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-preset]'); if (!b) return; const [w, h] = b.dataset.preset.split('x').map(Number);
+  newDocument(w, h, 'white');
+});
+new MutationObserver(() => { if (!$('#welcome').classList.contains('hidden')) refreshWelcome(); }).observe($('#welcome'), { attributes: true, attributeFilter: ['class'] });
+
+// User guide (docs/USER_GUIDE.md rendered with a small Markdown subset)
+function mdToHtml(md) {
+  const inline = (t) => escapeHtml(t).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\*([^*]+)\*/g, '<i>$1</i>')
+    .replace(/\[([^\]]+)\]\((#[^)]+)\)/g, '<a href="$2">$1</a>');
+  const out = []; let list = null, table = null, para = [];
+  const flush = () => { if (para.length) { out.push(`<p>${inline(para.join(' '))}</p>`); para = []; } if (list) { out.push(`</${list}>`); list = null; } if (table) { out.push('</table>'); table = null; } };
+  const slug = (t) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  for (const raw of md.split('\n')) {
+    const line = raw.trimEnd(); let m;
+    if (!line.trim()) { flush(); continue; }
+    if ((m = /^(#{1,3})\s+(.*)/.exec(line))) { flush(); out.push(`<h${m[1].length} id="${slug(m[2])}">${inline(m[2])}</h${m[1].length}>`); continue; }
+    if ((m = /^\s*[-*]\s+(.*)/.exec(line))) { if (para.length) flush(); if (list !== 'ul') { flush(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${inline(m[1])}</li>`); continue; }
+    if ((m = /^\s*\d+\.\s+(.*)/.exec(line))) { if (para.length) flush(); if (list !== 'ol') { flush(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${inline(m[1])}</li>`); continue; }
+    if (/^\|/.test(line)) { if (/^\|[\s:|-]+\|$/.test(line)) continue; if (!table) { flush(); out.push('<table>'); table = 1; } out.push(`<tr>${line.slice(1, -1).split('|').map((c) => `<td>${inline(c.trim())}</td>`).join('')}</tr>`); continue; }
+    if (list || table) flush();
+    para.push(line.trim());
+  }
+  flush(); return out.join('\n');
+}
+async function openUserGuide() {
+  let md;
+  try { md = (await import('./user-guide.js')).default; }
+  catch (err) { reportError('The user guide could not be loaded', err); return; }
+  const body = document.createElement('div'); body.className = 'help-doc'; body.tabIndex = 0;
+  body.innerHTML = platformText(mdToHtml(md));
+  const toc = document.createElement('nav'); toc.className = 'help-toc'; toc.setAttribute('aria-label', 'Contents');
+  toc.innerHTML = [...body.querySelectorAll('h2')].map((h) => `<a href="#${h.id}">${h.textContent}</a>`).join('');
+  body.prepend(toc);
+  body.addEventListener('click', (e) => { const a = e.target.closest('a[href^="#"]'); if (!a) return; e.preventDefault(); body.querySelector(a.getAttribute('href'))?.scrollIntoView({ block: 'start' }); });
+  showModal({ title: `${APP} user guide`, body, okLabel: 'Close', hideCancel: true, ok: () => {} });
+}
+
+// Accessibility: every icon-only control gets an accessible name from its tooltip.
+function labelControls(root = document) {
+  for (const el of root.querySelectorAll('button, input, select, [role="button"]')) {
+    if (el.hasAttribute('aria-label') || el.getAttribute('aria-labelledby')) continue;
+    const txt = (el.textContent || '').trim();
+    const t = el.title || el.dataset.tip || el.closest('label')?.textContent?.trim();
+    if ((!txt || el.tagName !== 'BUTTON') && t && !el.closest('label')) el.setAttribute('aria-label', t);
+  }
+}
+labelControls(); new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) labelControls(n); }).observe(document.body, { childList: true, subtree: true });
+
 function status(msg) { $('#status').textContent = platformText(msg); }
 let toastTimer = 0, toastUntil = 0;
 /** Brief notice. A notice arriving while another is still showing is added below it, so neither is lost. */
@@ -4911,7 +5106,7 @@ function scheduleHistogram() {
   clearTimeout(histTimer);
   histTimer = setTimeout(() => {
     if (!doc()) return;
-    if (compDirty) { composite(); compDirty = false; }
+    freshComp();
     const s = Math.min(1, 512 / Math.max(doc().width, doc().height));
     const c = makeCanvas(doc().width * s, doc().height * s); const x = ctxOf(c); x.drawImage(comp, 0, 0, c.width, c.height);
     drawHistogram($('#histogram'), histogram(x.getImageData(0, 0, c.width, c.height)));
@@ -5713,6 +5908,9 @@ window.tintwork = {
   pickedLayers: () => pickedLayers().map((l) => l.id), alignLayers, straightenBy, autoStraightenCmd, autoEnhanceCmd, autoWhiteBalanceCmd, wbPickAt,
   detectTilt: () => auto.detectTilt(analysisImage(600).img), applyLook, allLooks, saveLookFromSelection, exportLooksJSON, importLooksJSON, importCubeText,
   setLookIntensity, addAdj: (type, params, name) => { const l = makeAdjLayer(type, params, name); addLayer(l, name || type); return l; }, analysisImage, layerBounds: (id) => layerBounds(doc(), layerById(doc(), id)),
+  renderNow: () => { render(); }, markDirty: () => { compDirty = true; }, adjInteractive,
+  // v1.0
+  APP_VERSION, compositeCanvas: () => { freshComp(); return comp; }, guardSize, estimateMB, mdToHtml, openUserGuide, onGlobalError, refreshWelcome, renderExportBlob: (type, q) => renderExport(type, q), reportError, MEM_LIMIT_MB,
   state, cmds, run, setTool, openFile, newDocument, history, commit, composite, activeLayer, setFg, serializeProject, openAdjust, ADJ,
   ops, setSelection, makeSelection, rectMask, renderSource, updateLayersPanel, touch, fitToScreen,
   mods, setMod, openSheet, closeSheet, toast, MAX_PIXELS, IS_IOS, fitPixels, renderExport,
@@ -5736,8 +5934,8 @@ window.tintwork = {
   closeContextMenu, showContextMenu, adjustBrushHardness, adjustBrushSize, applyGradient, addShapeLayer, shapeGeom, redEyeAt,
   get engine() { return gfx.engine; }, compositeSettled, get engineReady() { return gfx.ready || Promise.resolve(gfx.engine); },
   get zoom() { return state.zoom; },
-  async compositePixelAsync(x, y) { if (compDirty) { composite(); compDirty = false; } await compositeSettled(); return [...compCtx.getImageData(x, y, 1, 1).data]; },
-  compositePixel(x, y) { if (compDirty) { composite(); compDirty = false; } return [...compCtx.getImageData(x, y, 1, 1).data]; },
+  async compositePixelAsync(x, y) { freshComp(); await compositeSettled(); return [...compCtx.getImageData(x, y, 1, 1).data]; },
+  compositePixel(x, y) { freshComp(); return [...compCtx.getImageData(x, y, 1, 1).data]; },
   get doc() { return state.doc; },
   get workerAvailable() { return ops.workerStatus().available; },
   /** Resolves once queued worker jobs have finished. */

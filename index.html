@@ -45,7 +45,19 @@
           <button data-cmd="open" class="primary">Open image…</button>
           <button data-cmd="new">New canvas…</button>
           <button data-cmd="camera" class="mobile-only">Take photo…</button>
+          <button data-cmd="openRecent">Recent…</button>
         </div>
+        <h2 class="wl-h">Start from a size</h2>
+        <div class="row wl-presets" id="welcomePresets">
+          <button data-preset="1920x1080" title="Full HD, 16:9">1920×1080</button>
+          <button data-preset="1080x1080" title="Square post">1080×1080</button>
+          <button data-preset="1080x1350" title="Portrait post, 4:5">1080×1350</button>
+          <button data-preset="2480x3508" title="A4 at 300 ppi">A4 300 ppi</button>
+          <button data-preset="6000x4000" title="24 megapixel photo, 3:2">24 MP</button>
+        </div>
+        <h2 class="wl-h">Recent files</h2>
+        <ul id="welcomeRecent" class="recent-list"><li class="muted">No recent files yet.</li></ul>
+        <p class="muted wl-help"><button class="link" data-cmd="userGuide">User guide</button> · <button class="link" data-cmd="shortcuts">Keyboard shortcuts</button></p>
       </div>
     </section>
     <aside id="panels">

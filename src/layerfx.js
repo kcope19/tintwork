@@ -250,5 +250,28 @@ export function effectStack(src, styles) {
     else { const hs = s.size / 2; for (let i = 0; i < a.length; i++) { const sd = dIn[i] > 0 ? dIn[i] - 0.5 : dOut[i] - 0.5; a[i] = Math.min(1, Math.max(0, hs + 0.5 - Math.abs(sd))); } }
     over.push(item(a, s));
   }
-  return { w, h, ox, oy, under, over, bodyFx: on.some((s) => s.type === 'colorOverlay' || s.type === 'innerGlow' || s.type === 'innerShadow') };
+  // v1.0: effects that recolour the pixels (in FX order) as float coverage, applied "atop" the 16-bit body
+  const body = []; let inv = null;
+  for (const s of on) {
+    if (s.type === 'colorOverlay') body.push({ ...item(null, s), blend: s.blend || 'source-over', full: true });
+    else if (s.type === 'innerGlow' || s.type === 'innerShadow') {
+      // inner shadow: the inverted shape continues as 1 outside the box (as in renderStyled); inner glow's canvas has no margin: work on a plane padded by the blur + offset reach
+      const [dx, dy] = s.type === 'innerShadow' ? off(s) : [0, 0], m = s.type === 'innerGlow' ? 0 : Math.ceil(Math.abs(dx) + Math.abs(dy) + s.size * 2 + 4);
+      const W2 = w + 2 * m, H2 = h + 2 * m; inv = new Float32Array(W2 * H2).fill(1);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) inv[(y + m) * W2 + x + m] = 1 - A[y * w + x];
+      let big = blurPlane(inv, W2, H2, s.size / 2); if (dx || dy) big = shiftPlane(big, W2, H2, dx, dy);
+      const a = new Float32Array(w * h); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) a[y * w + x] = big[(y + m) * W2 + x + m];
+      body.push({ ...item(a, s), blend: s.blend || 'source-over' });
+    }
+  }
+  const bodyFx = body.length > 0 && !body.every((b) => BODY_BLENDS[b.blend]);
+  return { w, h, ox, oy, under, over, body, bodyFx };
 }
+/** Separable blend modes in float (base b, top t in 0..1) supported by the 16-bit body effects. */
+export const BODY_BLENDS = {
+  'source-over': (b, t) => t, normal: (b, t) => t, multiply: (b, t) => b * t, screen: (b, t) => b + t - b * t,
+  overlay: (b, t) => (b <= 0.5 ? 2 * b * t : 1 - 2 * (1 - b) * (1 - t)), darken: Math.min, lighten: Math.max,
+  difference: (b, t) => Math.abs(b - t), exclusion: (b, t) => b + t - 2 * b * t,
+  'hard-light': (b, t) => (t <= 0.5 ? 2 * b * t : 1 - 2 * (1 - b) * (1 - t)),
+  'soft-light': (b, t) => (t <= 0.5 ? b - (1 - 2 * t) * b * (1 - b) : b + (2 * t - 1) * ((b <= 0.25 ? ((16 * b - 12) * b + 4) * b : Math.sqrt(b)) - b)),
+};

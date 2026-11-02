@@ -6,6 +6,30 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.0 "core complete" summary (2026-11-01)
+
+Tintwork 1.0 is a free, local-first, browser-based layered editor. The tables below for v0.5–v0.9 hold the detail and sources; this is the overall picture.
+
+**Where Tintwork matches the paid editors (everyday photo editing)**
+- Layers with masks, groups (including pass-through), clipping masks, 16+ blend modes, opacity, multi-select, align/distribute.
+- Non-destructive adjustment layers (curves, levels, hue/saturation, exposure, white balance, 3D LUTs), live filters, editable text, layer styles (drop/inner shadow, outer/inner glow, stroke, colour overlay).
+- Selections (marquee, lasso, polygonal, wand, colour range, refine edge, feather), free transform, warp, perspective, liquify, crop/straighten with presets.
+- Retouching (clone, healing, spot healing, dodge/burn, red eye), 16-bit documents end to end, PNG 16-bit in/out.
+- Files: tabs, project files, recent files, multi-size export, recorded actions and folder batch processing, autosave with crash recovery, user guide and keyboard shortcuts that follow Windows conventions.
+
+**Where it beats them**
+- No install, no account, no subscription; it runs offline as a PWA, and images never leave the device.
+- Crash recovery is on by default for every open document with its undo history.
+- Looks are plain adjustment-layer groups you can open and edit, and batch export writes several sizes and formats in one pass.
+- Transparent engineering: a built-in benchmark, a CPU fallback for every GPU feature, and an automated test suite (568 checks).
+
+**Where it trails**
+- No RAW development, ICC colour management, CMYK, 32-bit/HDR, or PSD/TIFF files (Photoshop, Affinity Photo and Pixelmator Pro all have these).
+- No generative or AI-assisted features (generative fill, subject/sky selection, AI denoise or upscale), no content-aware fill or move.
+- Fewer specialist tools: no vector shapes or vector masks, no pen tool, no smudge/mixer brush, no pressure or custom brushes, no bevel/emboss or pattern overlays, no frequency-separation helpers, no panorama/HDR merge or focus stacking.
+- Scale: very large documents are limited by browser memory (guardrails warn and refuse), and full 24 MP recomposites take about 0.3 s on the CPU path; the GPU path is unverified on real Windows hardware until Help ▸ Run performance benchmark is run there.
+- Actions record whole commands only; there are no conditional actions, droplets or scripting beyond the devtools API.
+
 ## v0.9: documents, presets, multi-size export, batch and actions (researched 2026-11-01)
 
 | Area | Photoshop | Affinity Photo | Tintwork v0.9 |

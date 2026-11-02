@@ -7,7 +7,18 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
-![Workspace](screenshots/04-layer-blend-brush.png)
+## What's new in v1.0 ("core complete")
+
+![Workspace](screenshots/10x-workspace.png)
+
+- **Welcome screen**: open, new canvas, recent files (Chrome/Edge) and one-click size presets (Full HD, square, 4:5, A4 300 ppi, 24 MP) whenever no document is open (screenshot `10x-welcome.png`).
+- **User guide**: [docs/USER_GUIDE.md](docs/USER_GUIDE.md), also built into the app as Help ▸ User guide (**F1**) with a contents bar; it works offline (screenshot `10x-user-guide.png`). After editing the guide run `npm run guide` to refresh `src/user-guide.js` (a test checks they match).
+- **Error handling**: any uncaught error or rejected promise shows a short, friendly notice and autosaves the current document immediately, so a reload can restore it. Damaged or unreadable files are reported by name and nothing else changes.
+- **Memory guardrails**: New canvas, Image size and Open estimate the memory a document needs (pixels × layers, more for 16-bit) against what the browser allows. Large documents get a warning; documents that would not fit are refused, and an image too large to open is offered scaled down.
+- **Accessibility basics**: every control has an accessible name (icon buttons take their tooltip), a visible keyboard focus outline everywhere, and muted text raised to 6.3:1 contrast.
+- **Faster on 24 MP photos (CPU path)**: brush strokes now recomposite only the dirty rectangle (742 → ~85 ms per mouse move); adjustment-layer sliders show a 2 MP preview while dragging and sharpen when you stop (760 → ~335 ms per step); unadjusted adjustment layers copy straight into the composite, and big layers are drawn only over their painted bounds. Measure with `node scripts/perf.mjs [cpu|gpu|webgpu]`; numbers are in `docs/perf-before.json` and `docs/perf-after.json`. GPU numbers from this box are software (SwiftShader) and not representative; run Help ▸ Run performance benchmark on real hardware.
+- **16-bit layer styles**: inner glow, inner shadow and colour overlay are now computed in float in 16-bit documents (separable blend modes), like drop shadow, outer glow and stroke.
+- Fixed: after dragging an adjustment-layer slider on a large document the full-resolution result could fail to replace the preview.
 
 ## What's new in v0.9 (documents, presets, batch export, actions)
 
@@ -248,13 +259,15 @@ http(s) rather than opened as a `file://` URL because it uses ES modules.
 
 ```bash
 npx playwright install chromium webkit   # one time
-npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile, v0.7, v0.8 and v0.9 tests
+npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile, v0.7, v0.8, v0.9 and v1.0 tests
 npm run test:platform    # scripts/desktop-platform-test.mjs: Windows/Mac keyboard labels and shortcuts
 npm run bench            # scripts/bench.mjs: GPU vs CPU timings and banding
 npm run test:desktop     # scripts/smoke-test.mjs (Chromium)
 npm run test:v07         # scripts/v07-test.mjs: groups, clipping, styles, warp/perspective/liquify, benchmark, 16-bit dodge/burn/red eye on each engine
 npm run test:v08         # scripts/v08-test.mjs: pass-through groups per engine, 16-bit groups/styles/warp, multi-select/align, white balance, auto enhance, auto straighten, looks, LUTs
 npm run test:v09         # scripts/v09-test.mjs: GPU 3D LUT per engine, tabs (history, close prompt, layer drag), presets, actions, export sizes, batch + cancel, 16-bit effects, auto options
+npm run test:v10         # scripts/v10-test.mjs: open → edit → save → reopen → export + autosave recovery, welcome, user guide, error catcher, memory guardrails, accessibility, dirty-rect and proxy rendering, 16-bit inner effects
+node scripts/perf.mjs cpu --json out.json  # 24 MP timings: open, pan/zoom, layer toggle, adjustment drag, brush, export
 npm run test:mobile      # scripts/mobile-test.mjs (WebKit iPhone 14 + Chromium Pixel 7, touch input)
 ```
 
@@ -355,6 +368,8 @@ src/batch.js          export naming patterns, output sizes, ZIP writer
 src/platform.js       Mac vs Windows/Linux modifiers, key labels, reserved shortcuts
 vendor/fflate/        bundled deflate library (MIT)
 docs/COMPARISON.md    living comparison with paid editors
+docs/USER_GUIDE.md    user guide (built into src/user-guide.js by scripts/build-guide.mjs)
+scripts/perf.mjs      24 MP performance profile (docs/perf-before.json, docs/perf-after.json)
 scripts/bench.mjs     GPU vs CPU benchmark
 fonts/                bundled OFL web fonts + licenses
 src/icons.js          original SVG icons
@@ -370,7 +385,7 @@ test-assets/          generated test image (export outputs are git-ignored)
 
 ## Known limitations
 
-- On documents over 2.5 MP, adjustment layers and live filters are computed in the worker, so the previous result shows briefly after each edit.
+- On documents over 2.5 MP, adjustment layers and live filters are computed in the worker. While a slider is dragged a reduced-resolution preview is shown; the full result replaces it a moment after you stop. The very first render of a new adjustment layer shows the image unadjusted until the worker finishes.
 - Live filters cover Gaussian blur, sharpen, noise and vignette only, and there is one filter mask per layer. Transforming a selection on a live layer converts it to pixels. Text layers are rasterized when converted.
 - Warp has no custom grid sizes, split lines or Bézier handles, and perspective is a single plane. Warp and perspective ignore the selection and act on the whole layer. Transforming a group or several layers converts text and smart layers inside to pixels and ignores the selection. Resampling is bilinear (canvas smoothing), so repeated transforms of a pixel layer soften it; live layers keep their original pixels, but those originals are resampled too.
 - Color range uses one sample color (no add/subtract eyedroppers or localized clusters), and its preview is downscaled. Refine edge has no hair/edge detection or color decontamination.
@@ -388,11 +403,13 @@ test-assets/          generated test image (export outputs are git-ignored)
 - WebGPU: headless/software adapters use the readback output (slower). Direct canvas output is only used on real GPUs, and it has not been benchmarked on Windows hardware from this box. WebGL2 has no brush path, so brushes fall back to the CPU there. WebGPU brush stamping is an async engine call and only pays off on a real GPU.
 - Shapes are raster layers (not editable vector shapes). Gradients have no editor for multi-stop presets, no angle or diamond types, and no gradient fill layer.
 - Groups: a group that is itself clipped to the layer below composites at 8 bits in 16-bit documents. Align with several layers aligns to their combined bounds (not to a selection); distribute uses centres only (no equal-gap mode).
-- Layer styles: no bevel/emboss, satin, gradient/pattern overlay, contours or style presets, and one instance per effect. Shadow and glow blend modes apply within the layer's effects, not against the layers below. In 16-bit documents, shadow, glow and stroke pixels are 16-bit; layers with an inner glow, inner shadow, colour overlay or a mask still compute effect pixels at 8 bits.
+- Layer styles: no bevel/emboss, satin, gradient/pattern overlay, contours or style presets, and one instance per effect. Shadow and glow blend modes apply within the layer's effects, not against the layers below. In 16-bit documents, all effect pixels are 16-bit, except on masked layers and with non-separable blend modes (hue, saturation, color, luminosity, dodge/burn) on inner effects, which use 8-bit effect pixels.
 - Liquify: no twirl, freeze mask or face-aware tools; restore only undoes distortion within the current stroke (use undo for earlier strokes).
 - GPU and CPU warp results can differ by about one level at edge pixels.
 - The benchmark on this box runs on SwiftShader (software); its GPU numbers are not representative of real Windows GPUs.
-- Deferred by request: mouse side-button mapping, deep accessibility and input customization.
+- Deferred by request: mouse side-button mapping, deep accessibility (screen-reader announcements for canvas edits, high-contrast theme) and input customization.
+- Memory guardrails are estimates: the browser does not report canvas (GPU/bitmap) memory, so the budget is based on the JS heap limit and device memory. Undo history is not counted.
+- Full 24 MP recomposites on the CPU path still take about 0.3 s (Canvas 2D software raster on this box); everyday edits avoid them, but toggling a layer or changing a blend mode on a 24 MP document is not instant without a GPU.
 - Brush has no pressure sensitivity, spacing or texture settings yet.
 - Tabs: one document is visible at a time (no floating windows or side-by-side view); dragging a layer works from the Layers panel only, not from the canvas. Ctrl+Tab may be taken by the browser outside the installed app; Ctrl+F6 always works.
 - Actions record whole commands only (no brush strokes, selections, layer edits or text), steps cannot be edited, reordered or made conditional, and there are no droplets. Batch runs one image at a time, never overwrites originals, and can only write to a folder in Chrome/Edge (other browsers get a ZIP).
@@ -406,7 +423,7 @@ Milestones to 1.0 (Windows desktop, Chrome and Edge first; Mac and iPhone kept w
 - ~~**v0.7**: groups, clipping masks, layer styles, warp and perspective transform, liquify, built-in benchmark~~ (done).
 - ~~**v0.8**: multi-layer selection, group transforms, pass-through and 16-bit fixes, auto enhance, auto white balance, straighten, looks and LUTs~~ (done).
 - ~~**v0.9**: multi-document tabs, crop presets, multi-size and batch export, actions~~ (done).
-- **v1.0**: onboarding, help, accessibility, error handling, memory tuning, full tests, user guide.
+- ~~**v1.0**: onboarding, help, accessibility, error handling, memory tuning, full tests, user guide~~ (done).
 
 Longer-term items:
 
