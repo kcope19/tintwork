@@ -6,6 +6,24 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v0.8: core structure, automatic tools and looks (researched 2026-11-01)
+
+| Feature | Tintwork status | How paid tools do it | Our improvement / gap |
+|---|---|---|---|
+| Multi-layer selection | ✅ Ctrl+click toggles and Shift+click selects a range in the Layers panel. Move tool, arrow-key nudge, free transform, Group (Ctrl+G), Delete and Align/Distribute all act on every selected layer | Photoshop: Shift-click adjacent and Ctrl/Cmd-click non-adjacent layers, then use the Move tool or Layer ▸ Align / Distribute [41][42] | On par for everyday use. Gap: no "align to selection" option for multiple layers (a single layer aligns to the selection or the canvas) |
+| Align / distribute | ✅ Left, horizontal centres, right, top, vertical centres and bottom; distribute horizontally or vertically by centres (needs 3 or more layers); each is one undo step | Photoshop: align to edges or centres for 2+ layers; distribute for 3+, including distribute-spacing variants [41][43] | Same core set. Gap: no "distribute spacing" (equal gaps) mode or key-object alignment |
+| Free transform on groups | ✅ Ctrl+T on a group or on several layers transforms all of them as one box. Each layer (and its mask) is resampled once with the shared matrix | Photoshop: free transform works on groups and on several layers [42] | Comparable. Text and smart layers are converted to pixels when transformed as part of a group |
+| Pass-through groups with opacity or a mask | ✅ Now rendered as true pass-through on the CPU, WebGL2 and WebGPU: the contents act on the layers below, then the result is mixed back with the untouched backdrop by opacity × mask (CPU/GPU results match in tests) | Photoshop: Pass Through is the default group mode; opacity and masks apply to the group's combined effect [24][25] | Fixes the v0.7 gap (these groups used to be isolated) |
+| 16-bit groups, styles, warp, liquify | ✅ In 16-bit documents groups composite in float, styled layers keep their 16-bit body (only pixels the effects change are 8-bit), and warp, perspective and liquify resample the 16-bit data | Photoshop: groups, layer styles and transforms work in 16-bit mode [3] | Closes most of the v0.7 8-bit fallbacks. Gaps: effect pixels (stroke, glow, shadow) are still computed at 8 bits; a group that is itself clipped composites at 8 bits |
+| Auto enhance | ✅ Image ▸ Auto enhance (Ctrl+Shift+L) analyses the picture and adds an editable "Auto enhance" group: white balance, levels (0.5% clip plus a midtone gamma), a gentle S-curve and, for dull pictures, a saturation boost. It only adds the steps the picture needs | Photoshop: Auto Tone / Auto Contrast / Auto Color, either destructive (Image menu) or as the Auto button on a Levels/Curves layer, with algorithm and clipping options (default 0.1% clip) [44][45]. Camera Raw / Lightroom: an Auto button sets the Basic sliders [47] | **Improvement:** non-destructive by default, and every step is a normal adjustment layer you can tweak or delete. Gap: no options dialog (algorithm, clip %, target colours) |
+| Auto white balance, eyedropper, temperature/tint | ✅ White balance adjustment (Adjust menu or an adjustment layer) with Temperature and Tint (−100..100), computed in linear light and luminance-preserving, on every engine. Auto white balance uses a gray-world estimate over trustworthy pixels; the eyedropper makes the clicked spot neutral (it edits the selected WB layer or adds one) | Camera Raw: White Balance menu (As Shot, Auto, presets), Temperature and Tint (−100..100 for JPEG/TIFF) and a White Balance tool that makes the clicked spot neutral [46][47] | Same model for already-rendered images, as an editable layer. Gaps: no Kelvin scale or camera presets (we do not decode RAW) |
+| Straighten (manual and auto) | ✅ Straighten tool: drag along a line that should be level or vertical; the picture is rotated and (optionally) cropped to the largest clean rectangle with the same aspect. Auto straighten finds the dominant near-horizontal or near-vertical line with a Hough transform on Sobel edges (±20°, 0.1° steps) | Photoshop: Straighten in the Crop tool's options bar, or the Ruler tool + Straighten (auto-crops; Alt avoids the crop) [48][49]. Camera Raw: Geometry ▸ Auto/Level upright with Constrain crop [47] | Comparable manual tool. **Auto** straighten without AI. Gaps: no content-aware fill of the corners instead of cropping; no multi-axis Upright |
+| Looks / presets | ✅ Looks panel with 12 original presets built only from adjustment layers. Each one is added as an editable pass-through group whose opacity is the intensity slider. Save your own look from a group or selected adjustment layers, and import/export looks as JSON | Lightroom: Presets panel (Recommended, Premium, Yours) with an Amount slider from 0 to 200 [50][51] | **Improvement:** the look stays as visible, editable layers instead of hidden slider values. Gaps: intensity goes from 0 to 100% only (no exaggerate above 100%), and there are no AI-recommended or adaptive presets |
+| 3D LUT import | ✅ Layer ▸ New adjustment layer ▸ 3D LUT from .cube file: trilinear lookup, an Amount control, layer opacity and mask; the table is saved inside the project file | Photoshop: Color Lookup adjustment layer, Load 3D LUT (.cube, .3dl, .look); strength through layer opacity [52] | Comparable for .cube. Gaps: no .3dl/.look/ICC formats or built-in LUT library; LUT layers render on the CPU (GPU engines fall back for that layer) |
+
+### Summary
+v0.8 finishes the core layer structure: multi-layer selection with move, transform, group, align and distribute; free transform on groups; true pass-through groups with opacity or masks on every engine; and 16-bit groups, styles, warp and liquify. On top of that it adds non-AI automatic tools that, unlike the paid editors' menu commands, always create editable adjustment layers (auto enhance, auto white balance, a white balance eyedropper and a Hough-based auto straighten), a Looks panel whose presets stay as editable layer groups, and .cube LUT import. The main gaps left are content-aware fill for straightened corners, a Kelvin/RAW white balance, preset amounts over 100%, and an options dialog for the auto tools.
+
 ## v0.7: groups, clipping, layer styles, warp/perspective/liquify, benchmark (researched 2026-11-01)
 
 | Feature | Tintwork status | How paid tools do it | Our improvement / gap |
@@ -104,6 +122,18 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 38. Apple, Pixelmator Pro User Guide, "Reshape areas of an image": https://support.apple.com/guide/pixelmator-pro/reshape-areas-of-an-image-pixab55580d5/macos, and "Warp a layer": https://support.apple.com/guide/pixelmator-pro/warp-a-layer-md49514rvgv2/mac
 39. Talk Photography, "Affinity Photo 2 performance testing" (Help ▸ Benchmark): https://www.talkphotography.co.uk/threads/affinity-photo-2-performance-testing.764179/
 40. Notebookcheck, "Affinity Photo 2 benchmark comparison": https://www.notebookcheck.net/Affinity-Photo-2-benchmark-comparison-Apple-M1-faces-off-against-Intel-Core-AMD-Ryzen-and-Nvidia-GeForce.672070.0.html
+41. Adobe, "Align layers in Photoshop": https://helpx.adobe.com/photoshop/desktop/create-manage-layers/create-layer-compositions/align-content-of-layers-and-groups.html
+42. Adobe, "Align and distribute layers": https://helpx.adobe.com/uk/photoshop/using/aligning-layers.html
+43. Adobe, "Distribute layers": https://helpx.adobe.com/photoshop/desktop/create-manage-layers/create-layer-compositions/distribute-layers-groups-evenly.html
+44. Adobe, "Use Auto Tone, Auto Contrast, and Auto Color": https://helpx.adobe.com/photoshop/desktop/adjust-color/color-corrections/apply-auto-tone-auto-contrast-and-auto-color.html
+45. Adobe, "Make quick tonal adjustments" (Auto Color Correction Options): https://helpx.adobe.com/sg/photoshop/using/making-quick-tonal-adjustments.html
+46. Adobe, "Make color and tonal adjustments in Camera Raw" (White Balance, Temperature, Tint, White Balance tool): https://helpx.adobe.com/camera-raw/using/make-color-tonal-adjustments-camera.html
+47. Adobe, "Introduction to Camera Raw" (Auto, Geometry, Constrain crop): https://helpx.adobe.com/camera-raw/using/introduction-camera-raw.html
+48. Adobe, "Straighten tilted photos": https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/straighten-tilted-photos.html
+49. Adobe, "Adjust rotation and canvas size" (Ruler tool Straighten): https://helpx.adobe.com/uk/photoshop/using/adjusting-crop-rotation-canvas.html
+50. Adobe, "Edit photos with Presets in Lightroom" (Amount slider 0–200): https://helpx.adobe.com/lightroom/desktop/edit-photos/presets.html
+51. Adobe, "Apply Presets in Lightroom Classic": https://helpx.adobe.com/lightroom-classic/desktop/process-and-develop-photos/apply-presets.html
+52. Adobe, "Edit a photo with color lookup adjustment": https://helpx.adobe.com/ph_fil/photoshop/how-to/edit-photo-color-lookup-adjustment.html
 
 ### Benchmark caveat
 `scripts/bench.mjs` ran on a Linux box with no GPU. Headless Chromium used SwiftShader (software) for both WebGL2 and WebGPU and WebKit used software GL, so GPU timings there are slower than the CPU worker and are not representative of real hardware (see README).
@@ -111,6 +141,6 @@ For the v0.5 features, Tintwork now matches the core workflows of the paid edito
 ## Roadmap (feature areas researched as each milestone lands; Windows + Chrome/Edge first)
 - ~~v0.6: WebGPU engine, mouse precision, File System Access, installable PWA, Windows conventions; shapes, gradients, dodge/burn, red-eye~~ (done)
 - ~~v0.7: groups, clipping masks, layer styles, warp and perspective, liquify, built-in benchmark~~ (done)
-- v0.8: auto enhance, auto white balance, straighten, looks and presets
+- ~~v0.8: auto enhance, auto white balance, straighten, looks and presets~~ (done)
 - v0.9: multiple document tabs, crop presets, batch export
 - v1.0: onboarding, help, accessibility, error handling, iPhone memory tuning

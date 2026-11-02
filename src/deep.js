@@ -2,7 +2,7 @@
 // with straight (non-premultiplied) alpha and sRGB-encoded values 0..65535. Every operation mirrors the
 // 8-bit version in pixels.js (same formulas, same parameters) so switching depth never changes the look,
 // only the precision. Also holds a float compositor with the 16 blend modes for 16-bit export / flatten.
-import { pointFns, rgbToHsl, hslToRgb, boxBlurPass, boxSizes } from './pixels.js';
+import { pointFns, rgbToHsl, hslToRgb, boxBlurPass, boxSizes, cubeLookup } from './pixels.js';
 
 export const BLEND_NAMES = ['source-over', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn',
   'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
@@ -33,9 +33,10 @@ const hash01 = (i, seed) => {
  */
 export function deepToImageData(d, { dither = false, seed = 1 } = {}) {
   const s = d.data, out = new ImageData(d.width, d.height), o = out.data;
-  if (!dither) { for (let i = 0; i < s.length; i++) o[i] = (s[i] + 128) / 257; return out; }
+  // Uint8ClampedArray rounds to nearest, so v / 257 is the nearest 8-bit level (the same rounding reconcileDeep checks)
+  if (!dither) { for (let i = 0; i < s.length; i++) o[i] = s[i] / 257; return out; }
   for (let i = 0; i < s.length; i += 4) {
-    o[i + 3] = (s[i + 3] + 128) / 257;
+    o[i + 3] = s[i + 3] / 257;
     for (let c = 0; c < 3; c++) { const v = s[i + c] / 257, f = Math.floor(v); o[i + c] = f + (hash01(i + c, seed) < v - f ? 1 : 0); }
   }
   return out;
@@ -183,7 +184,7 @@ function autoLevelsDeep(d) {
   return applyLut16(d, pointFns('levels', { inBlack: lo, inWhite: hi }));
 }
 
-export const DEEP_OPS = ['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'gaussianBlur', 'sharpen', 'noise', 'vignette', 'autoLevels'];
+export const DEEP_OPS = ['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'gaussianBlur', 'sharpen', 'noise', 'vignette', 'autoLevels', 'whiteBalance', 'lut3d'];
 /** 16-bit counterpart of pixels.runOp (in place). info.linear = blur/sharpen in linear light. */
 export function runDeep(name, d, params = {}, info = {}) {
   const fns = pointFns(name, params);
@@ -197,8 +198,19 @@ export function runDeep(name, d, params = {}, info = {}) {
     case 'noise': return noiseDeep(d, params);
     case 'vignette': return vignetteDeep(d, params, info.docW, info.docH, info.offX, info.offY);
     case 'autoLevels': return autoLevelsDeep(d);
+    case 'lut3d': return lut3dDeep(d, params);
     default: throw new Error(`Unknown operation ${name}`);
   }
+}
+function lut3dDeep(d, p) {
+  const L = p.table; if (!L) return d;
+  const a = d.data, o = [0, 0, 0], k = (p.amount ?? 100) / 100, cl = (v) => (v < 0 ? 0 : v > 65535 ? 65535 : Math.round(v));
+  for (let i = 0; i < a.length; i += 4) {
+    if (a[i + 3] === 0) continue;
+    const r = a[i], g = a[i + 1], b = a[i + 2]; cubeLookup(L, r / 65535, g / 65535, b / 65535, o);
+    a[i] = cl(r + (o[0] * 65535 - r) * k); a[i + 1] = cl(g + (o[1] * 65535 - g) * k); a[i + 2] = cl(b + (o[2] * 65535 - b) * k);
+  }
+  return d;
 }
 /** Soft-selection blend (mask 0..255 per pixel) of a processed 16-bit result over the original. */
 export function blendMaskedDeep(orig, res, mask) {
@@ -280,7 +292,22 @@ export function compositeDeep(W, H, layers, { background = null, info = {} } = {
   const acc = new Float32Array(W * H * 4);
   if (background) for (let i = 0; i < acc.length; i += 4) { acc[i] = background[0] / 255; acc[i + 1] = background[1] / 255; acc[i + 2] = background[2] / 255; acc[i + 3] = 1; }
   const maskAt = (m, x, y) => { const mx = x - m.x, my = y - m.y; return mx < 0 || my < 0 || mx >= m.w || my >= m.h ? 0 : m.alpha[my * m.w + mx] / 255; };
+  let acc2 = acc; const stack = [];
+  return composeList(acc2);
+  function composeList(acc) {
   for (const L of layers) {
+    if (L.kind === 'groupBegin') { stack.push(acc); acc = new Float32Array(W * H * 4); continue; }
+    if (L.kind === 'passBegin') { stack.push(acc); acc = acc.slice(); continue; }
+    if (L.kind === 'groupEnd' || L.kind === 'passEnd') {
+      const inner = acc; acc = stack.pop();
+      if (L.opacity <= 0) continue;
+      for (let y = 0, i = 0; y < H; y++) for (let x = 0; x < W; x++, i += 4) {
+        const k = L.opacity * (L.mask ? maskAt(L.mask, x, y) : 1); if (k <= 0) continue;
+        if (L.kind === 'passEnd') { const kk = 1 - k; for (let c = 0; c < 4; c++) acc[i + c] = acc[i + c] * kk + inner[i + c] * k; }
+        else if (inner[i + 3] > 0) blendInto(acc, i, inner[i] * k, inner[i + 1] * k, inner[i + 2] * k, inner[i + 3] * k, L.mode);
+      }
+      continue;
+    }
     if (L.opacity <= 0) continue;
     if (L.kind === 'adjust') {
       const below = accToDeep(acc, W, H);
@@ -302,5 +329,7 @@ export function compositeDeep(W, H, layers, { background = null, info = {} } = {
       blendInto(acc, (y * W + x) * 4, sd[j] * f, sd[j + 1] * f, sd[j + 2] * f, a, L.mode);
     }
   }
+  while (stack.length) acc = stack.shift(); // unbalanced markers: fall back to the outermost buffer
   return acc;
+  }
 }

@@ -14,6 +14,8 @@ export const ICONS = {
   liquify: svg('<path d="M4 4c4 0 4 4 8 4s4-4 8-4"/><path d="M4 12c4 0 4 4 8 4s4-4 8-4"/><path d="M4 20c3 0 5-2 8-2s5 2 8 2"/>'),
   redeye: svg('<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="3"/><path d="M12 10.5v3M10.5 12h3"/>'),
   text: svg('<path d="M5 6V4h14v2M12 4v16M9 20h6"/>'),
+  straighten: svg('<path d="M3 17L21 9"/><path d="M3 20h18" stroke-dasharray="2 2"/><circle cx="12" cy="13" r="1.6"/>'),
+  wbpick: svg('<path d="M14.5 5.5l4 4M17 3a2.1 2.1 0 013 3l-2 2-3-3z"/><path d="M15 7l-9 9-1.5 4.5L9 19l9-9"/><path d="M3 4h5M5.5 1.5v5" />'),
   eyedropper: svg('<path d="M14.5 5.5l4 4M17 3a2.1 2.1 0 013 3l-2 2-3-3z"/><path d="M15 7l-9 9-1.5 4.5L9 19l9-9"/>'),
   hand: svg('<path d="M8 12V5.5a1.5 1.5 0 013 0V11M11 10V4.5a1.5 1.5 0 013 0V11M14 10.5V6a1.5 1.5 0 013 0v7.5c0 4-2.5 7-6.5 7-2.6 0-4-1.3-5.4-3.4L3.4 13.6a1.5 1.5 0 012.5-1.6L8 14"/>'),
   zoom: svg('<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M10.5 7.5v6M7.5 10.5h6"/>'),

@@ -64,6 +64,18 @@
         <h2>Histogram</h2>
         <canvas id="histogram" width="240" height="64"></canvas>
       </section>
+      <section class="panel" id="looksPanel">
+        <details id="looksDetails"><summary><h2>Looks</h2></summary>
+        <div id="looksGrid" class="looks-grid"></div>
+        <label class="opacity look-intensity" title="Opacity of the selected look group (or the strength new looks start at)">Intensity <input type="range" id="lookIntensity" min="0" max="100" value="100" /> <span id="lookIntensityVal">100%</span></label>
+        <div class="muted look-target">Applies to: <span id="lookTarget">new looks</span></div>
+        <div class="panel-actions">
+          <button data-cmd="lookSave" title="Save the selected adjustment layers / look group as your own look">Save look</button>
+          <button data-cmd="lookImport" title="Import looks (.json)">Import</button>
+          <button data-cmd="lookExport" title="Export your looks (.json)">Export</button>
+        </div>
+        </details>
+      </section>
       <section class="panel grow" id="layersPanel">
         <h2>Layers</h2>
         <div class="layer-props">

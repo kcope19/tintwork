@@ -115,6 +115,7 @@ export function scaleMesh(mesh, k, kuv = k) {
 export function renderMeshCPU(src, outW, outH, mesh, ox = 0, oy = 0, out = null, region = null) {
   out ||= new ImageData(outW, outH);
   const sd = src.data, SW = src.width, SH = src.height, od = out.data, { pos, uv, idx } = mesh;
+  const clampd = od instanceof Uint8ClampedArray;
   const rx0 = region ? Math.max(0, region.x) : 0, ry0 = region ? Math.max(0, region.y) : 0;
   const rx1 = region ? Math.min(outW, region.x + region.w) : outW, ry1 = region ? Math.min(outH, region.y + region.h) : outH;
   if (region) for (let y = ry0; y < ry1; y++) od.fill(0, (y * outW + rx0) * 4, (y * outW + rx1) * 4);
@@ -146,10 +147,10 @@ export function renderMeshCPU(src, outW, outH, mesh, ox = 0, oy = 0, out = null,
         const k00 = (1 - fx) * (1 - fy) * sd[i00 + 3], k10 = fx * (1 - fy) * sd[i10 + 3], k01 = (1 - fx) * fy * sd[i01 + 3], k11 = fx * fy * sd[i11 + 3];
         const A = k00 + k10 + k01 + k11, o = (y * outW + x) * 4;
         if (A <= 0.0001) { od[o] = od[o + 1] = od[o + 2] = od[o + 3] = 0; continue; }
-        od[o] = (k00 * sd[i00] + k10 * sd[i10] + k01 * sd[i01] + k11 * sd[i11]) / A; // Uint8ClampedArray rounds
-        od[o + 1] = (k00 * sd[i00 + 1] + k10 * sd[i10 + 1] + k01 * sd[i01 + 1] + k11 * sd[i11 + 1]) / A; // Uint8ClampedArray rounds
-        od[o + 2] = (k00 * sd[i00 + 2] + k10 * sd[i10 + 2] + k01 * sd[i01 + 2] + k11 * sd[i11 + 2]) / A; // Uint8ClampedArray rounds
-        od[o + 3] = A;
+        const r = (k00 * sd[i00] + k10 * sd[i10] + k01 * sd[i01] + k11 * sd[i11]) / A, g = (k00 * sd[i00 + 1] + k10 * sd[i10 + 1] + k01 * sd[i01 + 1] + k11 * sd[i11 + 1]) / A;
+        const bb = (k00 * sd[i00 + 2] + k10 * sd[i10 + 2] + k01 * sd[i01 + 2] + k11 * sd[i11 + 2]) / A;
+        if (clampd) { od[o] = r; od[o + 1] = g; od[o + 2] = bb; od[o + 3] = A; } // Uint8ClampedArray rounds
+        else { od[o] = Math.round(r); od[o + 1] = Math.round(g); od[o + 2] = Math.round(bb); od[o + 3] = Math.round(A); } // 16-bit (Uint16Array truncates)
       }
     }
   }

@@ -9,6 +9,20 @@ any third-party branding, assets or proprietary code.
 
 ![Workspace](screenshots/04-layer-blend-brush.png)
 
+## What's new in v0.8 (core structure, automatic tools, looks)
+
+![Looks panel](screenshots/8x-looks-panel.png)
+
+- **Multi-layer selection**: Ctrl+click toggles layers and Shift+click selects a range. The Move tool, arrow-key nudge, free transform (Ctrl+T), Group (Ctrl+G) and Delete work on all of them. Layer menu ▸ **Align** (left, centres, right, top, middle, bottom) and **Distribute** (horizontal or vertical centres, 3+ layers) (screenshot `8x-multi-select-align.png`).
+- **Free transform on groups**: Ctrl+T on a group transforms everything in it (and the masks) as one box.
+- **True pass-through groups** with opacity or a mask on the CPU, WebGL2 and WebGPU engines (they used to be rendered isolated).
+- **16-bit everywhere it matters**: groups composite in float, styled layers keep their 16-bit pixels where the effects don't touch them, and warp, perspective, liquify and straighten resample the 16-bit data. Also fixes a rounding mismatch that dropped about half of a 16-bit layer's pixels to 8-bit whenever the layer was touched.
+- **Auto enhance** (Image ▸ Auto enhance, **Ctrl+Shift+L**): adds an editable "Auto enhance" group with only the steps the picture needs: white balance, levels, a gentle S-curve and saturation.
+- **White balance**: a temperature/tint adjustment (Adjust menu or adjustment layer, every engine), **Auto white balance** (gray-world), and a **white balance picker** tool: click something that should be grey or white.
+- **Straighten**: a Straighten tool (draw along the horizon or a vertical) and **Auto straighten** (Hough transform on the picture's edges). Both optionally crop to the largest clean rectangle with the same aspect (screenshots `8x-straighten-tool.png`, `8x-straightened.png`).
+- **Looks panel**: 12 original looks made only of adjustment layers. Each one is added as an editable group, and the **Intensity** slider is the group's opacity. **Save look** stores a group (or the selected adjustment layers) as your own look; **Import/Export** use JSON files. Right-click one of your looks to delete it.
+- **3D LUTs**: Layer ▸ New adjustment layer ▸ 3D LUT from .cube file, with an Amount control. The table is saved in the project.
+
 ## What's new in v0.7 (layers structure, warping, benchmark)
 
 ![Groups, clipping masks and layer styles](screenshots/7x-groups-clipping-styles.png)
@@ -222,11 +236,12 @@ http(s) rather than opened as a `file://` URL because it uses ES modules.
 
 ```bash
 npx playwright install chromium webkit   # one time
-npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile and v0.7 tests
+npm test                 # smoke, desktop platform (Chromium + WebKit), Windows/engine, mobile, v0.7 and v0.8 tests
 npm run test:platform    # scripts/desktop-platform-test.mjs: Windows/Mac keyboard labels and shortcuts
 npm run bench            # scripts/bench.mjs: GPU vs CPU timings and banding
 npm run test:desktop     # scripts/smoke-test.mjs (Chromium)
 npm run test:v07         # scripts/v07-test.mjs: groups, clipping, styles, warp/perspective/liquify, benchmark, 16-bit dodge/burn/red eye on each engine
+npm run test:v08         # scripts/v08-test.mjs: pass-through groups per engine, 16-bit groups/styles/warp, multi-select/align, white balance, auto enhance, auto straighten, looks, LUTs
 npm run test:mobile      # scripts/mobile-test.mjs (WebKit iPhone 14 + Chromium Pixel 7, touch input)
 ```
 
@@ -342,7 +357,7 @@ test-assets/          generated test image (export outputs are git-ignored)
 
 - On documents over 2.5 MP, adjustment layers and live filters are computed in the worker, so the previous result shows briefly after each edit.
 - Live filters cover Gaussian blur, sharpen, noise and vignette only, and there is one filter mask per layer. Transforming a selection on a live layer converts it to pixels. Text layers are rasterized when converted.
-- Warp has no custom grid sizes, split lines or Bézier handles, and perspective is a single plane. Warp and perspective ignore the selection and act on the whole layer. Free transform does not work on a whole group yet (the Move tool does). Resampling is bilinear (canvas smoothing), so repeated transforms of a pixel layer soften it; live layers keep their original pixels, but those originals are resampled too.
+- Warp has no custom grid sizes, split lines or Bézier handles, and perspective is a single plane. Warp and perspective ignore the selection and act on the whole layer. Transforming a group or several layers converts text and smart layers inside to pixels and ignores the selection. Resampling is bilinear (canvas smoothing), so repeated transforms of a pixel layer soften it; live layers keep their original pixels, but those originals are resampled too.
 - Color range uses one sample color (no add/subtract eyedroppers or localized clusters), and its preview is downscaled. Refine edge has no hair/edge detection or color decontamination.
 - Autosave keeps the last 20 undo steps per document and 5 documents. iOS Safari may evict website storage after several days without use, so autosave is not a backup; save a project file.
 - Bundled fonts are Latin-subset only, with 400/700 weights (Bebas Neue and Pacifico 400 only). There is no per-character styling, paragraph boxes or text on a path, and transforms and filters rasterize a text layer.
@@ -357,21 +372,23 @@ test-assets/          generated test image (export outputs are git-ignored)
 - The GPU path runs on the main thread. On software GL it is slower than the CPU worker, so automatic mode avoids it there.
 - WebGPU: headless/software adapters use the readback output (slower). Direct canvas output is only used on real GPUs, and it has not been benchmarked on Windows hardware from this box. WebGL2 has no brush path, so brushes fall back to the CPU there. WebGPU brush stamping is an async engine call and only pays off on a real GPU.
 - Shapes are raster layers (not editable vector shapes). Gradients have no editor for multi-stop presets, no angle or diamond types, and no gradient fill layer.
-- Groups: a pass-through group with opacity below 100% or a mask is rendered isolated (like Normal). Only one layer can be selected at a time, so Ctrl+G groups the active layer.
-- Layer styles: no bevel/emboss, satin, gradient/pattern overlay, contours or style presets, and one instance per effect. Shadow and glow blend modes apply within the layer's effects, not against the layers below. Groups, styles, warp and liquify composite at 8 bits in 16-bit documents; warp drops a layer to 8-bit precision, while liquify keeps untouched pixels at 16 bits.
+- Groups: a group that is itself clipped to the layer below composites at 8 bits in 16-bit documents. Align with several layers aligns to their combined bounds (not to a selection); distribute uses centres only (no equal-gap mode).
+- Layer styles: no bevel/emboss, satin, gradient/pattern overlay, contours or style presets, and one instance per effect. Shadow and glow blend modes apply within the layer's effects, not against the layers below. In 16-bit documents, pixels that effects change (stroke, glow, shadow) are computed at 8 bits; the rest of the layer stays 16-bit.
 - Liquify: no twirl, freeze mask or face-aware tools; restore only undoes distortion within the current stroke (use undo for earlier strokes).
 - GPU and CPU warp results can differ by about one level at edge pixels.
 - The benchmark on this box runs on SwiftShader (software); its GPU numbers are not representative of real Windows GPUs.
 - Deferred by request: mouse side-button mapping, deep accessibility and input customization.
 - Brush has no pressure sensitivity, spacing or texture settings yet.
 - Single open document at a time (tabs are not implemented).
+- Auto tools: auto enhance and auto white balance have no options dialog (clip %, algorithm, target colours); white balance is a −100..100 scale, not Kelvin, and there are no camera presets. Auto straighten looks for one dominant line within ±20° and needs clear edges. Straightening crops (or leaves transparent corners) and has no content-aware fill.
+- Looks: intensity goes up to 100% (no exaggerate); looks are stored in this browser (export them to keep a copy). 3D LUTs: .cube only; LUT layers render on the CPU even when a GPU engine is active; the last 6 LUTs are remembered for autosave recovery, and project files always carry their LUTs.
 
 ## Roadmap
 
 Milestones to 1.0 (Windows desktop, Chrome and Edge first; Mac and iPhone kept working):
 - ~~**v0.6**: WebGPU engine (with WebGL2 then CPU fallback), File System Access, installable PWA, Windows conventions, mouse precision, shapes, gradients, dodge/burn, red-eye~~ (done).
 - ~~**v0.7**: groups, clipping masks, layer styles, warp and perspective transform, liquify, built-in benchmark~~ (done).
-- **v0.8**: auto enhance, auto white balance, straighten, looks and presets.
+- ~~**v0.8**: multi-layer selection, group transforms, pass-through and 16-bit fixes, auto enhance, auto white balance, straighten, looks and LUTs~~ (done).
 - **v0.9**: multi-document tabs, crop presets, batch export.
 - **v1.0**: onboarding, help, accessibility, error handling, memory tuning, full tests, user guide.
 
@@ -383,7 +400,7 @@ Longer-term items:
 3. **Non-destructive editing**: ~~adjustment layers, editable text layers~~ (v0.3), ~~live filters, adjustment blend modes~~ (v0.4). Next: clipping masks, more live filters.
 4. **Retouching**: ~~clone stamp~~ (done in v0.2), ~~healing brush, spot healing~~ (v0.3), ~~dodge/burn, red eye~~ (v0.6), smudge.
 5. **History snapshots**: named snapshots, a history brush, and IndexedDB-backed history so large documents don't run out of memory.
-6. ~~**Curves** with a point editor~~ (v0.3). Next: per-channel levels/curves, color balance, vibrance, white balance, LUT import (.cube).
+6. ~~**Curves** with a point editor~~ (v0.3). ~~white balance, LUT import (.cube)~~ (v0.8). Next: per-channel levels/curves, color balance, vibrance.
 7. **Performance**: ~~Web Worker for filters~~ (done in v0.2), ~~WebGL2 GPU pipeline, 16-bit~~ (v0.5). ~~WebGPU compute engine as the primary path on Chrome/Edge~~ (v0.6). Next: OffscreenCanvas, tiled rendering for very large images.
 8. **RAW support** via a WASM decoder (e.g. LibRaw compiled to WASM), EXIF reading and orientation, 16-bit pipeline.
 9. **Plugin system**: a sandboxed filter/tool API (worker-based, ImageData in/out), a manifest format and a plugin manager.

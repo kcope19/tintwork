@@ -1,5 +1,7 @@
 // Tintwork — an original, browser-based layered image editor (Canvas 2D).
-import { floodMask, similarMask, histogram, runOp, channelHistograms, colorRangeMask, HUE_PRESETS } from './pixels.js';
+import { floodMask, similarMask, histogram, runOp, channelHistograms, colorRangeMask, HUE_PRESETS, wbFromNeutral, parseCube } from './pixels.js';
+import * as auto from './auto.js';
+import { LOOKS, lookToLayers, normalizeLook } from './looks.js';
 import { createCurvesEditor, identityCurves } from './curves-editor.js';
 import { readAutosave, writeAutosave, clearAutosave, markAutosaveClean, listAutosaves, readImages, imageRef, deepRef, isDeepId, adoptImage, decodeImage, MAX_SLOTS } from './autosave.js';
 import { makeSelection, shapeMask, rectMask, combine, invertSelection, selectionCanvas, selectionOutline, maskRegion, translateSelection } from './selection.js';
@@ -16,7 +18,7 @@ import { decodePNG, encodePNG, pngInfo } from './png.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.8.0';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -48,6 +50,7 @@ const state = {
     toneSize: 60, toneHardness: 40, toneOpacity: 40, toneMode: 'dodge', toneRange: 'midtones',
     redeyeSize: 40, redeyeDarken: 60,
     liquifySize: 120, liquifyStrength: 50, liquifyMode: 'push',
+    straightenCrop: true, lookIntensity: 100,
     crMode: 'sampled', crColor: null, crFuzziness: 40, refineSmooth: 0, refineShift: 0, refineFeather: 0,
   },
   selPreview: null,   // in-progress rectangle / lasso outline
@@ -281,7 +284,7 @@ function snapshot() {
         id: l.id, name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend,
         x: l.x, y: l.y, rev: l.rev, canvas: old ? old.canvas : cloneCanvas(l.canvas), editMask: l.editMask,
         kind: l.kind, adj: l.adj, text: l.text, // treated as immutable: edits replace the object
-        parent: l.parent ?? null, clip: !!l.clip, styles: l.styles || null, collapsed: !!l.collapsed, // styles are immutable too
+        parent: l.parent ?? null, clip: !!l.clip, styles: l.styles || null, collapsed: !!l.collapsed, look: l.look || null, // styles are immutable too
         ...(l.deep ? { deep: l.deep, deepRev: l.deepRev, deepOX: l.deepOX || 0, deepOY: l.deepOY || 0 } : {}), // 16-bit data is immutable too
         mask: l.mask ? { enabled: l.mask.enabled, rev: l.mask.rev, canvas: oldMask ? oldMask.canvas : cloneCanvas(l.mask.canvas) } : null,
         ...(l.kind === 'smart' ? { // live filters: the source canvas and the filter list are immutable, so they are shared
@@ -439,14 +442,16 @@ function leafItem(d, l) {
     if (hasActiveStyles(l.styles)) {
       const src = maskOn(l) ? maskedCopy(g.canvas, 0, 0, { canvas: l.mask.canvas, x: l.x, y: l.y }) : g.canvas;
       const st = styledOf(l, src, 0, 0, sig); if (!st.canvas) return null;
-      return pix({ l, key: `s${l.id}:${st.ver}`, slot: `p${l.id}`, src: st.canvas, x: st.x, y: st.y, opacity, blend, mask: null, sig });
+      const deepSrc = maskOn(l) ? null : styledDeepOf(st, l, g.canvas, 0, 0, () => deepGroupOf(d, l));
+      return pix({ l, key: `s${l.id}:${st.ver}`, slot: `p${l.id}`, src: st.canvas, deepSrc, x: st.x, y: st.y, opacity, blend, mask: null, sig });
     }
     return pix({ l, key: `g${l.id}:${g.ver}`, slot: `p${l.id}`, src: g.canvas, x: 0, y: 0, opacity, blend, mask: maskItem(l), sig });
   }
   const sig = layerSignature(l);
   if (hasActiveStyles(l.styles)) {
     const st = styledOf(l, renderSource(l), l.x, l.y, sig); if (!st.canvas) return null;
-    return pix({ l, key: `s${l.id}:${st.ver}`, slot: `p${l.id}`, src: st.canvas, x: st.x, y: st.y, opacity, blend: l.blend, mask: null, sig });
+    const deepSrc = l.kind ? null : styledDeepOf(st, l, l.canvas, l.x, l.y, () => deepOf(l));
+    return pix({ l, key: `s${l.id}:${st.ver}`, slot: `p${l.id}`, src: st.canvas, deepSrc, x: st.x, y: st.y, opacity, blend: l.blend, mask: null, sig });
   }
   const deep = deepIfSynced(l), src = deep || l.canvas;
   return { kind: 'pixels', plain: true, l, key: `${deep ? 'd' : 'c'}${l.id}:${l.rev}${volOf(l)}`, slot: `p${l.id}`, src, x: l.x, y: l.y, opacity, blend: l.blend, mask: maskItem(l), sig };
@@ -483,8 +488,14 @@ function applyClip(d, it, l, base) {
   return it;
 }
 const passThroughInline = (l) => isGroup(l) && l.blend === 'pass-through' && l.opacity >= 1 && !maskOn(l) && !hasActiveStyles(l.styles);
-/** Flatten the tree under pid into draw items (bottom → top). */
-function resolveItems(d, pid) {
+/** Pass-through group with opacity < 100% or a mask: its contents act on what is below, and the result is
+ * mixed back with the untouched backdrop by opacity × mask (passBegin … passEnd markers). */
+const passThroughMixed = (l) => isGroup(l) && l.blend === 'pass-through' && !hasActiveStyles(l.styles) && (l.opacity < 1 || maskOn(l));
+/**
+ * Flatten the tree under pid into draw items (bottom → top). mk.groups: isolated groups become
+ * groupBegin … groupEnd markers instead of one cached 8-bit canvas (16-bit GPU display and 16-bit export).
+ */
+function resolveItems(d, pid, mk = {}) {
   if (pid == null) pruneFxCaches(d);
   const items = []; let base = null;
   for (const l of childrenOf(d, pid)) {
@@ -496,7 +507,17 @@ function resolveItems(d, pid) {
     }
     base = { vis, clip: clipBaseOf(d, l) };
     if (!vis) continue;
-    if (passThroughInline(l)) { items.push(...resolveItems(d, l.id)); continue; }
+    if (passThroughInline(l)) { items.push(...resolveItems(d, l.id, mk)); continue; }
+    if (passThroughMixed(l)) {
+      const sig = layerSignature(l);
+      items.push({ kind: 'passBegin', l, sig: `P${sig}` }, ...resolveItems(d, l.id, mk), { kind: 'passEnd', l, opacity: l.opacity, blend: 'source-over', mask: maskItem(l), sig: `/P${sig}` });
+      continue;
+    }
+    if (mk.groups && isGroup(l) && !hasActiveStyles(l.styles)) {
+      const sig = layerSignature(l), blend = l.blend === 'pass-through' ? 'source-over' : l.blend;
+      items.push({ kind: 'groupBegin', l, sig: `B${sig}` }, ...resolveItems(d, l.id, mk), { kind: 'groupEnd', l, opacity: l.opacity, blend, mask: maskItem(l), sig: `/B${sig}` });
+      continue;
+    }
     const it = leafItem(d, l); if (it) items.push(it);
   }
   return items;
@@ -509,7 +530,10 @@ function pruneFxCaches(d) {
 }
 /** Canvas 2D composite of draw items (used by the CPU engine and inside isolated groups). */
 function drawItems(c, items, below, opts) {
+  const stack = [];
   for (const it of items) {
+    if (it.kind === 'passBegin') { stack.push(cloneCanvas(c.canvas)); below.push(it.sig); continue; }
+    if (it.kind === 'passEnd') { mixPassThrough(c, stack.pop(), it); below.push(it.sig); continue; }
     if (it.kind === 'adjust') drawAdjustmentLayer(c, it.l, below.join('|'), opts, it);
     else {
       let src;
@@ -526,6 +550,39 @@ function drawItems(c, items, below, opts) {
   }
 }
 
+/** out = backdrop·(1−k) + result·k with k = opacity × mask (exact lerp; 'lighter' adds the two parts). */
+function mixPassThrough(c, backdrop, it) {
+  const W = c.canvas.width, H = c.canvas.height, K = makeCanvas(W, H), kx = K.getContext('2d');
+  kx.globalAlpha = it.opacity;
+  if (it.mask) kx.drawImage(it.mask.canvas, it.mask.x, it.mask.y); else { kx.fillStyle = '#000'; kx.fillRect(0, 0, W, H); }
+  const R = cloneCanvas(c.canvas), rx = R.getContext('2d');
+  rx.globalCompositeOperation = 'destination-in'; rx.drawImage(K, 0, 0);
+  c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.globalAlpha = 1; c.globalCompositeOperation = 'copy'; c.drawImage(backdrop, 0, 0);
+  c.globalCompositeOperation = 'destination-out'; c.drawImage(K, 0, 0);
+  c.globalCompositeOperation = 'lighter'; c.drawImage(R, 0, 0); c.restore();
+}
+// --- 3D LUTs (.cube): tables live in a registry keyed by id so adjustment params stay small ----
+const lutRegistry = new Map();
+function lutStoreLoad() { try { const o = JSON.parse(localStorage.getItem('tintwork.luts') || '{}'); for (const [id, v] of Object.entries(o)) if (!lutRegistry.has(id)) lutRegistry.set(id, lutDecode(v)); } catch { /* ignore */ } }
+function lutStoreSave() {
+  try { const o = {}; for (const [id, t] of [...lutRegistry].slice(-6)) o[id] = lutEncode(t); localStorage.setItem('tintwork.luts', JSON.stringify(o)); } catch { /* quota: LUTs stay in the project file */ }
+}
+function lutEncode(t) {
+  const b = new Uint8Array(t.data.buffer.slice(0)); let bin = '';
+  for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  return { size: t.size, title: t.title || '', domainMin: t.domainMin, domainMax: t.domainMax, data: btoa(bin) };
+}
+function lutDecode(v) {
+  const bin = atob(v.data), b = new Uint8Array(bin.length); for (let i = 0; i < b.length; i++) b[i] = bin.charCodeAt(i);
+  return { size: v.size, title: v.title, domainMin: v.domainMin || [0, 0, 0], domainMax: v.domainMax || [1, 1, 1], data: new Float32Array(b.buffer) };
+}
+function lutId(t) { let h = 2166136261; const u = new Uint32Array(t.data.buffer); for (let i = 0; i < u.length; i += 7) { h ^= u[i]; h = Math.imul(h, 16777619); } return `lut${t.size}-${(h >>> 0).toString(36)}`; }
+function registerLut(t) { const id = lutId(t); lutRegistry.set(id, t); lutStoreSave(); return id; }
+/** Adjustment params as the pixel code needs them (3D LUT layers get their table). */
+function adjParamsOf(adj) {
+  const p = adj.params || {};
+  return adj.type === 'lut3d' ? { ...p, table: lutRegistry.get(p.lut) || null } : p;
+}
 // --- adjustment layers: re-applied to everything below them on each composite ----
 // Results are cached per layer, keyed by a signature of the layers underneath, so
 // painting above an adjustment layer costs nothing extra. Big documents compute in
@@ -533,6 +590,7 @@ function drawItems(c, items, below, opts) {
 const ADJ_LAYER = {
   brightnessContrast: 'Brightness / contrast', hueSaturation: 'Hue / saturation', exposure: 'Exposure',
   levels: 'Levels', curves: 'Curves', invert: 'Invert', grayscale: 'Grayscale',
+  whiteBalance: 'White balance', lut3d: 'Color lookup (3D LUT)',
 };
 const ADJ_SYNC_PIXELS = 2_500_000;
 const adjCache = new Map();
@@ -557,14 +615,14 @@ function drawAdjustmentLayer(c, l, below, opts, it = null) {
       if (!e.running) {
         e.running = true; adjPending++;
         const img = c.getImageData(0, 0, W, H);
-        ops.process(l.adj.type, img, l.adj.params || {}).then((out) => { e.canvas = putInto(e.canvas, out); e.key = key; })
+        ops.process(l.adj.type, img, adjParamsOf(l.adj)).then((out) => { e.canvas = putInto(e.canvas, out); e.key = key; })
           .catch((err) => status(`Adjustment layer failed: ${err.message}`))
           .finally(() => { e.running = false; adjPending--; compDirty = true; requestRender(); });
       }
       if (!e.canvas || e.canvas.width !== W || e.canvas.height !== H) return; // first result not ready yet
     } else {
       const img = c.getImageData(0, 0, W, H);
-      runOp(l.adj.type, img, l.adj.params || {});
+      runOp(l.adj.type, img, adjParamsOf(l.adj));
       e.canvas = putInto(e.canvas, img); e.key = key;
     }
   }
@@ -679,15 +737,22 @@ function gpuNotice(key, msg) { if (gfx.notices.has(key)) return; gfx.notices.add
 /** Layers being edited right now are re-uploaded every frame (their canvas changes between revisions). */
 const isVolatile = (l) => !!(drag || state.xf) && l.id === doc().activeId;
 function gpuLayerList(d) {
-  return resolveItems(d, null).map((it) => (it.kind === 'adjust'
-    ? { kind: 'adjust', op: it.l.adj.type, params: it.l.adj.params || {}, opacity: it.opacity, mode: blendIndex(it.blend), mask: it.mask }
-    : { kind: 'pixels', key: it.key, slot: it.slot, src: it.src, x: it.x, y: it.y, w: it.src.width, h: it.src.height, opacity: it.opacity, mode: blendIndex(it.blend), mask: it.mask }));
+  return resolveItems(d, null, { groups: d.depth === 16 }).map((it) => {
+    if (it.kind === 'groupBegin' || it.kind === 'passBegin') return { kind: it.kind };
+    if (it.kind === 'groupEnd' || it.kind === 'passEnd') return { kind: it.kind, opacity: it.opacity, mode: blendIndex(it.blend), mask: it.mask };
+    if (it.kind === 'adjust') return { kind: 'adjust', op: it.l.adj.type, params: it.l.adj.params || {}, opacity: it.opacity, mode: blendIndex(it.blend), mask: it.mask };
+    const src = d.depth === 16 && it.deepSrc ? it.deepSrc : it.src;
+    return { kind: 'pixels', key: src === it.src ? it.key : `${it.key}D`, slot: it.slot, src, x: it.x, y: it.y, w: src.width, h: src.height, opacity: it.opacity, mode: blendIndex(it.blend), mask: it.mask };
+  });
 }
 function gpuComposite(c, opts, display) {
   const d = doc(), e = gfx.engine; if (!e || e.lost) return false;
   gfx.frame++;
   const layers = gpuLayerList(d), big = d.width > e.info.maxTextureSize || d.height > e.info.maxTextureSize;
   if (!e.canComposite(layers, d.width, d.height)) {
+    if (layers.some((L) => L.kind === 'adjust' && L.op === 'lut3d') && !big && e.canComposite(layers.filter((L) => L.kind !== 'adjust' || L.op !== 'lut3d'), d.width, d.height)) {
+      gpuNotice('lut3d', '3D LUT layers are applied on the CPU, so this document is composited on the CPU while one is visible.'); return false;
+    }
     gpuNotice(`size:${d.width}x${d.height}`, big ? `This canvas (${d.width}×${d.height}) is larger than this GPU's texture limit (${e.info.maxTextureSize}px), so it is composited on the CPU.`
       : `${d.width}×${d.height} does not fit this device's GPU memory budget (${e.budgetMB} MB), so it is composited on the CPU.`);
     return false;
@@ -798,15 +863,51 @@ function maskDescOf(m) {
 function compositeDeepDoc({ background = null, layers = doc().layers } = {}) {
   const d = doc(), list = [];
   const src = layers === d.layers ? d : { ...d, layers };
-  for (const it of resolveItems(src, null)) {
-    const mode = blendIndex(it.blend), mask = maskDescOf(it.mask);
-    if (it.kind === 'adjust') list.push({ kind: 'adjust', op: it.l.adj.type, params: it.l.adj.params || {}, opacity: it.opacity, mode, mask });
-    else {
-      const img = it.plain ? (is16() ? deepOf(it.l) : deepOf({ ...it.l, kind: 'tmp' })) : deepFromImageData(ctxOf(it.src).getImageData(0, 0, it.src.width, it.src.height));
-      list.push({ kind: 'pixels', img, x: it.x, y: it.y, opacity: it.opacity, mode, mask });
-    }
-  }
+  list.push(...deepList(resolveItems(src, null, { groups: is16() })));
   return accToDeep(compositeDeep(d.width, d.height, list, { background: background ? hexToRgb(background) : null, info: { linear: gfx.linear } }), d.width, d.height);
+}
+/** Draw items -> compositeDeep layer list. In 16-bit documents groups arrive as markers (composited in float),
+ * styled layers bring a 16-bit body (deepSrc), so nothing passes through an 8-bit buffer except effect pixels. */
+function deepList(items) {
+  return items.map((it) => {
+    const mode = blendIndex(it.blend);
+    if (it.kind === 'groupBegin' || it.kind === 'passBegin') return { kind: it.kind };
+    if (it.kind === 'groupEnd' || it.kind === 'passEnd') return { kind: it.kind, opacity: it.opacity, mode, mask: maskDescOf(it.mask) };
+    const mask = maskDescOf(it.mask);
+    if (it.kind === 'adjust') return { kind: 'adjust', op: it.l.adj.type, params: adjParamsOf(it.l.adj), opacity: it.opacity, mode, mask };
+    const img = it.plain ? (is16() ? deepOf(it.l) : deepOf({ ...it.l, kind: 'tmp' })) : is16() && it.deepSrc ? it.deepSrc : deepFromImageData(ctxOf(it.src).getImageData(0, 0, it.src.width, it.src.height));
+    return { kind: 'pixels', img, x: it.x, y: it.y, opacity: it.opacity, mode, mask };
+  });
+}
+/** A group's contents composited in float (16-bit result, document-sized, cached by contents). */
+const deepGroupCache = new Map();
+function deepGroupOf(d, g) {
+  const key = groupKey(d, g), e = deepGroupCache.get(g.id); if (e && e.key === key) return e.img;
+  const img = accToDeep(compositeDeep(d.width, d.height, deepList(resolveItems(d, g.id, { groups: true })), { info: { linear: gfx.linear } }), d.width, d.height);
+  deepGroupCache.set(g.id, { key, img }); return img;
+}
+/**
+ * 16-bit body for a styled layer: pixels the effects did not change (styled == plain content) take the
+ * 16-bit content; pixels an effect touched (shadow, glow, stroke, overlay) keep the effect's 8-bit value.
+ */
+function styledDeep(st, content8, cx, cy, deep) {
+  const sw = st.canvas.width, sh = st.canvas.height, S = ctxOf(st.canvas).getImageData(0, 0, sw, sh).data;
+  const C = ctxOf(content8).getImageData(0, 0, content8.width, content8.height).data, cw = content8.width, ch = content8.height, D = deep.data;
+  const out = createDeep(sw, sh), o = out.data;
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    const i = (y * sw + x) * 4, u = x + st.x - cx, v = y + st.y - cy;
+    if (u >= 0 && v >= 0 && u < cw && v < ch) {
+      const j = (v * cw + u) * 4;
+      if (S[i] === C[j] && S[i + 1] === C[j + 1] && S[i + 2] === C[j + 2] && S[i + 3] === C[j + 3]) { o[i] = D[j]; o[i + 1] = D[j + 1]; o[i + 2] = D[j + 2]; o[i + 3] = D[j + 3]; continue; }
+    }
+    o[i] = S[i] * 257; o[i + 1] = S[i + 1] * 257; o[i + 2] = S[i + 2] * 257; o[i + 3] = S[i + 3] * 257;
+  }
+  return out;
+}
+function styledDeepOf(st, l, content8, cx, cy, deepFn) {
+  if (!is16()) return null;
+  if (st.deep && st.deepKey === st.key) return st.deep;
+  st.deep = styledDeep(st, content8, cx, cy, deepFn()); st.deepKey = st.key; return st.deep;
 }
 /** Image ▸ Mode ▸ 8 / 16 bits per channel (a history step). */
 function setDepth(bits) {
@@ -1149,6 +1250,12 @@ function render() {
     else if (sp.pts?.length) { path.moveTo(sp.pts[0].x, sp.pts[0].y); for (const q of sp.pts) path.lineTo(q.x, q.y); path.closePath(); }
     ants(path);
   }
+  if (state.strLine) {
+    const { a, b } = state.strLine;
+    vctx.save(); vctx.setTransform(dpr, 0, 0, dpr, 0, 0); vctx.beginPath();
+    vctx.moveTo(px + a.x * z, py + a.y * z); vctx.lineTo(px + b.x * z, py + b.y * z);
+    vctx.lineWidth = 3; vctx.strokeStyle = '#000a'; vctx.stroke(); vctx.lineWidth = 1.5; vctx.strokeStyle = '#ffd34d'; vctx.stroke(); vctx.restore();
+  }
   if (state.shapePreview) {
     const g = state.shapePreview, o = state.opts;
     vctx.save(); vctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * px, dpr * py);
@@ -1249,6 +1356,7 @@ const TOOLS = [
   { id: 'polylasso', name: 'Polygonal lasso', key: 'P' },
   { id: 'wand', name: 'Magic wand', key: 'W' },
   { id: 'crop', name: 'Crop', key: 'C' },
+  { id: 'straighten', name: 'Straighten (draw along the horizon)', key: 'C' },
   { sep: true },
   { id: 'brush', name: 'Brush', key: 'B' },
   { id: 'eraser', name: 'Eraser', key: 'E' },
@@ -1263,6 +1371,7 @@ const TOOLS = [
   { id: 'shape', name: 'Shape', key: 'U' },
   { id: 'text', name: 'Text', key: 'T' },
   { id: 'eyedropper', name: 'Color picker', key: 'I' },
+  { id: 'wbpick', name: 'White balance picker (click something grey)', key: 'I' },
   { sep: true },
   { id: 'hand', name: 'Hand (hold Space)', key: 'H' },
   { id: 'zoom', name: 'Zoom (Alt to zoom out)', key: 'Z' },
@@ -1356,7 +1465,8 @@ const toolHandlers = {
       const now = performance.now(), last = moveLastDown; moveLastDown = { t: now, p };
       const dbl = e.detail >= 2 || (last && now - last.t < 400 && Math.hypot(p.x - last.p.x, p.y - last.p.y) * state.zoom < 6);
       if (dbl && l.kind) { drag = null; moveLastDown = null; editLayer(l); return; } // double-click edits text / adjustment layers
-      if (isGroup(l)) { drag = { start: p, layer: l, moved: false, members: [l, ...descendantsOf(doc(), l)].map((m) => ({ m, ox: m.x, oy: m.y })) }; return; }
+      const many = pickedLayers(doc());
+      if (isGroup(l) || many.length > 1) { const set = [...new Set(many.flatMap((m) => blockOf(doc(), m)))]; drag = { start: p, layer: l, moved: false, members: set.map((m) => ({ m, ox: m.x, oy: m.y })) }; return; }
       if (doc().selection && !(l.kind === 'adjust' && !l.mask)) { startFloat(l, p, e.altKey); return; }
       drag = { start: p, ox: l.x, oy: l.y, layer: l, moved: false };
     },
@@ -1454,6 +1564,8 @@ const toolHandlers = {
     },
   },
   eyedropper: { down(p) { drag = {}; pickColor(p); }, move(p) { pickColor(p); } },
+  straighten: { down: (p, e) => straightenTool.down(p, e), move: (p, e) => straightenTool.move(p, e), up: (p, e) => straightenTool.up(p, e) },
+  wbpick: { down: (p) => wbPickTool.down(p) },
   text: { down(p) { const hit = textLayerAt(p); if (hit) { doc().activeId = hit.id; openTextDialog(null, hit); } else openTextDialog(p); } },
   zoom: { down(p, e) { const r = view.getBoundingClientRect(); zoomAt(e.altKey ? 1 / 1.5 : 1.5, e.clientX - r.left, e.clientY - r.top); } },
 };
@@ -1478,6 +1590,7 @@ const xfParams = (x) => Object.fromEntries(XF_KEYS.map((k) => [k, x[k]]));
 function startTransform() {
   const d = doc(), l = activeLayer();
   if (!l || state.xf) return;
+  if (isGroup(l) || pickedLayers(d).length > 1) { startMultiTransform(); return; }
   if (l.kind === 'adjust') { status('Adjustment layers have no pixels to transform (transform the layers below instead).'); return; }
   if (state.crop) { state.crop = null; }
   const sel = d.selection;
@@ -1511,6 +1624,37 @@ function startTransform() {
   previewTransform(); buildOptionsBar(); requestRender();
   status('Free transform: drag the handles; Enter applies, Esc cancels.');
 }
+/** Free transform of a group and/or several selected layers: one box around all of them; every layer is
+ * re-rendered from its own untouched copy with the shared matrix (M ∘ its offset inside the box). */
+function startMultiTransform() {
+  const d = doc(); if (state.crop) state.crop = null;
+  const leaves = transformLeaves(d);
+  if (!leaves.length) { status('Nothing to transform: the selected layers have no pixels.'); return; }
+  if (d.selection) status('Transforming whole layers (the selection is ignored with several layers or a group).');
+  const parts = [];
+  for (const l of leaves) {
+    rasterize(l, 'the transform');
+    const t = l.mask ? { x: 0, y: 0, w: l.canvas.width, h: l.canvas.height } : alphaBounds(l.canvas); if (!t) continue;
+    const piece = makeCanvas(t.w, t.h); piece.getContext('2d').drawImage(l.canvas, -t.x, -t.y);
+    parts.push({ layer: l, piece, w: t.w, h: t.h, dx: l.x + t.x, dy: l.y + t.y, maskPiece: l.mask ? cloneCanvas(l.mask.canvas) : null });
+  }
+  if (!parts.length) { status('Nothing to transform: the selected layers are empty.'); return; }
+  const x0 = Math.min(...parts.map((p) => p.dx)), y0 = Math.min(...parts.map((p) => p.dy));
+  const x1 = Math.max(...parts.map((p) => p.dx + p.w)), y1 = Math.max(...parts.map((p) => p.dy + p.h));
+  for (const p of parts) { p.ox = p.dx - x0; p.oy = p.dy - y0; }
+  const x = { layer: activeLayer(), parts, sel: null, onMask: false, base: null, bx: 0, by: 0, maskBase: null, rx: 0, ry: 0, rot: 0, sx: 1, sy: 1, kx: 0, ky: 0, w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+  x.start = xfParams(x);
+  state.xf = x; drag = null;
+  previewTransform(); buildOptionsBar(); requestRender();
+  status(`Free transform: ${parts.length} layer${parts.length === 1 ? '' : 's'}; Enter applies, Esc cancels.`);
+}
+/** Pixel layers moved by a transform of the picked layers / active group (group contents included). */
+function transformLeaves(d) {
+  const out = [], seen = new Set();
+  for (const r of pickedLayers(d)) for (const l of blockOf(d, r)) if (!seen.has(l) && !isGroup(l) && l.kind !== 'adjust') { seen.add(l); out.push(l); }
+  return out;
+}
+const mulOffset = (M, ox, oy) => ({ a: M.a, b: M.b, c: M.c, d: M.d, e: M.a * ox + M.c * oy + M.e, f: M.b * ox + M.d * oy + M.f });
 /** Draw `src` (local box) transformed by M into a new canvas whose origin is (ox, oy) in the document. */
 function drawTransformed(src, M, ox, oy, w, h, under = null, ux = 0, uy = 0) {
   const c = makeCanvas(w, h), x = c.getContext('2d');
@@ -1531,6 +1675,15 @@ function xfBounds(x, M) {
 function previewTransform() {
   const x = state.xf; if (!x) return;
   const l = x.layer, M = xfMatrix(x);
+  if (x.parts) {
+    for (const p of x.parts) {
+      const Mp = mulOffset(M, p.ox, p.oy), { x0, y0, x1, y1 } = xfBounds({ w: p.w, h: p.h }, Mp), w = x1 - x0, h = y1 - y0, L = p.layer;
+      L.canvas = drawTransformed(p.piece, Mp, x0, y0, w, h);
+      if (p.maskPiece) { L.mask.canvas = drawTransformed(p.maskPiece, Mp, x0, y0, w, h); touchMask(L); }
+      L.x = x0; L.y = y0; touch(L);
+    }
+    compDirty = true; return;
+  }
   if (x.base && x.onMask) { // selected part of a (filter) mask: the mask keeps its size
     const out = drawTransformed(x.piece, M, x.bx, x.by, x.base.width, x.base.height, x.base, x.bx, x.by);
     if (editingFMask(l)) { l.fmask.canvas = out; touchTarget(l); } else { l.mask.canvas = out; touchMask(l); }
@@ -1718,7 +1871,7 @@ function xfBarParts() {
 function clampPt(p) {
   return { x: Math.max(0, Math.min(doc().width, Math.round(p.x))), y: Math.max(0, Math.min(doc().height, Math.round(p.y))) };
 }
-let moveLastDown = null;
+let moveLastDown = null, nudgeTimer = 0;
 // --- moving selected pixels (Move tool with an active selection; Alt = move a copy) ---
 function startFloat(l, p, copy) {
   if (!editingMask(l)) rasterize(l, 'moving pixels');
@@ -1899,8 +2052,8 @@ function toneRectDeep(c, cover, rx, ry, rw, rh) {
       k = (a / 255) * k0 * w;
     }
     const g = k > 0 ? (burn ? 1 + k : 1 / (1 + k)) : 1;
-    for (let ch = 0; ch < 3; ch++) { const v = g === 1 ? s0[q + ch] : Math.round(65535 * Math.pow(s0[q + ch] / 65535, g)); so[q + ch] = v; d[i + ch] = (v + 128) / 257; }
-    so[q + 3] = s0[q + 3]; d[i + 3] = (s0[q + 3] + 128) / 257;
+    for (let ch = 0; ch < 3; ch++) { const v = g === 1 ? s0[q + ch] : Math.round(65535 * Math.pow(s0[q + ch] / 65535, g)); so[q + ch] = v; d[i + ch] = v / 257; }
+    so[q + 3] = s0[q + 3]; d[i + 3] = s0[q + 3] / 257;
   }
   c.putImageData(img, rx, ry);
 }
@@ -2139,7 +2292,7 @@ function redEyeAt(p, o = state.opts) {
     const redness = R > 50 ? (R - Math.max(G, B)) / R : 0; if (redness <= 0.25) continue;
     const k = Math.min(1, (redness - 0.25) / 0.25) * Math.min(1, (1 - dist) / 0.25);
     const nr = R + (gb * dark - R) * k, ng = G + (G * dark - G) * k, nb = B + (B * dark - B) * k;
-    if (deep) { dd[q] = Math.round(nr * 257); dd[q + 1] = Math.round(ng * 257); dd[q + 2] = Math.round(nb * 257); d[j] = (dd[q] + 128) / 257; d[j + 1] = (dd[q + 1] + 128) / 257; d[j + 2] = (dd[q + 2] + 128) / 257; }
+    if (deep) { dd[q] = Math.round(nr * 257); dd[q + 1] = Math.round(ng * 257); dd[q + 2] = Math.round(nb * 257); d[j] = dd[q] / 257; d[j + 1] = dd[q + 1] / 257; d[j + 2] = dd[q + 2] / 257; }
     else { d[j] = Math.round(nr); d[j + 1] = Math.round(ng); d[j + 2] = Math.round(nb); }
     n++;
   }
@@ -2182,7 +2335,7 @@ function startMeshXf(mode) {
   const k = Math.min(1, 640 / Math.max(t.w, t.h)), sw = Math.max(1, Math.round(t.w * k)), sh = Math.max(1, Math.round(t.h * k));
   const sc = makeCanvas(sw, sh), sx = sc.getContext('2d'); sx.imageSmoothingQuality = 'high'; sx.drawImage(l.canvas, t.x, t.y, t.w, t.h, 0, 0, sw, sh);
   const x = {
-    mode, layer: l, src, msrc, small: sx.getImageData(0, 0, sw, sh), k: sw / t.w, w: t.w, h: t.h, ox, oy, n: 4,
+    mode, layer: l, src, msrc, dsrc: useDeep(l) ? cropDeep(deepOf(l), t) : null, small: sx.getImageData(0, 0, sw, sh), k: sw / t.w, w: t.w, h: t.h, ox, oy, n: 4,
     orig: { canvas: l.canvas, x: l.x, y: l.y, mask: l.mask ? l.mask.canvas : null, deep: l.deep, deepRev: l.deepRev, deepOX: l.deepOX, deepOY: l.deepOY, rev: l.rev },
     pts: null, job: null, seq: 0,
   };
@@ -2246,10 +2399,21 @@ async function applyMeshXf() {
   finally { setBusy(-1); }
   if (state.mxf !== x) return;
   state.mxf = null;
-  delete l.deep; delete l.deepRev; delete l.deepOX; delete l.deepOY; // warped pixels are 8-bit precise
-  touch(l); commit(x.mode === 'warp' ? 'Warp' : 'Perspective');
+  delete l.deep; delete l.deepRev; delete l.deepOX; delete l.deepOY;
+  touch(l);
+  if (x.dsrc) { // 16-bit: the same mesh, sampled from the 16-bit source on the CPU
+    const m = mxfMesh(x), b = m && mxfBounds(m);
+    if (b && b.w === l.canvas.width && b.h === l.canvas.height) { l.deep = deepMesh(x.dsrc, b.w, b.h, m, b.x, b.y); l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0; }
+  }
+  commit(x.mode === 'warp' ? 'Warp' : 'Perspective');
   status(`${x.mode === 'warp' ? 'Warp' : 'Perspective'} applied (${gfx.lastWarpPath === 'cpu' ? 'CPU' : gfx.lastWarpPath === 'webgpu' ? 'WebGPU' : 'WebGL2'})`);
   buildOptionsBar(); updateLayersPanel(); requestRender();
+}
+/** renderMeshCPU on a 16-bit DImage (same triangles and sampling as the 8-bit path). */
+function deepMesh(src, w, h, m, ox, oy, region = null, into = null) {
+  const out = into || createDeep(w, h);
+  mesh.renderMeshCPU(src, w, h, m, ox, oy, out, region);
+  return out;
 }
 function cancelMeshXf() {
   const x = state.mxf; if (!x) return;
@@ -2316,7 +2480,7 @@ const liquifyTool = {
     rasterize(l, 'liquify');
     const cv = l.canvas, o = state.opts;
     drag = {
-      liquify: true, layer: l, src: ctxOf(cv).getImageData(0, 0, cv.width, cv.height), field: mesh.createField(cv.width, cv.height, 4),
+      liquify: true, layer: l, src: ctxOf(cv).getImageData(0, 0, cv.width, cv.height), dsrc: useDeep(l) ? deepOf(l) : null, field: mesh.createField(cv.width, cv.height, 4),
       mode: o.liquifyMode, r: Math.max(2, o.liquifySize / 2), s: Math.max(0.01, o.liquifyStrength / 100), last: p, bb: null, timer: null,
     };
     if (drag.mode !== 'push') { // bloat / pinch / restore keep working while the button is held still
@@ -2344,7 +2508,13 @@ const liquifyTool = {
       const out = await renderMeshAny(dr.src, w, h, mesh.fieldMesh(dr.field, b), b.x, b.y);
       ctxOf(dr.layer.canvas).putImageData(out, b.x, b.y);
       gfx.lastLiquify = { field: dr.field, bb: b, src: dr.src }; // kept for diagnostics / tests
-      touch(dr.layer); requestRender(); commit('Liquify'); updateLayersPanel();
+      touch(dr.layer);
+      if (dr.dsrc && dr.dsrc.width === dr.layer.canvas.width && dr.dsrc.height === dr.layer.canvas.height) { // 16-bit: re-sample the stroke area from the 16-bit source
+        const full = cloneDeep(dr.dsrc), part = deepMesh(dr.dsrc, w, h, mesh.fieldMesh(dr.field, b), b.x, b.y);
+        for (let y = 0; y < h; y++) full.data.set(part.data.subarray(y * w * 4, (y + 1) * w * 4), ((b.y + y) * full.width + b.x) * 4);
+        const l = dr.layer; l.deep = full; l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0;
+      }
+      requestRender(); commit('Liquify'); updateLayersPanel();
     } catch (err) { liquifyRestore(dr); status(`Liquify failed: ${err.message}`); }
     finally { setBusy(-1); }
   },
@@ -2715,6 +2885,10 @@ window.addEventListener('keydown', (e) => {
       e.preventDefault(); previewTransform(); requestRender(); return;
     }
   }
+  if (state.tool === 'move' && e.key.startsWith('Arrow') && !primaryMod(e) && !e.altKey && doc() && !doc().selection) {
+    const st = e.shiftKey ? 10 : 1, dx = e.key === 'ArrowLeft' ? -st : e.key === 'ArrowRight' ? st : 0, dy = e.key === 'ArrowUp' ? -st : e.key === 'ArrowDown' ? st : 0;
+    e.preventDefault(); nudgeLayers(pickedLayers(doc()), dx, dy); clearTimeout(nudgeTimer); nudgeTimer = setTimeout(() => commit('Nudge'), 400); return;
+  }
   const mod = primaryMod(e) || (IS_MAC && e.ctrlKey);
   const key = e.key.toLowerCase();
   const combo = comboOf(e);
@@ -2795,6 +2969,19 @@ const cmds = {
   rasterizeLayer: needDoc(() => { const l = activeLayer(); if (l.kind !== 'text' && l.kind !== 'smart') { status('Only text and live filter layers need converting to pixels.'); return; } const k = l.kind; rasterize(l); touch(l); updateLayersPanel(); commit(k === 'text' ? 'Convert text to pixels' : 'Convert live layer to pixels'); }),
   convertSmart: needDoc(() => convertToSmart()),
   freeTransform: needDoc(() => startTransform()),
+  autoEnhance: needDoc(() => autoEnhanceCmd()),
+  autoWhiteBalance: needDoc(() => autoWhiteBalanceCmd()),
+  autoStraighten: needDoc(() => autoStraightenCmd()),
+  straightenTool: needDoc(() => setTool('straighten')),
+  wbPicker: needDoc(() => setTool('wbpick')),
+  whiteBalance: needDoc(() => openAdjust(ADJ.whiteBalance)),
+  alignLeft: needDoc(() => alignLayers('left')), alignHCenter: needDoc(() => alignLayers('hcenter')), alignRight: needDoc(() => alignLayers('right')),
+  alignTop: needDoc(() => alignLayers('top')), alignVCenter: needDoc(() => alignLayers('vcenter')), alignBottom: needDoc(() => alignLayers('bottom')),
+  distributeH: needDoc(() => alignLayers('distH')), distributeV: needDoc(() => alignLayers('distV')),
+  lutImport: needDoc(async () => { const f = await pickFile('.cube'); if (!f) return; try { await importCubeText(await f.text(), f.name); } catch (err) { toast(`Could not load that LUT: ${err.message}`, 5000); } }),
+  lookSave: needDoc(() => { const n = prompt('Name for this look', 'My look'); if (n) saveLookFromSelection(n.trim() || 'My look'); }),
+  lookExport: () => { if (!userLooks().length) { toast('You have no saved looks yet: build one, select its group and choose Save look.'); return; } download(new Blob([exportLooksJSON()], { type: 'application/json' }), 'tintwork-looks.json'); status('Exported your looks to tintwork-looks.json'); },
+  lookImport: async () => { const f = await pickFile('.json,application/json'); if (!f) return; try { const n = importLooksJSON(await f.text()); status(`Imported ${n} look${n === 1 ? '' : 's'}.`); } catch (err) { toast(`Could not import looks: ${err.message}`, 5000); } },
   xfApply: () => applyTransform(),
   xfCancel: () => cancelTransform(),
   colorRange: needDoc(() => openColorRangeDialog()),
@@ -2934,6 +3121,7 @@ const SHORTCUTS = {
   'mod+=': 'zoomIn', 'mod++': 'zoomIn', 'mod+shift+=': 'zoomIn', 'mod+shift++': 'zoomIn', 'mod+-': 'zoomOut', 'mod+0': 'zoomFit', 'mod+1': 'zoom100',
   'mod+b': 'brightnessContrast', 'mod+u': 'hueSaturation', 'mod+l': 'levels', 'mod+m': 'curves', 'mod+i': 'invert', 'mod+shift+u': 'grayscale',
   'mod+t': 'freeTransform', 'mod+alt+r': 'refineEdge',
+  'mod+shift+l': 'autoEnhance',
   'mod+g': 'groupLayers', 'mod+shift+g': 'ungroup', 'mod+alt+g': 'clipToggle',
   // Alternates for combos the browser or OS keeps (see RESERVED in platform.js); the menus show these where needed.
   'mod+alt+n': 'new', 'mod+shift+alt+n': 'layerNew', 'mod+alt+t': 'freeTransform', 'mod+shift+m': 'curves',
@@ -2963,21 +3151,27 @@ const MENUS = [
     ['Clear', 'clear', 'Del'], ['Fill with color', 'fillSelection', 'Alt+⌫'], '-', ['Free transform', 'freeTransform', 'Ctrl+T'], ['Perspective', 'perspective'], ['Warp', 'warp']]],
   ['Image', [['Image size…', 'imageSize'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], '-',
     ['Rotate 90° clockwise', 'rotateCW'], ['Rotate 90° counter-clockwise', 'rotateCCW'], ['Rotate 180°', 'rotate180'],
-    ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
+    ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Auto enhance', 'autoEnhance', 'Ctrl+Shift+L'], ['Auto white balance', 'autoWhiteBalance'],
+    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
   ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
     ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
     ['New adjustment layer: Brightness / contrast…', 'adjLayer_brightnessContrast'], ['New adjustment layer: Hue / saturation…', 'adjLayer_hueSaturation'],
-    ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
+    ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: White balance…', 'adjLayer_whiteBalance'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
+    ['New adjustment layer: 3D LUT from .cube file…', 'lutImport'],
     ['Edit layer settings…', 'editLayer'], ['Convert to live layer (editable filters)', 'convertSmart'], ['Convert text / live layer to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Delete layer', 'layerDelete'], '-',
     ['Move up', 'layerUp', 'Ctrl+]'], ['Move down', 'layerDown', 'Ctrl+['], ['Merge down / merge group', 'layerMergeDown', 'Ctrl+E'], '-',
     ['New group', 'groupNew'], ['Group layer', 'groupLayers', 'Ctrl+G'], ['Ungroup', 'ungroup', 'Ctrl+Shift+G'], ['Create / release clipping mask', 'clipToggle', 'Ctrl+Alt+G'], '-',
+    ['Align left edges', 'alignLeft'], ['Align horizontal centers', 'alignHCenter'], ['Align right edges', 'alignRight'],
+    ['Align top edges', 'alignTop'], ['Align vertical centers', 'alignVCenter'], ['Align bottom edges', 'alignBottom'],
+    ['Distribute horizontally', 'distributeH'], ['Distribute vertically', 'distributeV'], '-',
     ['Layer style…', 'layerStyles'], ['Show / hide layer styles', 'stylesToggle'], ['Clear layer style', 'stylesClear'], '-',
     ['Flip layer horizontal', 'flipLayerH'], ['Flip layer vertical', 'flipLayerV'], '-',
     ['Add layer mask (reveal all)', 'addMask'], ['Add mask from selection', 'addMaskFromSelection'], ['Edit mask / pixels', 'editMaskToggle', '\\'],
     ['Enable / disable mask', 'toggleMask'], ['Invert mask', 'invertMask'], ['Apply mask', 'applyMask'], ['Delete mask', 'deleteMask']]],
   ['Adjust', [['Brightness / contrast…', 'brightnessContrast', 'Ctrl+B'], ['Hue / saturation / lightness…', 'hueSaturation', 'Ctrl+U'],
-    ['Exposure…', 'exposure'], ['Levels…', 'levels', 'Ctrl+L'], ['Curves…', 'curves', 'Ctrl+M'], ['Auto levels', 'autoLevels'], '-',
+    ['Exposure…', 'exposure'], ['Levels…', 'levels', 'Ctrl+L'], ['Curves…', 'curves', 'Ctrl+M'], ['White balance (temperature / tint)…', 'whiteBalance'], ['Auto levels', 'autoLevels'], '-',
+    ['Auto enhance (adds editable layers)', 'autoEnhance'], ['Auto white balance (adds a layer)', 'autoWhiteBalance'], ['White balance picker', 'wbPicker'], '-',
     ['Invert', 'invert', 'Ctrl+I'], ['Grayscale', 'grayscale', 'Ctrl+Shift+U'], ['Sepia tone…', 'sepia']]],
   ['Filter', [['Convert to live layer', 'convertSmart'], '-', ['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
   ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1'], '-', ['Rendering engine…', 'engine']]],
@@ -3038,7 +3232,79 @@ function duplicateActive() {
   d.layers.splice(d.layers.indexOf(l) + 1, 0, ...copies); normalizeTree(d); d.activeId = top.id;
   compDirty = true; requestRender(); commit(isGroup(l) ? 'Duplicate group' : 'Duplicate layer');
 }
+// --- multi-layer selection: Ctrl/Cmd+click toggles, Shift+click picks a range in the Layers panel -------------
+/** Selected layers (the active one plus Ctrl/Shift-picked ones), top-level only (a picked group covers its
+ * contents), bottom → top. */
+function pickedLayers(d = doc()) {
+  if (!d) return [];
+  const ids = new Set([...(d.picked || [])].filter((id) => layerById(d, id))); if (d.activeId != null) ids.add(d.activeId);
+  return d.layers.filter((l) => ids.has(l.id) && !ancestorsOf(d, l).some((g) => ids.has(g.id)));
+}
+function clearPicked(d = doc()) { if (d) d.picked = new Set(); }
+function pickLayer(l, e) {
+  const d = doc(); d.picked ||= new Set();
+  if (primaryMod(e) || (IS_MAC && e.metaKey)) {
+    if (l.id === d.activeId) { // toggling the active layer off: another picked layer becomes active
+      const rest = [...d.picked].filter((id) => id !== l.id && layerById(d, id));
+      if (rest.length) { d.picked.delete(l.id); d.activeId = rest[rest.length - 1]; }
+    } else if (d.picked.has(l.id)) d.picked.delete(l.id);
+    else { if (d.activeId != null) d.picked.add(d.activeId); d.picked.add(l.id); d.activeId = l.id; }
+  } else if (e.shiftKey && d.activeId != null) {
+    const vis = d.layers.filter((x) => !ancestorsOf(d, x).some((g) => g.collapsed)), a = vis.findIndex((x) => x.id === d.activeId), b = vis.indexOf(l);
+    if (a >= 0 && b >= 0) { d.picked = new Set(vis.slice(Math.min(a, b), Math.max(a, b) + 1).map((x) => x.id)); d.activeId = l.id; }
+  } else { d.picked = new Set(); d.activeId = l.id; }
+  d.picked.delete(d.activeId); if (d.picked.size) d.picked.add(d.activeId);
+}
+/** Move layers by (dx, dy) (groups move their contents). */
+function nudgeLayers(list, dx, dy) {
+  const d = doc(), seen = new Set();
+  for (const r of list) for (const l of blockOf(d, r)) if (!seen.has(l)) { seen.add(l); l.x += dx; l.y += dy; }
+  compDirty = true; requestRender();
+}
+/** Bounds of a layer's (or group's) visible pixels in document space, or null. */
+function layerBounds(d, l) {
+  let r = null;
+  for (const m of blockOf(d, l)) {
+    if (isGroup(m) || m.kind === 'adjust') continue;
+    const t = alphaBounds(m.kind === 'smart' ? renderSource(m) : m.canvas); if (!t) continue;
+    const b = { x: m.x + t.x, y: m.y + t.y, w: t.w, h: t.h };
+    r = r ? { x: Math.min(r.x, b.x), y: Math.min(r.y, b.y), w: Math.max(r.x + r.w, b.x + b.w) - Math.min(r.x, b.x), h: Math.max(r.y + r.h, b.y + b.h) - Math.min(r.y, b.y) } : b;
+  }
+  return r;
+}
+/** Layer ▸ Align / Distribute. One layer aligns to the selection (or the canvas); several align to each other. */
+function alignLayers(how) {
+  const d = doc(), list = pickedLayers(d).filter((l) => l.kind !== 'adjust'), items = list.map((l) => ({ l, b: layerBounds(d, l) })).filter((o) => o.b);
+  if (!items.length) { status('Nothing to align: select layers with pixels.'); return; }
+  if (how.startsWith('dist')) {
+    if (items.length < 3) { status('Distribute needs three or more selected layers.'); return; }
+    const hz = how === 'distH', c = (o) => (hz ? o.b.x + o.b.w / 2 : o.b.y + o.b.h / 2);
+    items.sort((p, q) => c(p) - c(q));
+    const first = c(items[0]), step = (c(items[items.length - 1]) - first) / (items.length - 1);
+    items.forEach((o, i) => { const dv = Math.round(first + step * i - c(o)); if (dv) nudgeLayers([o.l], hz ? dv : 0, hz ? 0 : dv); });
+    commit(hz ? 'Distribute horizontal centers' : 'Distribute vertical centers'); return;
+  }
+  let R;
+  if (items.length === 1) { const s = d.selection; R = s ? { x: s.x, y: s.y, w: s.w, h: s.h } : { x: 0, y: 0, w: d.width, h: d.height }; }
+  else { const x0 = Math.min(...items.map((o) => o.b.x)), y0 = Math.min(...items.map((o) => o.b.y)); R = { x: x0, y: y0, w: Math.max(...items.map((o) => o.b.x + o.b.w)) - x0, h: Math.max(...items.map((o) => o.b.y + o.b.h)) - y0 }; }
+  for (const { l, b } of items) {
+    const dx = how === 'left' ? R.x - b.x : how === 'right' ? R.x + R.w - (b.x + b.w) : how === 'hcenter' ? Math.round(R.x + R.w / 2 - (b.x + b.w / 2)) : 0;
+    const dy = how === 'top' ? R.y - b.y : how === 'bottom' ? R.y + R.h - (b.y + b.h) : how === 'vcenter' ? Math.round(R.y + R.h / 2 - (b.y + b.h / 2)) : 0;
+    if (dx || dy) nudgeLayers([l], dx, dy);
+  }
+  const names = { left: 'left edges', right: 'right edges', hcenter: 'horizontal centers', top: 'top edges', bottom: 'bottom edges', vcenter: 'vertical centers' };
+  commit(`Align ${names[how]}`);
+}
 function deleteActive() {
+  const dd = doc(), many = pickedLayers(dd);
+  if (many.length > 1) {
+    const gone = new Set(many.flatMap((l) => blockOf(dd, l)));
+    if (dd.layers.length - gone.size < 1) { status('A document needs at least one layer.'); return; }
+    const i = dd.layers.indexOf(dd.layers.find((x) => gone.has(x)));
+    dd.layers = dd.layers.filter((x) => !gone.has(x)); clearPicked(dd);
+    dd.activeId = (dd.layers[Math.max(0, i - 1)] || dd.layers[0]).id;
+    compDirty = true; requestRender(); commit(`Delete ${many.length} layers`); return;
+  }
   const d = doc(), l = activeLayer(), block = blockOf(d, l), gone = new Set(block);
   if (d.layers.length - gone.size < 1) { status('A document needs at least one layer.'); return; }
   const i = d.layers.indexOf(block[0]);
@@ -3048,8 +3314,15 @@ function deleteActive() {
 }
 /** Layer ▸ New group (empty, above the active layer) or Group layer (Ctrl+G: the active layer goes inside). */
 function newGroup(withActive) {
-  const d = doc(), a = activeLayer();
+  const d = doc(), a = activeLayer(), many = withActive ? pickedLayers(d) : [];
   const g = createLayer(`Group ${d.layers.filter(isGroup).length + 1}`, 1, 1, { kind: 'group', blend: 'pass-through', collapsed: false, editMask: true });
+  if (many.length > 1) { // the selected layers (top-level ones) move into one new group where the topmost was
+    const top = many[many.length - 1];
+    g.parent = parentId(top); d.layers.splice(d.layers.indexOf(top) + 1, 0, g);
+    for (const l of many) { l.parent = g.id; if (l.clip) l.clip = false; }
+    normalizeTree(d); clearPicked(d);
+    d.activeId = g.id; compDirty = true; requestRender(); commit(`Group ${many.length} layers`); return;
+  }
   if (withActive && a) { g.parent = parentId(a); d.layers.splice(d.layers.indexOf(a) + 1, 0, g); a.parent = g.id; if (a.clip) a.clip = false; normalizeTree(d); }
   else insertLayer(d, g);
   d.activeId = g.id; compDirty = true; requestRender(); commit(withActive ? 'Group layer' : 'New group');
@@ -3277,7 +3550,7 @@ function resizeCanvas(nw, nh, ax, ay) {
   d.width = nw; d.height = nh; d.selection = null;
   compDirty = true; fitToScreen(); commit(`Canvas size ${nw}×${nh}`);
 }
-function cropTo(r) {
+function cropTo(r, label = null) {
   const d = doc();
   r = rectIntersect(r, { x: 0, y: 0, w: d.width, h: d.height }); if (!r) return;
   for (const l of d.layers) {
@@ -3294,7 +3567,7 @@ function cropTo(r) {
     l.canvas = c; l.x = 0; l.y = 0; touch(l);
   }
   d.width = r.w; d.height = r.h; d.selection = null; state.crop = null;
-  compDirty = true; fitToScreen(); buildOptionsBar(); commit(`Crop ${r.w}×${r.h}`);
+  compDirty = true; fitToScreen(); buildOptionsBar(); commit(label ? `${label} (crop ${r.w}×${r.h})` : `Crop ${r.w}×${r.h}`);
 }
 
 function copySelection(merged) {
@@ -3344,6 +3617,10 @@ const ADJ = {
     { key: 'outBlack', label: 'Output black', min: 0, max: 255, value: 0 },
     { key: 'outWhite', label: 'Output white', min: 0, max: 255, value: 255 }], op: 'levels' },
   curves: { title: 'Curves', params: [], op: 'curves', curves: true },
+  whiteBalance: { title: 'White balance', params: [
+    { key: 'temperature', label: 'Temperature (cool ↔ warm)', min: -100, max: 100, value: 0 },
+    { key: 'tint', label: 'Tint (green ↔ magenta)', min: -100, max: 100, value: 0 }], op: 'whiteBalance' },
+  lut3d: { title: 'Color lookup (3D LUT)', params: [{ key: 'amount', label: 'Amount', min: 0, max: 100, value: 100, unit: '%' }], op: 'lut3d', layerOnly: true },
   sepia: { title: 'Sepia tone', params: [{ key: 'amount', label: 'Amount', min: 0, max: 100, value: 80, unit: '%' }], op: 'sepia' },
   gaussianBlur: { title: 'Gaussian blur', params: [{ key: 'radius', label: 'Radius', min: 0, max: 100, step: 0.5, value: 4, unit: 'px' }], op: 'gaussianBlur', maskOk: true },
   sharpen: { title: 'Sharpen (unsharp mask)', params: [
@@ -3861,6 +4138,8 @@ function serializeProject() {
       name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, data: l.canvas.toDataURL('image/png'),
       mask: l.mask ? { enabled: l.mask.enabled, data: l.mask.canvas.toDataURL('image/png') } : null,
       ...(l.kind ? { kind: l.kind, adj: l.adj, text: l.text } : {}),
+      ...(l.kind === 'adjust' && l.adj.type === 'lut3d' && lutRegistry.has(l.adj.params?.lut) ? { lut: lutEncode(lutRegistry.get(l.adj.params.lut)) } : {}),
+      ...(l.look ? { look: l.look } : {}),
       // v6: layer tree (parent = index of the containing group), clipping and layer styles
       parent: l.parent != null ? d.layers.findIndex((g) => g.id === l.parent) : -1, ...(l.clip ? { clip: true } : {}),
       ...(l.styles ? { styles: l.styles } : {}), ...(isGroup(l) ? { collapsed: !!l.collapsed } : {}),
@@ -3993,7 +4272,7 @@ function encodeHistory(d, dirty) {
         layers: sn.layers.map((l) => ({
           id: l.id, name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, rev: l.rev, editMask: l.editMask,
           kind: l.kind, adj: l.adj, text: l.text, canvas: ref(l.canvas),
-          parent: l.parent ?? null, clip: !!l.clip, styles: l.styles || null, collapsed: !!l.collapsed,
+          parent: l.parent ?? null, clip: !!l.clip, styles: l.styles || null, collapsed: !!l.collapsed, look: l.look || null,
           ...(deepOk && sn === curSnap && l.deep ? { deep: dref(l.deep), deepRev: l.deepRev, deepOX: l.deepOX || 0, deepOY: l.deepOY || 0 } : {}),
           mask: l.mask ? { enabled: l.mask.enabled, rev: l.mask.rev, canvas: ref(l.mask.canvas) } : null,
           ...(l.kind === 'smart' ? { source: ref(l.source), filters: l.filters, editFMask: l.editFMask,
@@ -4145,6 +4424,8 @@ async function loadProject(data, filename) {
     if (L.kind === 'adjust' && L.adj && L.mask?.data) Object.assign(l, { kind: 'adjust', adj: L.adj, editMask: true });
     if (L.kind === 'text' && L.text) Object.assign(l, { kind: 'text', text: L.text });
     if (L.kind === 'group') Object.assign(l, { kind: 'group', collapsed: !!L.collapsed, editMask: true });
+    if (L.look) l.look = L.look;
+    if (L.lut && L.adj?.type === 'lut3d' && L.adj.params?.lut) { try { lutRegistry.set(L.adj.params.lut, lutDecode(L.lut)); } catch { /* bad LUT data: the layer shows nothing */ } }
     if (L.clip) l.clip = true;
     if (L.styles) l.styles = normalizeStyles(L.styles);
     l.canvas.getContext('2d').drawImage(img, 0, 0);
@@ -4304,6 +4585,10 @@ function buildOptionsBar() {
       `<span class="muted">${platformText('Drag to push pixels · hold still to bloat / pinch · [ ] change the size')}</span>`); break;
     case 'redeye': parts.push(range('redeyeSize', 'Pupil size', 4, 400, 'px'), range('redeyeDarken', 'Darken', 0, 100, '%'), `<span class="muted">Click the centre of each red pupil</span>`); break;
     case 'eyedropper': parts.push(`<label><input type="checkbox" data-opt="sampleAll" ${o.sampleAll ? 'checked' : ''}/> Sample all layers</label>`); break;
+    case 'straighten': parts.push(`<label><input type="checkbox" data-opt="straightenCrop" ${o.straightenCrop ? 'checked' : ''}/> Crop to fit</label>`,
+      `<button data-cmd="autoStraighten" class="primary">Auto straighten</button>`,
+      `<span class="muted">${state.strLine ? `${Math.round(Math.atan2(state.strLine.b.y - state.strLine.a.y, state.strLine.b.x - state.strLine.a.x) * 1800 / Math.PI) / 10}°` : 'Drag along a line that should be level or vertical'}</span>`); break;
+    case 'wbpick': parts.push(`<span class="muted">Click a spot that should be neutral grey or white · edits the selected white-balance layer, or adds one</span>`, `<button data-cmd="autoWhiteBalance">Auto</button>`, `<button data-cmd="adjLayer_whiteBalance">Temperature / tint layer…</button>`); break;
     case 'crop': {
       const c = state.crop;
       parts.push(`<span class="muted">${c ? `${c.w} × ${c.h} px` : 'Drag a crop rectangle · Shift = square'}</span>`);
@@ -4398,6 +4683,7 @@ function fillBlendSelect(group) {
   $('#blendMode').innerHTML = (group ? [['pass-through', 'Pass through'], ...BLEND_MODES] : BLEND_MODES).map(([v, n]) => `<option value="${v}">${n}</option>`).join('');
 }
 function updateLayersPanel() {
+  updateLooksPanel();
   const ul = $('#layerList'); ul.innerHTML = '';
   const d = doc(); if (!d) return;
   fillBlendSelect(isGroup(activeLayer()));
@@ -4465,7 +4751,8 @@ function updateLayersPanel() {
       li.append(fx);
     }
     li.append(meta);
-    li.addEventListener('click', () => { if (state.xf && l.id !== d.activeId) applyTransform(); d.activeId = l.id; updateLayersPanel(); buildOptionsBar(); requestRender(); });
+    if (d.picked?.has(l.id) && l.id !== d.activeId) li.classList.add('picked');
+    li.addEventListener('click', (e) => { if (state.xf) applyTransform(); pickLayer(l, e); updateLayersPanel(); buildOptionsBar(); requestRender(); });
     li.addEventListener('dblclick', () => {
       const input = document.createElement('input'); input.type = 'text'; input.value = l.name; input.style.flex = '1'; input.style.minWidth = '0';
       name.replaceWith(input); input.focus(); input.select();
@@ -4542,6 +4829,15 @@ function updateAll() { updateLayersPanel(); updateHistoryPanel(); buildOptionsBa
 // Boot
 // ---------------------------------------------------------------------------
 buildMenus(); buildToolbar(); buildSheets(); initEngine();
+{ // Looks panel: intensity slider edits the selected look group's opacity (one history step per drag)
+  const sl = $('#lookIntensity');
+  sl.addEventListener('input', () => { $('#lookIntensityVal').textContent = `${sl.value}%`; setLookIntensity(+sl.value, false); });
+  sl.addEventListener('change', () => setLookIntensity(+sl.value, true));
+  const det = $('#looksDetails');
+  det.open = localStorage.getItem('tintwork.looksOpen') === '1';
+  det.addEventListener('toggle', () => { localStorage.setItem('tintwork.looksOpen', det.open ? '1' : '0'); if (det.open) updateLooksPanel(true); });
+  updateLooksPanel(true);
+}
 // Installed app (PWA): files opened from Explorer / Finder via the manifest's file_handlers arrive here.
 if ('launchQueue' in window) {
   window.launchQueue.setConsumer(async (params) => {
@@ -4585,7 +4881,206 @@ document.querySelectorAll('[title]').forEach((el) => {
 status(`${APP} ready — open an image (${shortcutLabel('open', 'Ctrl+O')}), drop one in, or create a new canvas (${shortcutLabel('new', 'Ctrl+N')}).`);
 
 // Small automation/testing hook (also handy from the devtools console).
+// ---------------------------------------------------------------------------
+// v0.8: automatic tools (white balance, auto enhance, straighten), looks and 3D LUTs
+// ---------------------------------------------------------------------------
+/** Small CPU composite of the document (≤ maxSide px) for analysis; `hide` layers are left out. */
+function analysisImage(maxSide = 512, hide = null) {
+  const d = doc(), tmp = makeCanvas(d.width, d.height), saved = hide ? hide.visible : null;
+  if (hide) hide.visible = false;
+  try { composite(tmp, { sync: true, cpu: true }); } finally { if (hide) hide.visible = saved; compDirty = true; }
+  const k = Math.min(1, maxSide / Math.max(d.width, d.height)), w = Math.max(1, Math.round(d.width * k)), h = Math.max(1, Math.round(d.height * k));
+  const s = makeCanvas(w, h), x = s.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(tmp, 0, 0, w, h);
+  return { img: x.getImageData(0, 0, w, h), k };
+}
+function makeAdjLayer(type, params, name) {
+  const d = doc(), l = createLayer(name || ADJ_LAYER[type], 1, 1, { kind: 'adjust', adj: { type, params: structuredClone(params) }, editMask: true });
+  l.mask = { canvas: makeMaskCanvas(d.width, d.height, true), enabled: true, rev: ++globalRev };
+  return l;
+}
+/** Insert a pass-through group holding adjustment layers (bottom → top) above the active layer; one history step. */
+function addAdjustmentGroup(name, specs, { opacity = 1, look = null, label } = {}) {
+  const d = doc(), g = createLayer(name, 1, 1, { kind: 'group', blend: 'pass-through', collapsed: false, editMask: true, opacity });
+  if (look) g.look = look;
+  const a = activeLayer(), parent = a ? (isGroup(a) && !a.collapsed ? a.id : parentId(a)) : null;
+  g.parent = parent;
+  const at = a ? (isGroup(a) && !a.collapsed ? d.layers.indexOf(a) : d.layers.indexOf(a) + 1) : d.layers.length;
+  const kids = specs.map((s) => { const l = makeAdjLayer(s.type, s.params, s.name); l.parent = g.id; return l; });
+  d.layers.splice(at, 0, ...kids, g); normalizeTree(d); clearPicked(d);
+  d.activeId = g.id; compDirty = true; requestRender(); commit(label || name);
+  return g;
+}
+function autoWhiteBalanceCmd() {
+  const { img } = analysisImage();
+  const p = auto.autoWhiteBalance(img);
+  if (Math.abs(p.temperature) + Math.abs(p.tint) < 2) { status('Auto white balance: the colours are already neutral.'); toast('Already neutral: no white balance change needed.'); return null; }
+  const l = makeAdjLayer('whiteBalance', p, 'Auto white balance');
+  addLayer(l, 'Auto white balance'); clearPicked();
+  status(`Auto white balance: temperature ${p.temperature > 0 ? '+' : ''}${p.temperature}, tint ${p.tint > 0 ? '+' : ''}${p.tint} (editable adjustment layer)`);
+  return p;
+}
+function autoEnhanceCmd() {
+  const { img } = analysisImage(), specs = auto.autoEnhance(img);
+  if (!specs.length) { status('Auto enhance: nothing to improve.'); toast('This picture already looks balanced: nothing changed.'); return null; }
+  const g = addAdjustmentGroup('Auto enhance', specs, { label: 'Auto enhance' });
+  status(`Auto enhance: ${specs.map((s) => s.name.replace(/^Auto /, '')).join(', ')} — editable layers in the “Auto enhance” group`);
+  return { group: g.id, steps: specs.map((s) => s.type) };
+}
+/** White-balance eyedropper: the clicked spot becomes neutral grey (edits the active white-balance layer or adds one). */
+function wbPickAt(p) {
+  const d = doc(), a = activeLayer(), target = a && a.kind === 'adjust' && a.adj.type === 'whiteBalance' ? a : null;
+  const { img, k } = analysisImage(Math.max(d.width, d.height), target);
+  const r = auto.neutralAt(img, Math.round(p.x * k), Math.round(p.y * k), 2);
+  if (!r) { status('That spot is transparent: click on a grey or white area of the picture.'); return null; }
+  if (target) { target.adj = { type: 'whiteBalance', params: r }; compDirty = true; requestRender(); commit('White balance (eyedropper)'); }
+  else addLayer(makeAdjLayer('whiteBalance', r, 'White balance'), 'White balance (eyedropper)');
+  status(`White balance set from the clicked spot: temperature ${r.temperature}, tint ${r.tint}. Click another neutral spot to refine.`);
+  return r;
+}
+/** Rotate every layer by `deg` (clockwise positive) about the canvas centre; optionally crop to the largest clean rectangle. */
+function straightenBy(deg, crop = true) {
+  const d = doc(); if (!d || !deg) return false;
+  if (state.xf) applyTransform(); if (state.mxf) applyMeshXf();
+  const W = d.width, H = d.height, t = deg * Math.PI / 180, c = Math.cos(t), s = Math.sin(t);
+  const R = { a: c, b: s, c: -s, d: c, e: W / 2 - c * W / 2 + s * H / 2, f: H / 2 - s * W / 2 - c * H / 2 };
+  let texts = 0;
+  for (const l of d.layers) {
+    if (isGroup(l)) continue;
+    if (l.kind === 'text') { rasterize(l); texts++; }
+    if (l.kind === 'smart') rasterize(l, 'straightening');
+    const box = l.kind === 'adjust' ? null : l.canvas, mbox = l.mask ? l.mask.canvas : null, ref = box || mbox; if (!ref) continue;
+    const M = mulOffset(R, l.x, l.y), { x0, y0, x1, y1 } = xfBounds({ w: ref.width, h: ref.height }, M), w = x1 - x0, h = y1 - y0;
+    const deep = box && useDeep(l) ? deepOf(l) : null;
+    if (box) l.canvas = drawTransformed(box, M, x0, y0, w, h);
+    if (mbox) { l.mask.canvas = drawTransformed(mbox, M, x0, y0, w, h); touchMask(l); }
+    delete l.deep; delete l.deepRev; delete l.deepOX; delete l.deepOY;
+    l.x = x0; l.y = y0; touch(l);
+    if (deep) { // 16-bit: the same rotation through the CPU mesh renderer, sampled from the 16-bit pixels
+      const pts = [[0, 0], [ref.width, 0], [ref.width, ref.height], [0, ref.height]].map(([u, v]) => { const q = applyM(M, u, v); return [q.x, q.y]; });
+      const m = mesh.perspectiveMesh(ref.width, ref.height, pts);
+      if (m) { l.deep = deepMesh(deep, w, h, m, x0, y0); l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0; }
+    }
+  }
+  if (texts) toast('Text layers were converted to pixels for straightening.');
+  d.selection = null; compDirty = true;
+  const label = `Straighten ${deg > 0 ? '+' : ''}${Math.round(deg * 10) / 10}°`;
+  if (crop) { const r = auto.cropAfterRotate(W, H, deg); cropTo(r, label); }
+  else { requestRender(); commit(label); }
+  status(`${label}${crop ? ' and cropped to remove the empty corners' : ''}`);
+  return true;
+}
+/** Auto straighten: Hough transform on the picture's edges finds the horizon (or verticals). */
+function autoStraightenCmd() {
+  const { img } = analysisImage(600), r = auto.detectTilt(img);
+  if (!r || r.confidence < 0.05 || Math.abs(r.angle) < 0.15) { status(r ? `No tilt worth fixing found (${r.angle}°).` : 'No clear horizon or vertical lines found.'); toast(r ? 'The picture already looks level.' : 'No clear horizon or vertical edges found: use the Straighten tool to draw one.'); return r; }
+  straightenBy(-r.angle, state.opts.straightenCrop);
+  status(`Auto straighten: ${r.kind} lines were ${Math.abs(r.angle)}° ${r.angle > 0 ? 'clockwise' : 'counter-clockwise'}; rotated ${-r.angle > 0 ? '+' : ''}${-r.angle}°`);
+  return r;
+}
+const straightenTool = {
+  down(p) { drag = { str: true, a: p, b: p }; state.strLine = { a: p, b: p }; },
+  move(p) { if (!drag?.str) return; drag.b = p; state.strLine = { a: drag.a, b: p }; requestRender(); buildOptionsBar(); },
+  up() {
+    const dr = drag; state.strLine = null; requestRender(); if (!dr?.str) return;
+    const dx = dr.b.x - dr.a.x, dy = dr.b.y - dr.a.y; if (Math.hypot(dx, dy) * state.zoom < 8) { status('Drag along something that should be level (or vertical).'); return; }
+    let ang = Math.atan2(dy, dx) * 180 / Math.PI; // the line's angle (clockwise positive)
+    while (ang > 90) ang -= 180; while (ang <= -90) ang += 180;
+    const tilt = Math.abs(ang) <= 45 ? ang : ang > 0 ? ang - 90 : ang + 90;
+    if (Math.abs(tilt) < 0.05) { status('That line is already level.'); return; }
+    straightenBy(-tilt, state.opts.straightenCrop);
+  },
+};
+const wbPickTool = { down(p) { drag = {}; wbPickAt(p); } };
+
+// --- Looks ---------------------------------------------------------------------------------------
+function lookTypes() { return new Set(Object.keys(ADJ_LAYER).filter((t) => t !== 'lut3d')); }
+function userLooks() { try { return (JSON.parse(localStorage.getItem('tintwork.looks') || '[]') || []).map((o) => normalizeLook({ ...o, user: true }, lookTypes())).filter(Boolean); } catch { return []; } }
+function saveUserLooks(list) { localStorage.setItem('tintwork.looks', JSON.stringify(list.map(({ id, name, layers }) => ({ id, name, layers })))); }
+function allLooks() { return [...LOOKS.map((l) => ({ ...l, user: false })), ...userLooks()]; }
+function applyLook(idOrLook, intensity = state.opts.lookIntensity) {
+  const look = typeof idOrLook === 'string' ? allLooks().find((l) => l.id === idOrLook) : idOrLook;
+  if (!look || !doc()) return null;
+  const specs = lookToLayers(look).map((s) => ({ ...s, name: `${look.name}: ${ADJ_LAYER[s.type]}` }));
+  const g = addAdjustmentGroup(`Look: ${look.name}`, specs, { opacity: Math.max(0, Math.min(1, intensity / 100)), look: look.id, label: `Look: ${look.name}` });
+  status(`Look “${look.name}” added at ${Math.round(g.opacity * 100)}% — the group's opacity is its intensity; every layer inside stays editable.`);
+  updateLooksPanel(); return g;
+}
+/** The look group being edited (the active layer or its enclosing look group). */
+function activeLookGroup() { const d = doc(); if (!d) return null; let l = activeLayer(); while (l && !l.look) l = layerById(d, parentId(l)); return l || null; }
+function setLookIntensity(v, final) {
+  const g = activeLookGroup();
+  if (!g) { state.opts.lookIntensity = v; return; } // no look selected: sets the strength new looks start at
+  g.opacity = v / 100; compDirty = true; requestRender();
+  if (final) commit(`Look intensity ${v}%`);
+}
+/** Save the adjustment layers of the active group (or the picked adjustment layers) as a user look. */
+function saveLookFromSelection(name) {
+  const d = doc(), sel = pickedLayers(d), src = [];
+  for (const r of sel) for (const l of blockOf(d, r)) if (l.kind === 'adjust' && l.visible && lookTypes().has(l.adj.type)) src.push(l);
+  if (!src.length) { status('Select a group of adjustment layers (or Ctrl+click several) to save them as a look.'); toast('Nothing to save: select adjustment layers or a look group first.'); return null; }
+  const look = normalizeLook({ id: `user-${Date.now().toString(36)}`, name: name || 'My look', layers: src.map((l) => ({ type: l.adj.type, params: l.adj.params })), user: true }, lookTypes());
+  const list = userLooks(); list.push(look); saveUserLooks(list); updateLooksPanel(true);
+  status(`Saved look “${look.name}” (${look.layers.length} adjustment${look.layers.length === 1 ? '' : 's'}).`); return look;
+}
+function exportLooksJSON() { return JSON.stringify({ format: 'tintwork-looks', version: 1, looks: userLooks().map(({ id, name, layers }) => ({ id, name, layers })) }, null, 2); }
+function importLooksJSON(text) {
+  let o; try { o = JSON.parse(text); } catch { throw new Error('Not a looks file (invalid JSON)'); }
+  const arr = Array.isArray(o) ? o : o && o.format === 'tintwork-looks' ? o.looks : o && o.layers ? [o] : null;
+  if (!arr) throw new Error('Not a looks file');
+  const list = userLooks(), have = new Set(list.map((l) => l.id)); let n = 0;
+  for (const raw of arr) { const l = normalizeLook({ ...raw, user: true }, lookTypes()); if (!l) continue; if (have.has(l.id)) l.id = `${l.id}-${Date.now().toString(36)}${n}`; list.push(l); n++; }
+  if (!n) throw new Error('No usable looks in that file');
+  saveUserLooks(list); updateLooksPanel(true); return n;
+}
+function pickFile(accept) {
+  return new Promise((resolve) => { const i = document.createElement('input'); i.type = 'file'; i.accept = accept; i.addEventListener('change', () => resolve(i.files[0] || null)); i.click(); });
+}
+var lookThumbKey = '', lookThumbTimer = 0; // var: updateLooksPanel can run during boot, before this line
+function updateLooksPanel(force = false) {
+  const box = $('#looksGrid'); if (!box) return;
+  const d = doc(), looks = allLooks(), g = activeLookGroup();
+  const slider = $('#lookIntensity'); if (slider) { slider.value = g ? Math.round(g.opacity * 100) : state.opts.lookIntensity; $('#lookIntensityVal').textContent = `${slider.value}%`; $('#lookTarget').textContent = g ? g.name.replace(/^Look: /, '') : 'new looks'; }
+  const key = `${looks.map((l) => l.id).join(',')}|${d ? `${d.name}:${d.width}x${d.height}:${d.layers.length}` : '-'}`;
+  if (!force && key === lookThumbKey && box.childElementCount) return;
+  lookThumbKey = key;
+  box.innerHTML = '';
+  for (const look of looks) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'look' + (look.user ? ' user' : ''); b.dataset.look = look.id; b.title = `${look.name}${look.user ? ' (yours)' : ''} — click to add as an editable group`;
+    const c = makeCanvas(72, 48); c.className = 'look-thumb'; b.append(c);
+    const s = document.createElement('span'); s.textContent = look.name; b.append(s);
+    b.addEventListener('click', () => { if (!doc()) { status('Open an image first.'); return; } applyLook(look.id); });
+    if (look.user) b.addEventListener('contextmenu', (e) => { e.preventDefault(); if (confirm(`Delete your look “${look.name}”?`)) { saveUserLooks(userLooks().filter((x) => x.id !== look.id)); updateLooksPanel(true); } });
+    box.append(b);
+  }
+  clearTimeout(lookThumbTimer); if (d) lookThumbTimer = setTimeout(renderLookThumbs, 250);
+}
+/** Previews: each look's stack run on a tiny copy of the picture (CPU, ~72×48). */
+function renderLookThumbs() {
+  const d = doc(); if (!d) return;
+  const { img } = analysisImage(96), looks = allLooks();
+  for (const b of document.querySelectorAll('#looksGrid .look')) {
+    const look = looks.find((l) => l.id === b.dataset.look); if (!look) continue;
+    const out = new ImageData(new Uint8ClampedArray(img.data), img.width, img.height);
+    for (const s of look.layers) runOp(s.type, out, s.params);
+    const c = b.querySelector('canvas'), x = c.getContext('2d'), t = putInto(null, out), k = Math.max(72 / img.width, 48 / img.height);
+    x.clearRect(0, 0, 72, 48); x.drawImage(t, (72 - img.width * k) / 2, (48 - img.height * k) / 2, img.width * k, img.height * k);
+  }
+}
+async function importCubeText(text, name = 'LUT') {
+  const t = parseCube(text); t.title ||= name.replace(/\.cube$/i, '');
+  const id = registerLut(t), l = makeAdjLayer('lut3d', { lut: id, title: t.title, amount: 100 }, `LUT: ${t.title}`);
+  addLayer(l, `Color lookup: ${t.title}`);
+  status(`3D LUT “${t.title}” (${t.size}³) added as an adjustment layer. Double-click it to change the amount.`);
+  return l;
+}
+lutStoreLoad();
+
 window.tintwork = {
+  // v0.8
+  pickLayer: (ids) => { const d = doc(); d.activeId = ids[ids.length - 1]; d.picked = new Set(ids.length > 1 ? ids : []); updateLayersPanel(); },
+  pickedLayers: () => pickedLayers().map((l) => l.id), alignLayers, straightenBy, autoStraightenCmd, autoEnhanceCmd, autoWhiteBalanceCmd, wbPickAt,
+  detectTilt: () => auto.detectTilt(analysisImage(600).img), applyLook, allLooks, saveLookFromSelection, exportLooksJSON, importLooksJSON, importCubeText,
+  setLookIntensity, addAdj: (type, params, name) => { const l = makeAdjLayer(type, params, name); addLayer(l, name || type); return l; }, analysisImage, layerBounds: (id) => layerBounds(doc(), layerById(doc(), id)),
   state, cmds, run, setTool, openFile, newDocument, history, commit, composite, activeLayer, setFg, serializeProject, openAdjust, ADJ,
   ops, setSelection, makeSelection, rectMask, renderSource, updateLayersPanel, touch, fitToScreen,
   mods, setMod, openSheet, closeSheet, toast, MAX_PIXELS, IS_IOS, fitPixels, renderExport,

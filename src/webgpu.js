@@ -8,7 +8,7 @@
 import { pointFns } from './pixels.js';
 import { GPU_OPS } from './gpu.js';
 
-const ADJ_POINT = new Set(['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia']);
+const ADJ_POINT = new Set(['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'whiteBalance']);
 const BPP = { rgba8unorm: 4, rgba16float: 8, rgba32float: 16 };
 const MAXR = 300; // blur apron (radius 100 → 3 sigma)
 
@@ -525,16 +525,31 @@ struct U { offX: i32, offY: i32, dither: u32, pad: u32 };
       const af = accumFormat(W, H); if (!af) throw gpuError('memory', 'Not enough GPU memory for this canvas');
       const fmt = FMTMAP[af];
       unpinAll();
-      let A = scratch(W, H, fmt), Bt = scratch(W, H, fmt);
+      let A = scratch(W, H, fmt), Bt = scratch(W, H, fmt); const stack = [];
       try {
         // clear A to the background colour (or transparent) with a render pass
         const bg = background ? { r: background[0] / 255, g: background[1] / 255, b: background[2] / 255, a: 1 } : { r: 0, g: 0, b: 0, a: 0 };
         encoder().beginRenderPass({ colorAttachments: [{ view: A.view, loadOp: 'clear', storeOp: 'store', clearValue: bg }] }).end();
         for (const L of layers) {
-          if (L.opacity <= 0) continue;
+          if (L.kind === 'groupBegin' || L.kind === 'passBegin') {
+            stack.push(A); A = scratch(W, H, fmt);
+            if (L.kind === 'passBegin') run('prep', A, { src: stack[stack.length - 1] }, { straightIn: 0 });
+            else encoder().beginRenderPass({ colorAttachments: [{ view: A.view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }] }).end();
+            continue;
+          }
           const m = L.mask ? cached(L.mask.key, L.mask.slot, L.mask.canvas, L.mask.canvas.width, L.mask.canvas.height) : null;
           const mu = m ? { mx: L.mask.x, my: L.mask.y, mw: m.w, mh: m.h } : { mw: 1, mh: 1 };
           let flags = m ? 1 : 0;
+          if (L.kind === 'groupEnd' || L.kind === 'passEnd') {
+            const G = A; A = stack.pop();
+            if (L.opacity > 0) {
+              const pass = L.kind === 'passEnd';
+              run('layer', Bt, { base: A, src: G, mask: m }, { offX: 0, offY: 0, sw: W, sh: H, opacity: L.opacity, mode: pass ? 0 : L.mode, flags: flags | (pass ? 4 : 0), ...mu });
+              const s = A; A = Bt; Bt = s;
+            }
+            release(G); continue;
+          }
+          if (L.opacity <= 0) continue;
           if (L.kind === 'adjust') {
             const C = scratch(W, H, fmt); run('prep', C, { src: A }, { straightIn: 0 });
             const adj = applyOp(C, L.op, L.params, { docW: W, docH: H });
@@ -549,7 +564,7 @@ struct U { offX: i32, offY: i32, dither: u32, pad: u32 };
         }
         const res = A; A = null;
         return { A: res, af };
-      } catch (err) { release(A); throw err; } finally { release(Bt); }
+      } catch (err) { release(A, ...stack); stack.length = 0; throw err; } finally { release(Bt); }
   }
   async function filterAsyncOut(a, c) { await toContextAsync(a, c.getContext('2d')); return c; }
   function filterCore(src, chain, info2, async) {
@@ -648,6 +663,7 @@ struct VO { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
       if (lost || W > maxTex || H > maxTex || !accumFormat(W, H)) return false;
       return layers.every((L) => L.kind !== 'adjust' || ADJ_POINT.has(L.op));
     },
+    markers: true,
     /** Same contract as the WebGL2 engine's composite(); returns 'rgba16f' or 'rgba8'. */
     composite(layers, W, H, ctx, o = {}) {
       needSync();

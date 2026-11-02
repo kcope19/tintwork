@@ -134,8 +134,9 @@ void main() { ivec2 f = ivec2(gl_FragCoord.xy); ivec2 p = ivec2(f.x, uH - 1 - f.
 void main() { vec4 c = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0); o = vec4(straight(c), clamp(c.a, 0.0, 1.0)); }`,
 };
 
-export const GPU_OPS = new Set(['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'gaussianBlur', 'sharpen', 'noise', 'vignette']);
-const ADJ_POINT = new Set(['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia']);
+export const GPU_OPS = new Set(['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'gaussianBlur', 'sharpen', 'noise', 'vignette', 'whiteBalance']);
+const ADJ_POINT = new Set(['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'whiteBalance']);
+const MARKERS = new Set(['groupBegin', 'groupEnd', 'passBegin', 'passEnd']);
 const BPP = { rgba8: 4, rgba16f: 8, rgba32f: 16 };
 
 // float -> IEEE half bits
@@ -403,6 +404,7 @@ precision highp float; in vec2 vT; uniform sampler2D uSrc; out vec4 o; void main
       if (engine.lost || W > maxTex || H > maxTex || !accumFormat(W, H)) return false;
       return layers.every((L) => L.kind !== 'adjust' || ADJ_POINT.has(L.op));
     },
+    markers: true,
     /**
      * Composite layers into ctx (a 2D context of a W×H canvas). Layer descriptors:
      *  { kind:'pixels', key, slot, src: canvas | DImage, x, y, w, h, opacity, mode, mask? }
@@ -413,15 +415,30 @@ precision highp float; in vec2 vT; uniform sampler2D uSrc; out vec4 o; void main
       checkSize(W, H);
       const fmt = accumFormat(W, H); if (!fmt) throw gpuError('memory', 'Not enough GPU memory for this canvas');
       unpinAll();
-      let A = scratch(W, H, fmt), Bt = scratch(W, H, fmt);
+      let A = scratch(W, H, fmt), Bt = scratch(W, H, fmt); const stack = [];
       try {
         gl.bindFramebuffer(gl.FRAMEBUFFER, fbo(A));
         if (background) gl.clearColor(background[0] / 255, background[1] / 255, background[2] / 255, 1); else gl.clearColor(0, 0, 0, 0);
         gl.viewport(0, 0, W, H); gl.clear(gl.COLOR_BUFFER_BIT);
         for (const L of layers) {
-          if (L.opacity <= 0) continue;
+          if (L.kind === 'groupBegin' || L.kind === 'passBegin') {
+            stack.push(A); A = scratch(W, H, fmt);
+            if (L.kind === 'passBegin') run('prep', A, W, H, { uSrc: stack[stack.length - 1], uStraight: false });
+            else { gl.bindFramebuffer(gl.FRAMEBUFFER, fbo(A)); gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
+            continue;
+          }
           const m = L.mask ? cached(L.mask.key, L.mask.slot, L.mask.canvas, L.mask.canvas.width, L.mask.canvas.height) : null;
           const mu = m ? { uMask: m, uHasMask: true, uMaskOff: [L.mask.x, L.mask.y], uMaskSize: [m.w, m.h] } : { uHasMask: false, uMaskOff: [0, 0], uMaskSize: [1, 1] };
+          if (L.kind === 'groupEnd' || L.kind === 'passEnd') {
+            const G = A; A = stack.pop();
+            if (L.opacity > 0) {
+              const pass = L.kind === 'passEnd';
+              run('layer', Bt, W, H, { uDst: A, uSrc: G, uOff: [0, 0], uSize: [W, H], uStraight: false, uOpacity: L.opacity, uMode: pass ? 0 : L.mode, uLerp: pass, ...mu });
+              const s = A; A = Bt; Bt = s;
+            }
+            release(G); continue;
+          }
+          if (L.opacity <= 0) continue;
           if (L.kind === 'adjust') {
             const C = scratch(W, H, fmt); run('prep', C, W, H, { uSrc: A, uStraight: false });
             const adj = applyOp(C, L.op, L.params, { docW: W, docH: H });
@@ -436,7 +453,7 @@ precision highp float; in vec2 vT; uniform sampler2D uSrc; out vec4 o; void main
         toContext(A, ctx, 0, 0, dither);
         stats.composites++;
         return fmt;
-      } finally { release(A, Bt); }
+      } finally { release(A, Bt, ...stack); }
     },
     /** Render a textured triangle mesh (see mesh.js) of straight ImageData into a new outW×outH ImageData at offset (ox, oy). */
     warpMesh,

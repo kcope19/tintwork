@@ -6,7 +6,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg0); color: var(--text); overflow: hidden; }
-body { display: grid; grid-template-rows: 34px 40px 1fr 24px; }
+body { display: grid; grid-template-rows: 34px 40px minmax(0, 1fr) 24px; }
 button, select, input { font: inherit; color: inherit; }
 button { background: var(--bg3); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 10px; cursor: pointer; }
 button:hover { border-color: #4a505b; background: #383d46; }
@@ -319,3 +319,25 @@ input[type=text], input[type=number], textarea { -webkit-user-select: text; user
 .bench-table td.best { color: #8fe388; font-weight: 600; }
 .bench-text { width: 100%; height: 160px; margin-top: 8px; font: 11px/1.4 ui-monospace, monospace; }
 .bench .field.two > span label { display: inline-block; margin-right: 12px; white-space: nowrap; }
+
+/* v0.8: multi-layer selection, Looks panel */
+#layerList li.picked { background: #e8553a1a; box-shadow: inset 3px 0 0 #e8553a88; }
+#looksPanel .looks-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; max-height: 190px; overflow-y: auto; padding: 2px; }
+#looksPanel .look { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 3px; border: 1px solid transparent; border-radius: 6px; background: none; color: inherit; font-size: 11px; cursor: pointer; }
+#looksPanel .look:hover { border-color: var(--accent); }
+#looksPanel .look.user span::after { content: ' ★'; opacity: .7; }
+#looksPanel .look-thumb { width: 72px; height: 48px; border-radius: 4px; background: #0003; }
+#looksPanel .look span { max-width: 74px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#looksPanel .look-intensity { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+#looksPanel .look-intensity input { flex: 1; }
+#looksPanel .look-target { font-size: 11px; margin: 2px 0 4px; }
+#looksDetails > summary { cursor: pointer; list-style: none; }
+#looksDetails > summary::-webkit-details-marker { display: none; }
+#looksDetails > summary h2 { display: inline; }
+#looksDetails > summary::after { content: ' ▸'; opacity: .6; }
+#looksDetails[open] > summary::after { content: ' ▾'; }
+#panels > .panel:not(.grow) { flex-shrink: 0; }
+#layersPanel #layerList { flex: 1 1 0; min-height: 48px; }
+#toolbar { min-height: 0; overflow-y: auto; scrollbar-width: none; }
+#toolbar button { flex-shrink: 0; }
+@media (max-height: 960px) and (min-width: 801px) { #toolbar button { height: 31px; } #toolbar .sep { margin: 3px 0; } }

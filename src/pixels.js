@@ -76,11 +76,78 @@ export function pointFns(name, p = {}) {
       const all = cl(curveFn(p.rgb)), ch = [p.r, p.g, p.b].map((pts) => cl(curveFn(pts)));
       return ch.map((f) => (v) => all(f(v)));
     }
+    case 'whiteBalance': {
+      const g = wbGains(p.temperature || 0, p.tint || 0);
+      return g.map((k) => cl((v) => Math.pow(Math.min(1, Math.pow(v / 255, 2.2) * k), 1 / 2.2) * 255));
+    }
     default: return null;
   }
 }
 
+/** Temperature / tint (-100..100) -> linear-light channel gains, normalised so luminance stays put. */
+export function wbGains(temperature = 0, tint = 0) {
+  const t = temperature / 100, n = tint / 100;
+  const r = Math.pow(2, t * 0.75), b = Math.pow(2, -t * 0.75), g = Math.pow(2, -n * 0.5);
+  const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return [r / y, g / y, b / y];
+}
+/** Inverse of wbGains: the temperature / tint whose gains neutralise a linear-light colour (r, g, b). */
+export function wbFromNeutral(r, g, b) {
+  r = Math.max(1e-4, r); g = Math.max(1e-4, g); b = Math.max(1e-4, b);
+  const gr = g / r, gb = g / b, gg = 1; // desired gains (green fixed)
+  const t = Math.log2(gr / gb) / 1.5, n = -Math.log2(gg / Math.sqrt(gr * gb)) / 0.5;
+  const c = (v) => Math.max(-100, Math.min(100, Math.round(v * 100)));
+  return { temperature: c(t), tint: c(n) };
+}
+/** Parse a standard .cube text file (3D only) -> { size, data: Float32Array(size^3*3), title, domainMin, domainMax }. */
+export function parseCube(text) {
+  let size = 0, title = '', dmin = [0, 0, 0], dmax = [1, 1, 1]; const vals = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim(); if (!line || line[0] === '#') continue;
+    const up = line.split(/\s+/), k = up[0].toUpperCase();
+    if (k === 'TITLE') { title = line.slice(5).trim().replace(/^"|"$/g, ''); continue; }
+    if (k === 'LUT_3D_SIZE') { size = parseInt(up[1], 10); continue; }
+    if (k === 'LUT_1D_SIZE') throw new Error('1D .cube LUTs are not supported (3D only)');
+    if (k === 'DOMAIN_MIN') { dmin = up.slice(1, 4).map(Number); continue; }
+    if (k === 'DOMAIN_MAX') { dmax = up.slice(1, 4).map(Number); continue; }
+    if (/^[A-Z_]+$/.test(k)) continue; // other keywords (LUT_3D_INPUT_RANGE …)
+    if (up.length >= 3) vals.push(+up[0], +up[1], +up[2]);
+  }
+  if (!(size >= 2 && size <= 129)) throw new Error('Missing or invalid LUT_3D_SIZE');
+  if (vals.length !== size * size * size * 3 || vals.some((v) => !Number.isFinite(v))) throw new Error(`Expected ${size ** 3} entries, found ${Math.floor(vals.length / 3)}`);
+  return { size, data: new Float32Array(vals), title, domainMin: dmin, domainMax: dmax };
+}
+/** Trilinear lookup of straight r, g, b (0..1) in a parsed cube; writes into out[0..2]. */
+export function cubeLookup(L, r, g, b, out) {
+  const N = L.size, D = L.data, m = L.domainMin || [0, 0, 0], M = L.domainMax || [1, 1, 1];
+  const f = (v, i) => { const t = ((v - m[i]) / (M[i] - m[i])) * (N - 1); return t < 0 ? 0 : t > N - 1 ? N - 1 : t; };
+  const x = f(r, 0), y = f(g, 1), z = f(b, 2), x0 = Math.min(N - 2, Math.floor(x)), y0 = Math.min(N - 2, Math.floor(y)), z0 = Math.min(N - 2, Math.floor(z));
+  const fx = x - x0, fy = y - y0, fz = z - z0;
+  for (let c = 0; c < 3; c++) {
+    const at = (i, j, k) => D[((k * N + j) * N + i) * 3 + c];
+    const c00 = at(x0, y0, z0) * (1 - fx) + at(x0 + 1, y0, z0) * fx, c10 = at(x0, y0 + 1, z0) * (1 - fx) + at(x0 + 1, y0 + 1, z0) * fx;
+    const c01 = at(x0, y0, z0 + 1) * (1 - fx) + at(x0 + 1, y0, z0 + 1) * fx, c11 = at(x0, y0 + 1, z0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1, z0 + 1) * fx;
+    out[c] = (c00 * (1 - fy) + c10 * fy) * (1 - fz) + (c01 * (1 - fy) + c11 * fy) * fz;
+  }
+  return out;
+}
+
 export const adjustments = {
+  whiteBalance(img, p = {}) {
+    const fns = pointFns('whiteBalance', p), t = fns.map((f) => { const a = new Uint8ClampedArray(256); for (let v = 0; v < 256; v++) a[v] = f(v); return a; }), d = img.data;
+    for (let i = 0; i < d.length; i += 4) { d[i] = t[0][d[i]]; d[i + 1] = t[1][d[i + 1]]; d[i + 2] = t[2][d[i + 2]]; }
+    return img;
+  },
+  lut3d(img, p = {}) {
+    const L = p.table; if (!L) return img;
+    const d = img.data, o = [0, 0, 0], k = (p.amount ?? 100) / 100;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue;
+      const r = d[i], g = d[i + 1], b = d[i + 2]; cubeLookup(L, r / 255, g / 255, b / 255, o);
+      d[i] = r + (o[0] * 255 - r) * k; d[i + 1] = g + (o[1] * 255 - g) * k; d[i + 2] = b + (o[2] * 255 - b) * k;
+    }
+    return img;
+  },
   brightnessContrast(img, { brightness = 0, contrast = 0 }) {
     // brightness -100..100, contrast -100..100
     const b = brightness * 1.5;
