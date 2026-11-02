@@ -270,3 +270,23 @@ input[type=text], input[type=number], textarea { -webkit-user-select: text; user
 /* v0.5 rendering engine dialog */
 .dialog .radio-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
 .dialog #engInfo { font-size: 12px; line-height: 1.5; word-break: break-word; }
+
+/* context menus (right-click on the canvas and the Layers panel) */
+.ctx-menu { position: fixed; z-index: 200; min-width: 220px; max-height: calc(100vh - 8px); overflow-y: auto; background: var(--bg2); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px; box-shadow: 0 8px 24px #0008; }
+.ctx-menu button { display: flex; width: 100%; gap: 16px; background: none; border: none; text-align: left; padding: 5px 10px; border-radius: 4px; }
+.ctx-menu button:hover:not(:disabled), .ctx-menu button:focus-visible { background: var(--accent); color: #fff; outline: none; }
+.ctx-menu button:disabled { opacity: .45; }
+.ctx-menu button kbd { margin-left: auto; color: var(--muted); font-family: inherit; font-size: 11px; }
+.ctx-menu button:hover kbd { color: #fff; }
+.ctx-menu hr { border: none; border-top: 1px solid var(--line); margin: 4px 0; }
+
+/* File ▸ Open recent */
+.recent-list { list-style: none; margin: 0 0 8px; padding: 0; max-height: 50vh; overflow-y: auto; }
+.recent-list li { display: flex; gap: 4px; align-items: stretch; }
+.recent-list .recent-open { flex: 1; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 6px 10px; }
+.recent-list .recent-del { width: 32px; }
+/* installed app with window controls overlay: keep the menu bar clear of the caption buttons and draggable */
+@media (display-mode: window-controls-overlay) {
+  #menubar { padding-left: max(10px, env(titlebar-area-x, 0px)); padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 10px); app-region: drag; -webkit-app-region: drag; min-height: env(titlebar-area-height, 34px); }
+  #menubar button, #menubar input, #menubar select, #menubar .menu-items { app-region: no-drag; -webkit-app-region: no-drag; }
+}

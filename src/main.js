@@ -6,12 +6,14 @@ import { makeSelection, shapeMask, rectMask, combine, invertSelection, selection
 import * as ops from './ops.js';
 import { ICONS } from './icons.js';
 import { createEngine } from './gpu.js';
+import { createWebGPUEngine, webgpuAvailable } from './webgpu.js';
+import { fsaSupported, pickOpen, pickSave, writeFile, ensurePermission, listRecent, addRecent, removeRecent, clearRecent, EXPORT_TYPES } from './files.js';
 import { blendIndex, createDeep, cloneDeep, deepFromImageData, deepToImageData, reconcileDeep, compositeDeep, accToDeep, runDeep, DEEP_OPS } from './deep.js';
 import { decodePNG, encodePNG, pngInfo } from './png.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.6.0';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -29,7 +31,7 @@ const state = {
   crop: null,         // pending crop rect (doc coords)
   hover: null,        // cursor position in doc coords
   opts: {
-    brushSize: 24, brushHardness: 70, brushOpacity: 100,
+    brushSize: 24, brushHardness: 70, brushOpacity: 100, smoothing: 0,
     eraserSize: 40, eraserHardness: 50, eraserOpacity: 100,
     fillTolerance: 32, fillContiguous: true,
     textFont: 'system-ui', textSize: 64, textBold: true, textItalic: false, textAlign: 'left',
@@ -63,7 +65,9 @@ const ENGINE_KEY = 'tintwork.engine';
 const readPref = (k, def) => { try { return localStorage.getItem(k) || def; } catch { return def; } };
 const gfx = { pref: readPref(ENGINE_KEY, 'auto'), engine: null, reason: 'not started', path: 'cpu', notices: new Set(), frame: 0, linear: readPref('tintwork.linear', '0') === '1' };
 // GPU memory budget for textures. iPhones share RAM between CPU and GPU and kill tabs early, so keep it small.
-const GPU_BUDGET_MB = IS_IOS ? 384 : 1536;
+// Desktop budget scales with the reported device memory (Chrome/Edge: navigator.deviceMemory, capped at 8 GB).
+const DEVICE_GB = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 8;
+const GPU_BUDGET_MB = IS_IOS ? 384 : DEVICE_GB >= 8 ? 3072 : DEVICE_GB >= 4 ? 2048 : 1024;
 const GPU_PROBE_MS = 40; // 1 MP blur (upload + 2 passes + readback): hardware GPUs take a few ms, software GL 50–300 ms
 // 16-bit documents keep layer data as Uint16 (8 bytes per pixel); only the newest steps keep 16-bit undo data.
 const DEEP_HISTORY = IS_IOS ? 4 : 10;
@@ -243,7 +247,7 @@ function documentFromDeepPNG(buf, name, info) {
   return true;
 }
 function afterDocChange(label) {
-  history.entries = []; history.index = -1;
+  history.entries = []; history.index = -1; cleanEntry = null;
   state.doc.slot ||= newSlot(); state.xf = null;
   state.crop = null; state.poly = null; state.selPreview = null; state.cloneSrc = null; state.cloneOffset = null;
   compDirty = true;
@@ -414,23 +418,73 @@ function drawAdjustmentLayer(c, l, below, opts) {
 // GPU engine glue. Every GPU job has a CPU fallback: unsupported, too large, out of budget or a lost
 // context all drop back to the Canvas 2D / worker path (with a one-time notice).
 // ---------------------------------------------------------------------------
+let engineGen = 0;
+/**
+ * Pick the rendering engine. Order in automatic mode: WebGPU (hardware adapter that passes the speed
+ * probe) → WebGL2 (same test) → CPU. 'webgpu' and 'gpu' (WebGL2) force that engine even on a software
+ * renderer. WebGPU start-up is asynchronous: the CPU path renders until it is ready.
+ * Returns a promise that resolves once the final engine is in place.
+ */
 function initEngine() {
+  const gen = ++engineGen;
   if (gfx.engine) { try { gfx.engine.destroy(); } catch { /* already gone */ } }
-  gfx.engine = null; ops.setAccelerator(null); gfx.path = 'cpu'; gfx.notices.clear();
-  if (gfx.pref === 'cpu') { gfx.reason = 'CPU engine selected'; compDirty = true; updateDocInfo(); return; }
+  gfx.engine = null; ops.setAccelerator(null); gfx.path = 'cpu'; gfx.notices.clear(); gfx.webgpuReason = ''; gfx.asyncFailed = false;
+  if (gfx.pref === 'cpu') { gfx.reason = 'CPU engine selected'; compDirty = true; updateDocInfo(); return Promise.resolve(null); }
+  const wantGPU = gfx.pref === 'webgpu' || (gfx.pref === 'auto' && webgpuAvailable());
+  if (!wantGPU) { initWebGL(); return Promise.resolve(gfx.engine); }
+  gfx.reason = 'starting WebGPU…'; updateDocInfo();
+  gfx.ready = (async () => {
+    let e;
+    try { e = await createWebGPUEngine({ budgetMB: GPU_BUDGET_MB, tile: 4096, onLost: onGpuLost }); } catch (err) { e = { error: err?.message || String(err) }; }
+    if (gen !== engineGen) { if (!e.error) e.destroy(); return gfx.engine; }
+    if (e.error) {
+      gfx.webgpuReason = e.error;
+      if (gfx.pref === 'webgpu') { toast(`WebGPU unavailable (${e.error}) — using the CPU engine.`, 5000); gfx.reason = e.error; compDirty = true; requestRender(); updateDocInfo(); return null; }
+      initWebGL(); requestRender(); return gfx.engine;
+    }
+    if (gfx.pref === 'auto' && await webgpuIsSlow(e)) {
+      if (gen !== engineGen) { e.destroy(); return gfx.engine; }
+      gfx.webgpuReason = `software / slow WebGPU adapter (${e.info.renderer})`; e.destroy();
+      initWebGL(); requestRender(); return gfx.engine;
+    }
+    if (gen !== engineGen) { e.destroy(); return gfx.engine; }
+    gfx.engine = e; ops.setAccelerator(e); gfx.reason = '';
+    smartCache.clear(); compDirty = true; requestRender(); updateDocInfo();
+    return e;
+  })();
+  return gfx.ready;
+}
+/** WebGL2 engine (fallback for WebGPU; forced by pref 'gpu'). */
+function initWebGL() {
   let e;
-  try { e = createEngine({ budgetMB: GPU_BUDGET_MB, tile: IS_IOS ? 2048 : 4096, onLost: onGpuLost }); }
+  try { e = createEngine({ budgetMB: Math.min(GPU_BUDGET_MB, IS_IOS ? 384 : 2048), tile: IS_IOS ? 2048 : 4096, onLost: onGpuLost }); }
   catch (err) { e = { error: err?.message || String(err) }; }
   if (e.error) {
     gfx.reason = e.error;
     if (gfx.pref === 'gpu') toast(`GPU engine unavailable (${e.error}) — using the CPU engine.`, 5000);
   } else if (gfx.pref === 'auto' && gpuIsSlow(e)) {
     // Automatic mode only uses a hardware GPU: a software rasteriser (SwiftShader, llvmpipe…) runs on the
-    // main thread and is slower than the CPU worker path. View ▸ Rendering engine ▸ GPU still forces it.
+    // main thread and is slower than the CPU worker path. View ▸ Rendering engine still forces it.
     gfx.reason = `software / slow GPU renderer (${e.info.renderer}); the CPU engine is faster here`;
     e.destroy();
   } else { gfx.engine = e; ops.setAccelerator(e); gfx.reason = ''; }
   compDirty = true; updateDocInfo();
+}
+/** WebGPU version of the speed probe (async readback); cached per adapter. */
+async function webgpuIsSlow(e) {
+  if (e.info.software) return true;
+  const key = 'tintwork.webgpuProbe', id = `${e.info.renderer}|${APP_VERSION}`;
+  try { const c = JSON.parse(localStorage.getItem(key) || 'null'); if (c && c.id === id) { gfx.probeMs = c.ms; return c.ms > GPU_PROBE_MS; } } catch { /* ignore */ }
+  let ms = Infinity;
+  try {
+    const n = 1024, img = new ImageData(n, n), info = { docW: n, docH: n, offX: 0, offY: 0 };
+    for (let i = 0; i < img.data.length; i++) img.data[i] = (i * 7) & 255;
+    await e.processImageData('gaussianBlur', img, { radius: 8 }, info);
+    const t0 = performance.now(); await e.processImageData('gaussianBlur', img, { radius: 8 }, info); ms = performance.now() - t0;
+  } catch (err) { console.warn('WebGPU probe failed', err); }
+  gfx.probeMs = Math.round(ms);
+  try { if (Number.isFinite(ms)) localStorage.setItem(key, JSON.stringify({ id, ms: gfx.probeMs })); } catch { /* ignore */ }
+  return ms > GPU_PROBE_MS;
 }
 /** True for software GL, or when a 1 MP blur probe is slower than a hardware GPU would be (cached per renderer). */
 function gpuIsSlow(e) {
@@ -455,9 +509,11 @@ function onGpuLost() {
 }
 function setEnginePref(p) {
   gfx.pref = p; try { localStorage.setItem(ENGINE_KEY, p); } catch { /* private mode */ }
-  smartCache.clear(); initEngine();
+  smartCache.clear();
+  const done = initEngine().then(() => { for (const l of doc()?.layers || []) if (l.kind === 'smart') composeSmart(l, filteredSync(l)); requestRender(); return gfx.engine; });
   for (const l of doc()?.layers || []) if (l.kind === 'smart') composeSmart(l, filteredSync(l));
   requestRender();
+  return done;
 }
 function gpuNotice(key, msg) { if (gfx.notices.has(key)) return; gfx.notices.add(key); toast(msg, 5000); status(msg); }
 /** Layers being edited right now are re-uploaded every frame (their canvas changes between revisions). */
@@ -484,8 +540,17 @@ function gpuComposite(c, opts, display) {
       : `${d.width}×${d.height} does not fit this device's GPU memory budget (${e.budgetMB} MB), so it is composited on the CPU.`);
     return false;
   }
+  const copts = { background: opts.background ? hexToRgb(opts.background) : null, dither: d.depth === 16 };
+  if (e.kind === 'webgpu' && !e.syncOutput) {
+    if (gfx.asyncFailed) return false;
+    // WebGPU without canvas presentation: the display composite is asynchronous (the previous frame stays
+    // up until it lands); other callers (export, flatten…) need pixels now and use the CPU.
+    if (!display) return false;
+    asyncComposite(e, layers, d.width, d.height, copts);
+    return true;
+  }
   try {
-    const fmt = e.composite(layers, d.width, d.height, c, { background: opts.background ? hexToRgb(opts.background) : null, dither: d.depth === 16 });
+    const fmt = e.composite(layers, d.width, d.height, c, copts);
     if (fmt === 'rgba8') gpuNotice(`acc8:${d.width}x${d.height}`, 'Large canvas: GPU compositing runs at 8-bit precision to fit in GPU memory.');
     if (display) gfx.path = fmt === 'rgba8' ? 'gpu-8' : 'gpu';
     return true;
@@ -496,9 +561,32 @@ function gpuComposite(c, opts, display) {
     return false;
   }
 }
+let asyncJob = null, asyncAgain = null;
+/** Run a WebGPU display composite off the critical path; coalesces requests that arrive while one runs. */
+function asyncComposite(e, layers, W, H, copts) {
+  if (asyncJob) { asyncAgain = [e, layers, W, H, copts]; return; }
+  const buf = makeCanvas(W, H);
+  asyncJob = e.compositeAsync(layers, W, H, buf.getContext('2d'), copts).then((fmt) => {
+    if (gfx.engine !== e || doc()?.width !== W || doc()?.height !== H) return;
+    compCtx.save(); compCtx.globalCompositeOperation = 'copy'; compCtx.drawImage(buf, 0, 0); compCtx.restore();
+    gfx.path = fmt === 'rgba8' ? 'gpu-8' : 'gpu'; gfx.asyncFrames = (gfx.asyncFrames || 0) + 1;
+    if (fmt === 'rgba8') gpuNotice(`acc8:${W}x${H}`, 'Large canvas: GPU compositing runs at 8-bit precision to fit in GPU memory.');
+    requestRender();
+  }).catch((err) => {
+    console.warn('WebGPU composite failed; using the CPU', err);
+    if (err.code === 'memory') gpuNotice(`mem:${W}x${H}`, `GPU memory budget exceeded, so this canvas is composited on the CPU. (${err.message})`);
+    else if (err.code !== 'lost') gpuNotice(`err:${err.message}`, `GPU compositing failed (${err.message}); using the CPU.`);
+    gfx.asyncFailed = true; compDirty = true; requestRender();
+  }).finally(() => {
+    asyncJob = null;
+    if (asyncAgain) { const a = asyncAgain; asyncAgain = null; asyncComposite(...a); }
+  });
+}
+/** Resolves when no asynchronous GPU composite is pending. */
+const compositeSettled = async () => { while (asyncJob) await asyncJob; };
 /** Live filters on the GPU (null = not possible, use the CPU). */
 function gpuFilter(l, filters) {
-  const e = gfx.engine; if (!e || e.lost) return null;
+  const e = gfx.engine; if (!e || e.lost || (e.kind === 'webgpu' && !e.syncOutput)) return null;
   const chain = filters.filter((f) => f.enabled).map((f) => ({ name: f.type, params: filterParams(f) }));
   if (!chain.every((f) => e.supports(f.name, l.source.width, l.source.height))) return null;
   try { return e.filterCanvas(l.source, chain, filterInfo(l)); } catch (err) { console.warn('GPU filter failed; using the CPU', err); return null; }
@@ -574,18 +662,18 @@ function setDepth(bits) {
 function openEngineDialog() {
   const e = gfx.engine, i = e?.info, body = document.createElement('div');
   const opt = (v, label) => `<label class="radio-row"><input type="radio" name="engine" value="${v}" ${gfx.pref === v ? 'checked' : ''}/> ${label}</label>`;
-  body.innerHTML = `<div class="field two"><span>Engine</span><span>${opt('auto', 'Automatic (GPU when available)')}${opt('gpu', 'GPU (WebGL2)')}${opt('cpu', 'CPU (Canvas 2D + worker)')}</span></div>
+  body.innerHTML = `<div class="field two"><span>Engine</span><span>${opt('auto', 'Automatic (WebGPU → WebGL2 → CPU)')}${opt('webgpu', 'GPU (WebGPU compute)')}${opt('gpu', 'GPU (WebGL2)')}${opt('cpu', 'CPU (Canvas 2D + worker)')}</span></div>
     <div class="field two"><span>16-bit blur</span><label><input type="checkbox" id="engLinear" ${gfx.linear ? 'checked' : ''}/> Blur &amp; sharpen in linear light (16-bit documents)</label></div>
-    <p class="muted" id="engInfo">${e ? `Active: GPU — ${escapeHtml(i.renderer)}${i.software ? ' (software renderer)' : ''}<br>Max texture ${i.maxTextureSize}px · tile ${i.tile}px · half-float ${i.halfFloat ? 'yes' : 'no'} · float32 targets ${i.float32 ? 'yes' : 'no'} · memory ${e.usedMB.toFixed(0)} / ${e.budgetMB} MB${i.webgpu ? ' · WebGPU present (not used yet)' : ''}`
+    <p class="muted" id="engInfo">${e ? `Active: ${e.kind === 'webgpu' ? 'WebGPU' : 'WebGL2'} — ${escapeHtml(i.renderer)}${i.software ? ' (software renderer)' : ''}<br>Max texture ${i.maxTextureSize}px · tile ${i.tile}px · memory ${e.usedMB.toFixed(0)} / ${e.budgetMB} MB${e.kind === 'webgpu' ? ` · output: ${e.syncOutput ? 'canvas' : 'buffer readback (async)'}` : ` · half-float ${i.halfFloat ? 'yes' : 'no'} · float32 targets ${i.float32 ? 'yes' : 'no'}${i.webgpu ? ' · WebGPU present' : ''}`}${gfx.webgpuReason ? `<br>WebGPU not used: ${escapeHtml(gfx.webgpuReason)}` : ''}`
       : `Active: CPU${gfx.reason ? ` — ${escapeHtml(gfx.reason)}` : ''}`}${gfx.probeMs != null ? `<br>GPU speed probe: ${gfx.probeMs} ms for a 1 MP blur` : ''}</p>`;
   showModal({ title: 'Rendering engine', body, okLabel: 'Apply', ok: () => {
     const v = body.querySelector('input[name=engine]:checked')?.value || 'auto';
     gfx.linear = body.querySelector('#engLinear').checked; try { localStorage.setItem('tintwork.linear', gfx.linear ? '1' : '0'); } catch { /* ignore */ }
-    if (v !== gfx.pref || (v !== 'cpu' && !gfx.engine)) setEnginePref(v);
-    status(gfx.engine ? `Rendering engine: GPU (${gfx.engine.info.renderer})` : `Rendering engine: CPU${gfx.reason ? ` (${gfx.reason})` : ''}`);
+    const report = () => status(gfx.engine ? `Rendering engine: ${gfx.engine.kind === 'webgpu' ? 'WebGPU' : 'WebGL2'} (${gfx.engine.info.renderer})` : `Rendering engine: CPU${gfx.reason ? ` (${gfx.reason})` : ''}`);
+    if (v !== gfx.pref || (v !== 'cpu' && !gfx.engine)) setEnginePref(v).then(report); else report();
   } });
 }
-const engineLabel = () => (gfx.engine ? (gfx.path === 'cpu' ? 'GPU idle' : gfx.path === 'gpu-8' ? 'GPU 8-bit' : 'GPU') : 'CPU');
+const engineLabel = () => { const e = gfx.engine; if (!e) return 'CPU'; const n = e.kind === 'webgpu' ? 'WebGPU' : 'WebGL'; return gfx.path === 'cpu' ? `${n} idle` : gfx.path === 'gpu-8' ? `${n} 8-bit` : n; };
 
 function defaultAdjParams(type) {
   if (type === 'curves') return identityCurves();
@@ -1477,8 +1565,13 @@ function paintTool(kind) {
         stroke: makeCanvas(canvas.width, canvas.height),
         tmp: doc().selection || clone ? makeCanvas(canvas.width, canvas.height) : null,
         stamp: makeStamp(size, hardness, kind === 'spot' ? '#3a3f4a' : erase || clone || onMask ? '#ffffff' : state.fg),
-        last: null,
+        last: null, dirty: null, hardness,
+        stampColor: kind === 'spot' ? '#3a3f4a' : erase || clone || onMask ? '#ffffff' : state.fg,
+        // large brushes stamp on the GPU (WebGPU with synchronous output); everything else uses Canvas 2D
+        gpuDabs: size >= GPU_DAB_MIN && gfx.engine?.kind === 'webgpu' && gfx.engine.syncOutput && !gfx.engine.lost ? [] : null,
+        lazy: { x: p.x, y: p.y }, // stabilizer ("lazy mouse") position
       };
+      gfx.dabPath = drag.gpuDabs ? 'webgpu' : 'cpu';
       if (clone) {
         if (!o.cloneAligned || !state.cloneOffset) state.cloneOffset = { dx: state.cloneSrc.x - p.x, dy: state.cloneSrc.y - p.y };
         drag.dx = state.cloneOffset.dx; drag.dy = state.cloneOffset.dy;
@@ -1491,10 +1584,12 @@ function paintTool(kind) {
     },
     move(p) {
       if (!drag?.stroke) return;
-      stampLine(drag.last, p); drag.last = p; applyStroke();
+      const q = stabilize(p); if (!q) return;
+      stampLine(drag.last, q); drag.last = q; applyStroke();
     },
     up() {
       if (!drag?.stroke) return;
+      if (state.opts.smoothing > 0 && drag.hover && (drag.hover.x !== drag.last.x || drag.hover.y !== drag.last.y)) { stampLine(drag.last, drag.hover); drag.last = drag.hover; applyStroke(); } // catch up
       lastPaintPoint = drag.last;
       if (drag.heal) { finishHeal(drag); return; }
       touchTarget(drag.layer);
@@ -1503,12 +1598,47 @@ function paintTool(kind) {
     },
   };
 }
+const GPU_DAB_MIN = 200; // px: below this the Canvas 2D stamp is already cheap
+/**
+ * Stroke stabilizer (original "string" model): the brush tip trails the pointer on a string whose length
+ * grows with Options ▸ Smoothing (0–100 → 0–60 screen px). The tip moves only when the string is taut,
+ * which removes hand jitter without the lag of averaging; the stroke catches up on release.
+ * Returns the new tip position, or null if it did not move.
+ */
+function stabilize(p) {
+  drag.hover = p;
+  const sm = state.opts.smoothing || 0; if (sm <= 0) return p;
+  const len = (sm * 0.6) / state.zoom, z = drag.lazy, dx = p.x - z.x, dy = p.y - z.y, d = Math.hypot(dx, dy);
+  if (d <= len) return null;
+  const k = (d - len) / d; z.x += dx * k; z.y += dy * k;
+  return { x: z.x, y: z.y };
+}
 function stampAt(p) {
   const s = drag.stamp, l = drag.layer;
+  // sub-pixel placement: the stamp is drawn at the exact fractional position (no rounding)
   const x = p.x - l.x - s.width / 2, y = p.y - l.y - s.height / 2;
-  drag.stroke.getContext('2d').drawImage(s, x, y);
+  if (drag.gpuDabs) drag.gpuDabs.push(p.x - l.x, p.y - l.y, drag.size / 2, drag.hardness);
+  else drag.stroke.getContext('2d').drawImage(s, x, y);
   const b = drag.bb;
   drag.bb = b ? { x0: Math.min(b.x0, x), y0: Math.min(b.y0, y), x1: Math.max(b.x1, x + s.width), y1: Math.max(b.y1, y + s.height) } : { x0: x, y0: y, x1: x + s.width, y1: y + s.height };
+  const r = drag.dirty;
+  drag.dirty = r ? { x0: Math.min(r.x0, x), y0: Math.min(r.y0, y), x1: Math.max(r.x1, x + s.width), y1: Math.max(r.y1, y + s.height) } : { x0: x, y0: y, x1: x + s.width, y1: y + s.height };
+}
+/** Flush queued GPU dabs into the stroke canvas (region = the dirty rectangle). */
+function flushGpuDabs(rect) {
+  const list = drag.gpuDabs; if (!list || !list.length) return;
+  const n = list.length / 4, e = gfx.engine;
+  try {
+    if (!e || e.lost || e.kind !== 'webgpu') throw new Error('engine gone');
+    e.stampDabs(drag.stroke, rect, new Float32Array(list), new Float32Array(n).fill(1), { color: hexToRgb(drag.stampColor) });
+    gfx.dabPath = 'webgpu';
+  } catch (err) {
+    console.warn('GPU dabs failed; using Canvas 2D', err);
+    const c = drag.stroke.getContext('2d'), s = drag.stamp;
+    for (let i = 0; i < list.length; i += 4) c.drawImage(s, list[i] - s.width / 2, list[i + 1] - s.height / 2);
+    drag.gpuDabs = null; gfx.dabPath = 'cpu';
+  }
+  if (drag.gpuDabs) drag.gpuDabs.length = 0;
 }
 function stampLine(a, b) {
   const dist = Math.hypot(b.x - a.x, b.y - a.y);
@@ -1519,25 +1649,32 @@ function stampLine(a, b) {
 /** Re-render the whole stroke from the backup (keeps opacity uniform within a stroke). */
 function applyStroke() {
   const l = drag.layer, cv = drag.canvas, c = ctxOf(cv);
+  // only the rectangle touched since the last call changes: clip every pass to it (big canvases stay fast)
+  const r = drag.dirty; drag.dirty = null; if (!r) return;
+  const rx = Math.max(0, Math.floor(r.x0) - 1), ry = Math.max(0, Math.floor(r.y0) - 1);
+  const rw = Math.min(cv.width, Math.ceil(r.x1) + 1) - rx, rh = Math.min(cv.height, Math.ceil(r.y1) + 1) - ry;
+  if (rw <= 0 || rh <= 0) return;
+  flushGpuDabs({ x: rx, y: ry, w: rw, h: rh });
+  const clip = (ctx) => { ctx.beginPath(); ctx.rect(rx, ry, rw, rh); ctx.clip(); };
   // coverage = stroke stamps limited by the selection
   let cover = drag.stroke;
   if (drag.tmp && doc().selection) {
-    const t = drag.tmp.getContext('2d');
+    const t = drag.tmp.getContext('2d'); t.save(); clip(t);
     t.globalCompositeOperation = 'copy'; t.drawImage(drag.stroke, 0, 0); t.globalCompositeOperation = 'source-over';
-    maskBySelection(t, l);
+    maskBySelection(t, l); t.restore();
     cover = drag.tmp;
   }
   drag.cover = cover;
-  c.save();
+  c.save(); clip(c);
   c.globalCompositeOperation = 'copy';
   c.drawImage(drag.backup, 0, 0);
   c.globalCompositeOperation = 'source-over';
   if (drag.clone) {
     // source pixels shifted by the clone offset, cut to the brush coverage
-    const t = drag.srcTmp.getContext('2d');
+    const t = drag.srcTmp.getContext('2d'); t.save(); clip(t);
     t.globalCompositeOperation = 'copy'; t.drawImage(drag.backup, -drag.dx, -drag.dy);
     t.globalCompositeOperation = 'destination-in'; t.drawImage(cover, 0, 0);
-    t.globalCompositeOperation = 'source-over';
+    t.restore();
     c.globalAlpha = drag.opacity; c.drawImage(drag.srcTmp, 0, 0);
   } else if (drag.kind === 'spot') {
     c.globalAlpha = 0.55; c.drawImage(cover, 0, 0);
@@ -1704,6 +1841,8 @@ function firePending(alt) {
 }
 view.addEventListener('pointerdown', (e) => {
   if (!doc()) return;
+  if (e.button === 2 && e.pointerType === 'mouse') return; // right button: context menu (see 'contextmenu')
+  closeContextMenu();
   if (document.body.dataset.sheet) { closeSheet(); if (e.pointerType === 'touch') return; }
   viewport.focus({ preventScroll: true });
   try { view.setPointerCapture(e.pointerId); } catch { /* synthetic or already released */ }
@@ -1774,7 +1913,74 @@ view.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch') { 
 for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(t, (e) => e.preventDefault(), { passive: false });
 view.addEventListener('touchstart', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
 view.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
-view.addEventListener('contextmenu', (e) => e.preventDefault());
+view.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (!doc() || e.pointerType === 'touch' || drag) return;
+  const sel = !!doc().selection;
+  showContextMenu(e.clientX, e.clientY, [
+    ['Undo', 'undo'], ['Redo', 'redo'], '-',
+    ...(sel ? [['Deselect', 'deselect'], ['Invert selection', 'invertSelection'], ['Feather…', 'feather'], ['Refine edge…', 'refineEdge'], ['Fill with color', 'fillSelection'], ['Clear', 'clear'], '-',
+      ['Copy', 'copy'], ['Cut', 'cut'], ['Crop to selection', 'cropToSelection'], ['Add mask from selection', 'addMaskFromSelection']]
+      : [['Select all', 'selectAll'], ['Select layer pixels', 'selectLayerPixels']]), '-',
+    ['Copy merged', 'copyMerged'], ['Paste as layer', 'paste'], ['Free transform', 'freeTransform'], '-',
+    ['New layer', 'layerNew'], ['Fit on screen', 'zoomFit'], ['Actual pixels (100%)', 'zoom100'],
+  ]);
+});
+// --- context menus (canvas and Layers panel) ----------------------------------------------------------
+const MENU_SPECS = new Map();
+function menuSpecs() { if (!MENU_SPECS.size) for (const [, items] of MENUS) for (const it of items) if (Array.isArray(it) && it[2]) MENU_SPECS.set(it[1], it[2]); return MENU_SPECS; }
+function closeContextMenu() { document.querySelector('#ctxMenu')?.remove(); }
+/** items: [label, command] | [label, fn] | '-'. Opens at client (x, y), kept inside the window. */
+function showContextMenu(x, y, items) {
+  closeContextMenu(); closeMenus();
+  const m = document.createElement('div'); m.id = 'ctxMenu'; m.className = 'ctx-menu'; m.setAttribute('role', 'menu');
+  for (const it of items) {
+    if (it === '-') { if (m.lastChild && m.lastChild.tagName !== 'HR') m.append(document.createElement('hr')); continue; }
+    const [label, act, disabled] = it, b = document.createElement('button'); b.setAttribute('role', 'menuitem'); b.dataset.item = typeof act === 'string' ? act : label; // not data-cmd: the global [data-cmd] click handler would run it twice
+    const spec = typeof act === 'string' ? menuSpecs().get(act) : '';
+    b.innerHTML = `<span>${escapeHtml(label)}</span>${spec ? `<kbd>${escapeHtml(shortcutLabel(act, spec))}</kbd>` : ''}`;
+    if (disabled) b.disabled = true;
+    b.addEventListener('click', () => { closeContextMenu(); if (typeof act === 'string') run(act); else act(); });
+    m.append(b);
+  }
+  if (m.lastChild?.tagName === 'HR') m.lastChild.remove();
+  document.body.append(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`; m.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
+  m.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
+  m.addEventListener('keydown', (e) => {
+    const bs = [...m.querySelectorAll('button:not(:disabled)')], i = bs.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeContextMenu(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); bs[(i + 1) % bs.length]?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); bs[(i - 1 + bs.length) % bs.length]?.focus(); }
+  });
+}
+window.addEventListener('pointerdown', (e) => { if (!e.target.closest?.('#ctxMenu')) closeContextMenu(); }, true);
+window.addEventListener('blur', closeContextMenu);
+$('#layerList').addEventListener('contextmenu', (e) => {
+  const li = e.target.closest('li[data-id]'); if (!li) return;
+  e.preventDefault();
+  const d = doc(), l = d?.layers.find((x) => String(x.id) === li.dataset.id); if (!l) return;
+  if (state.xf) applyTransform();
+  d.activeId = l.id; updateLayersPanel(); buildOptionsBar();
+  const idx = d.layers.indexOf(l);
+  showContextMenu(e.clientX, e.clientY, [
+    ['Duplicate layer', 'layerDuplicate'], ['Delete layer', 'layerDelete', d.layers.length < 2], ['Merge down', 'layerMergeDown', idx === 0], '-',
+    [l.visible ? 'Hide layer' : 'Show layer', () => { l.visible = !l.visible; compDirty = true; requestRender(); commit(l.visible ? 'Show layer' : 'Hide layer'); }],
+    ['Rename…', () => renameLayer(l)],
+    ...(l.kind ? [['Edit layer settings…', 'editLayer'], ['Convert to pixels', 'rasterizeLayer']] : [['Convert to live layer', 'convertSmart']]), '-',
+    ...(l.mask ? [['Enable / disable mask', 'toggleMask'], ['Invert mask', 'invertMask'], ['Apply mask', 'applyMask'], ['Delete mask', 'deleteMask']]
+      : [['Add layer mask', 'addMask'], ['Add mask from selection', 'addMaskFromSelection', !d.selection]]), '-',
+    ['Select layer pixels', 'selectLayerPixels'], ['Move up', 'layerUp', idx === d.layers.length - 1], ['Move down', 'layerDown', idx === 0], ['Flatten image', 'flatten'],
+  ]);
+});
+function renameLayer(l) {
+  const body = document.createElement('div');
+  body.innerHTML = `<label class="field two"><span>Name</span><input type="text" id="renameInput" maxlength="80" /></label>`;
+  const inp = body.querySelector('input'); inp.value = l.name;
+  showModal({ title: 'Rename layer', body, okLabel: 'Rename', ok: () => { const v = inp.value.trim(); if (v && v !== l.name) { l.name = v; commit('Rename layer'); updateLayersPanel(); } } });
+  setTimeout(() => { inp.focus(); inp.select(); }, 0);
+}
 view.addEventListener('wheel', (e) => {
   if (!doc()) return;
   e.preventDefault();
@@ -1821,6 +2027,7 @@ window.addEventListener('keydown', (e) => {
     const t = TOOLS.find((tt) => tt.key && tt.key.toLowerCase() === key);
     if (t) { setTool(t.id); return; }
     if (key === '[' || key === ']') { adjustBrushSize(key === ']' ? 1 : -1); return; }
+    if (e.shiftKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) { adjustBrushHardness(e.code === 'BracketRight' ? 1 : -1); return; }
     if (key === 'enter' && state.crop) { run('cropApply'); return; }
     if (key === 'escape') { if (state.crop) { state.crop = null; buildOptionsBar(); requestRender(); } return; }
     if (state.tool === 'move' && key.startsWith('arrow') && activeLayer()) {
@@ -1836,6 +2043,11 @@ window.addEventListener('keyup', (e) => { if (e.key === ' ') { spaceDown = false
 let commitTimer = null;
 function commitDebounced(label) { clearTimeout(commitTimer); commitTimer = setTimeout(() => commit(label), 350); }
 
+function adjustBrushHardness(dir) {
+  const k = PAINT_TOOLS.includes(state.tool) ? `${state.tool}Hardness` : 'brushHardness';
+  state.opts[k] = Math.max(0, Math.min(100, (state.opts[k] ?? 70) + dir * 10));
+  buildOptionsBar(); requestRender(); status(`Hardness ${state.opts[k]}%`);
+}
 function adjustBrushSize(dir) {
   const k = PAINT_TOOLS.includes(state.tool) ? `${state.tool}Size` : 'brushSize';
   const v = state.opts[k];
@@ -1850,7 +2062,9 @@ const needDoc = (fn) => (...a) => { if (!doc()) { status('Open an image or creat
 
 const cmds = {
   new: () => openNewDialog(),
-  open: () => { fileMode = 'open'; $('#fileInput').click(); },
+  open: () => { if (fsaSupported) openWithPicker(); else { fileMode = 'open'; $('#fileInput').click(); } },
+  openRecent: () => openRecentDialog(),
+  saveAs: needDoc(() => saveProjectAs()),
   place: needDoc(() => { fileMode = 'place'; $('#fileInput').click(); }),
   saveProject: needDoc(() => saveProject()),
   export: needDoc(() => openExportDialog()),
@@ -1987,7 +2201,7 @@ function run(name) { closeMenus(); if (state.xf && !XF_SAFE.has(name)) applyTran
 
 // Ctrl+V is handled by the paste event (so system-clipboard images work too).
 const SHORTCUTS = {
-  'mod+n': 'new', 'mod+o': 'open', 'mod+shift+o': 'place', 'mod+s': 'saveProject', 'mod+shift+e': 'export',
+  'mod+n': 'new', 'mod+o': 'open', 'mod+shift+o': 'place', 'mod+s': 'saveProject', 'mod+shift+s': 'saveAs', 'mod+shift+e': 'export',
   'mod+z': 'undo', 'mod+shift+z': 'redo', 'mod+y': 'redo',
   'mod+a': 'selectAll', 'mod+d': 'deselect', 'mod+shift+i': 'invertSelection', 'mod+alt+d': 'feather', 'shift+f6': 'feather', '\\': 'editMaskToggle', 'delete': 'clear', 'backspace': 'clear', 'alt+backspace': 'fillSelection',
   'mod+c': 'copy', 'mod+shift+c': 'copyMerged', 'mod+x': 'cut',
@@ -2017,7 +2231,7 @@ const shortcutLabel = (cmd, spec) => keyLabel(shortcutFor(cmd, spec));
 
 const MENUS = [
   ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Take photo (camera)…', 'camera'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
-    ['Save project', 'saveProject', 'Ctrl+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E']]],
+    ['Open recent…', 'openRecent'], '-', ['Save', 'saveProject', 'Ctrl+S'], ['Save as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E']]],
   ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
     ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-',
     ['Clear', 'clear', 'Del'], ['Fill with color', 'fillSelection', 'Alt+⌫'], '-', ['Free transform', 'freeTransform', 'Ctrl+T']]],
@@ -2720,7 +2934,17 @@ async function renderExport(type, quality) {
   return new Promise((res) => out.toBlob((b) => { out.width = out.height = 0; res(b); }, type, quality));
 }
 async function exportImage(type, quality, name) {
-  const blob = await renderExport(type, quality); const ext = EXPORT_EXT[type];
+  const ext = EXPORT_EXT[type];
+  let handle = null;
+  if (fsaSupported && EXPORT_TYPES[type]) {
+    try { handle = await pickSave(`${name}.${ext}`, EXPORT_TYPES[type]); } catch (err) { status(`Export: ${err.message}`); }
+    if (!handle) { status('Export cancelled.'); return; }
+  }
+  const blob = await renderExport(type, quality);
+  if (handle) {
+    try { await writeFile(handle, blob); addRecent(handle, 'image'); status(`Exported ${handle.name} (${(blob.size / 1024).toFixed(0)} KB)`); return; }
+    catch (err) { toast(`Could not write ${handle.name} (${err.message}) — downloading instead.`, 5000); }
+  }
   download(blob, `${name}.${ext}`);
   status(`Exported ${name}.${ext} (${(blob.size / 1024).toFixed(0)} KB)`);
 }
@@ -2741,7 +2965,7 @@ function openShortcutsDialog() {
     [`${K('new', 'Ctrl+N')} / ${K('layerNew', 'Ctrl+Shift+N')}`, 'New canvas / new layer'], [K('freeTransform', 'Ctrl+T'), 'Free transform'],
     [`${K('brightnessContrast', 'Ctrl+B')} / ${K('hueSaturation', 'Ctrl+U')} / ${K('levels', 'Ctrl+L')} / ${K('curves', 'Ctrl+M')} / ${K('invert', 'Ctrl+I')}`, 'Brightness-contrast / Hue-sat / Levels / Curves / Invert'],
     [`${K('zoomFit', 'Ctrl+0')} / ${K('zoom100', 'Ctrl+1')}`, 'Fit / 100%'], ['Enter / Esc', 'Apply / cancel crop'],
-    ['Arrows (Move tool)', platformText('Nudge layer (Shift = 10px)')], [`${K('saveProject', 'Ctrl+S')} / ${K('export', 'Ctrl+Shift+E')}`, 'Save project / export'],
+    ['Arrows (Move tool)', platformText('Nudge layer (Shift = 10px)')], [`${K('saveProject', 'Ctrl+S')} / ${K('saveAs', 'Ctrl+Shift+S')} / ${K('export', 'Ctrl+Shift+E')}`, 'Save / save as / export'],
   ];
   const note = `<p class="muted" id="kbNote">${IS_MAC ? 'Mac keyboard: ⌘ Command · ⌥ Option · ⇧ Shift.' : 'Ctrl / Alt / Shift keyboard (Windows, Linux, ChromeOS).'} ` +
     `Some combinations are kept by the browser or system (${(IS_MAC ? ['Ctrl+N', 'Ctrl+T', 'Ctrl+W', 'Ctrl+Q', 'Ctrl+M', 'Ctrl+Shift+N'] : ['Ctrl+N', 'Ctrl+T', 'Ctrl+W', 'Ctrl+Shift+N', 'Ctrl+Shift+I', 'Ctrl+Shift+C']).map(keyLabel).join(', ')}), so Tintwork shows an alternate for those. ` +
@@ -2811,11 +3035,79 @@ function deepFromDataURL(url) {
   for (let i = 0; i < b.length; i++) b[i] = bin.charCodeAt(i);
   const p = decodePNG(b); return createDeep(p.width, p.height, p.data);
 }
-function saveProject() {
-  const name = (doc().name || 'project').replace(/\.[^.]+$/, '').replace(/\.tintwork$/, '');
-  download(new Blob([JSON.stringify(serializeProject())], { type: 'application/json' }), `${name}.tintwork.json`);
-  status(`Saved project ${name}.tintwork.json`);
-  cleanEntry = history.entries[history.index];
+const projectBlob = () => new Blob([JSON.stringify(serializeProject())], { type: 'application/json' });
+const baseName = () => (doc().name || 'project').replace(/\.json$/i, '').replace(/\.tintwork$/i, '').replace(/\.[^.]+$/, '');
+/**
+ * File ▸ Save (Ctrl+S): write back to the project file this document came from or was last saved to.
+ * Documents opened from an image (or not saved yet) go through Save As, so an image is never overwritten
+ * with a project. Without the File System Access API this downloads a .tintwork file.
+ */
+async function saveProject() {
+  const d = doc();
+  if (fsaSupported && d.fileHandle && d.fileKind === 'project') return writeProjectTo(d.fileHandle);
+  if (fsaSupported) return saveProjectAs();
+  const name = baseName();
+  download(projectBlob(), `${name}.tintwork`);
+  status(`Saved project ${name}.tintwork`);
+  markSaved();
+}
+/** File ▸ Save as… (Ctrl+Shift+S). */
+async function saveProjectAs() {
+  if (!fsaSupported) { const name = baseName(); download(projectBlob(), `${name}.tintwork`); status(`Saved project ${name}.tintwork`); markSaved(); return; }
+  let h;
+  try { h = await pickSave(`${baseName()}.tintwork`); } catch (err) { status(`Save as: ${err.message}`); return; }
+  if (!h) { status('Save cancelled.'); return; }
+  await writeProjectTo(h);
+}
+async function writeProjectTo(h) {
+  const d = doc(), entry = history.entries[history.index];
+  try {
+    setBusy(1); await writeFile(h, projectBlob());
+    d.fileHandle = h; d.fileKind = 'project'; d.name = h.name;
+    addRecent(h, 'project');
+    status(`Saved ${h.name}`); markSaved(entry); updateDocInfo();
+  } catch (err) {
+    toast(`Could not save ${h.name}: ${err.message}. Use Save as… to pick another place.`, 6000);
+  } finally { setBusy(-1); }
+}
+async function openWithPicker() {
+  let h;
+  try { h = await pickOpen(); } catch (err) { status(`Open: ${err.message}`); return; }
+  if (h) await openHandle(h);
+}
+/** Open a FileSystemFileHandle (picker, recent list, or the OS via the installed app's file handler). */
+async function openHandle(h, { remember = true } = {}) {
+  let file;
+  try { if (!(await ensurePermission(h, 'read'))) { status(`Permission to read ${h.name} was denied.`); return false; } file = await h.getFile(); }
+  catch (err) { status(`Could not open ${h.name}: ${err.message}`); return false; }
+  const before = doc();
+  await openFile(file, 'open');
+  const d = doc(); if (!d || d === before) return false;
+  const kind = /\.(tintwork|json)$/i.test(file.name) ? 'project' : 'image';
+  d.fileHandle = h; d.fileKind = kind;
+  if (remember) addRecent(h, kind);
+  return true;
+}
+async function openRecentDialog() {
+  const list = await listRecent();
+  const body = document.createElement('div');
+  if (!fsaSupported) body.innerHTML = '<p class="muted">Recent files need the File System Access API (Chrome or Edge). Use File ▸ Open… here.</p>';
+  else if (!list.length) body.innerHTML = '<p class="muted">No recent files yet. Files you open or save appear here.</p>';
+  else {
+    body.innerHTML = `<ul id="recentList" class="recent-list">${list.map((r) => `<li><button data-id="${r.id}" class="recent-open"><b>${escapeHtml(r.name)}</b> <span class="muted">${r.kind === 'project' ? 'project' : 'image'} · ${new Date(r.time).toLocaleString()}</span></button><button class="recent-del" data-id="${r.id}" title="Remove from the list" aria-label="Remove ${escapeHtml(r.name)} from the list">×</button></li>`).join('')}</ul><p><button id="recentClear">Clear list</button></p>`;
+    body.addEventListener('click', async (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.id === 'recentClear') { await clearRecent(); closeModal(); status('Recent files cleared.'); return; }
+      const r = list.find((x) => x.id === b.dataset.id); if (!r) return;
+      if (b.classList.contains('recent-del')) { await removeRecent(r.id); b.closest('li').remove(); return; }
+      closeModal();
+      if (!(await openHandle(r.handle))) { await removeRecent(r.id); toast(`${r.name} could not be opened (moved, deleted or permission denied) and was removed from the list.`, 5000); }
+    });
+  }
+  showModal({ title: 'Open recent', body, okLabel: 'Close', hideCancel: true, ok: () => {} });
+}
+function markSaved(entry = history.entries[history.index]) {
+  cleanEntry = entry;
   const slot = doc().slot;
   autosaveNow().then(() => markAutosaveClean(slot)).catch(() => {}); // saved: no recovery prompt for this state
 }
@@ -3122,8 +3414,8 @@ function buildOptionsBar() {
   const range = (key, label, min, max, unit = '') => `<label>${label} <input type="range" data-opt="${key}" min="${min}" max="${max}" value="${o[key]}" /><input type="number" data-opt="${key}" min="${min}" max="${max}" value="${o[key]}" />${unit}</label>`;
   const d = doc();
   switch (state.xf ? '' : state.tool) {
-    case 'brush': parts.push(range('brushSize', 'Size', 1, 500, 'px'), range('brushHardness', 'Hardness', 0, 100, '%'), range('brushOpacity', 'Opacity', 1, 100, '%'), `<span class="muted">Shift+click: straight line · Alt+click: pick color</span>`); break;
-    case 'eraser': parts.push(range('eraserSize', 'Size', 1, 500, 'px'), range('eraserHardness', 'Hardness', 0, 100, '%'), range('eraserOpacity', 'Opacity', 1, 100, '%')); break;
+    case 'brush': parts.push(range('brushSize', 'Size', 1, 1000, 'px'), range('brushHardness', 'Hardness', 0, 100, '%'), range('brushOpacity', 'Opacity', 1, 100, '%'), range('smoothing', 'Smoothing', 0, 100, '%'), `<span class="muted">${platformText('Shift+click: straight line · Alt+click: pick color · [ ] size · Shift+[ ] hardness')}</span>`); break;
+    case 'eraser': parts.push(range('eraserSize', 'Size', 1, 1000, 'px'), range('eraserHardness', 'Hardness', 0, 100, '%'), range('eraserOpacity', 'Opacity', 1, 100, '%'), range('smoothing', 'Smoothing', 0, 100, '%')); break;
     case 'clone': parts.push(range('cloneSize', 'Size', 1, 500, 'px'), range('cloneHardness', 'Hardness', 0, 100, '%'), range('cloneOpacity', 'Opacity', 1, 100, '%'),
       `<label><input type="checkbox" data-opt="cloneAligned" ${o.cloneAligned ? 'checked' : ''}/> Aligned</label>`,
       `<span class="muted">${state.cloneSrc ? `Source ${Math.round(state.cloneSrc.x)}, ${Math.round(state.cloneSrc.y)}` : 'Alt+click to set the source'}</span>`); break;
@@ -3320,8 +3612,8 @@ function scheduleHistogram() {
   }, 150);
 }
 function updateDocInfo() {
+  try { updateTitle(); } catch { /* early boot */ }
   const d = doc(); $('#docinfo').textContent = d ? `${d.name} — ${d.width} × ${d.height} px · ${d.depth === 16 ? 16 : 8}-bit · ${d.layers.length} layer${d.layers.length > 1 ? 's' : ''} · ${engineLabel()}` : `${engineLabel()} engine`;
-  document.title = d ? `${d.name} — ${APP}` : `${APP} — browser image editor`;
 }
 function updateAll() { updateLayersPanel(); updateHistoryPanel(); buildOptionsBar(); updateDocInfo(); updateZoomLabel(); scheduleHistogram(); requestRender(); }
 
@@ -3329,6 +3621,27 @@ function updateAll() { updateLayersPanel(); updateHistoryPanel(); buildOptionsBa
 // Boot
 // ---------------------------------------------------------------------------
 buildMenus(); buildToolbar(); buildSheets(); initEngine();
+// Installed app (PWA): files opened from Explorer / Finder via the manifest's file_handlers arrive here.
+if ('launchQueue' in window) {
+  window.launchQueue.setConsumer(async (params) => {
+    for (const h of params.files || []) { try { await openHandle(h); } catch (err) { console.warn('launch file failed', err); } }
+  });
+}
+// App shortcuts (manifest "shortcuts"): ?action=new | open | recent
+{
+  const act = new URLSearchParams(location.search).get('action');
+  if (act) setTimeout(() => {
+    if (act === 'new') run('new');
+    else if (act === 'recent') run('openRecent');
+    else if (act === 'open') { // the file picker needs a click, so ask for one
+      const body = document.createElement('div'); body.innerHTML = '<p>Choose an image or a Tintwork project to open.</p>';
+      showModal({ title: 'Open a file', body, okLabel: 'Choose file…', ok: () => run('open') });
+    }
+  }, 300);
+}
+// Window title shows the document (and the installed app's title bar uses it).
+/** Window title: "name • — Tintwork" while there are unsaved changes (taskbar / installed-app title bar). */
+function updateTitle() { const d = doc(), dirty = d && (cleanEntry ? history.entries[history.index] !== cleanEntry : history.index > 0); document.title = d ? `${d.name || 'Untitled'}${dirty ? ' •' : ''} — ${APP}` : `${APP} — photo editor`; }
 $('#toolsToggle').addEventListener('click', () => { document.body.classList.toggle('tools-collapsed'); $('#toolsToggle').classList.toggle('on', !document.body.classList.contains('tools-collapsed')); });
 $('#toolsToggle').classList.add('on');
 // Installable/offline: register the service worker on secure origins (https or localhost).
@@ -3362,8 +3675,16 @@ window.tintwork = {
   convertToSmart, setSmartFilters, updateSmart, openSmartFilterDialog, openLiveFilterPanel, composeSmart, filteredSync, addFilterMask,
   openColorRangeDialog, openRefineDialog, colorRangeMask, bakeAdjustment, BUNDLED_FONTS, fontReady, loadFont, AUTOSAVE_STEPS, MAX_SLOTS, newAdjustmentLayer, editLayer, adjCache, rasterize, renderTextLayer, textLayerAt, undo, redo, closeModal, mergeDown,
   createLayer, defaultAdjParams, gfx, initEngine, setEnginePref, setDepth, deepOf, setDeep, compositeDeepDoc, encodePNG, decodePNG, pngInfo, deepToImageData, deepFromImageData, createDeep, loadProject, openEngineDialog, exportImage, gpuLayerList, platform: { IS_MAC, PLATFORM, keyLabel, platformText, shortcutFor, comboOf, RESERVED },
-  get engine() { return gfx.engine; },
+  /** Run a brush/eraser stroke through the real tool code (tests and benchmarks). points: [{x, y}] in doc px. */
+  paintStroke(points, { tool = 'brush', shift = false } = {}) {
+    const h = toolHandlers[tool], ev = { shiftKey: shift, altKey: false, ctrlKey: false, metaKey: false, button: 0, pointerType: 'mouse' };
+    h.down(points[0], ev); for (let i = 1; i < points.length; i++) h.move(points[i], ev); h.up(points[points.length - 1], ev); drag = null;
+    return { dabPath: gfx.dabPath || 'cpu' };
+  },
+  closeContextMenu, showContextMenu, adjustBrushHardness, adjustBrushSize,
+  get engine() { return gfx.engine; }, compositeSettled, get engineReady() { return gfx.ready || Promise.resolve(gfx.engine); },
   get zoom() { return state.zoom; },
+  async compositePixelAsync(x, y) { if (compDirty) { composite(); compDirty = false; } await compositeSettled(); return [...compCtx.getImageData(x, y, 1, 1).data]; },
   compositePixel(x, y) { if (compDirty) { composite(); compDirty = false; } return [...compCtx.getImageData(x, y, 1, 1).data]; },
   get doc() { return state.doc; },
   get workerAvailable() { return ops.workerStatus().available; },

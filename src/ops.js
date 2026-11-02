@@ -47,13 +47,16 @@ export const accelerator = () => accel;
 let lastPath = 'cpu';
 /** Which engine ran the most recent process()/processDeep() call: 'gpu' | 'cpu'. */
 export const lastOpPath = () => lastPath;
+/** 'webgpu' | 'webgl' for the last GPU op (meaningful when lastOpPath() is 'gpu'). */
+let lastKind = '';
+export const lastOpKind = () => lastKind;
 
 export async function process(name, img, params = {}, info = {}, mask = null) {
   if (accel && accel.supports(name, img.width, img.height)) {
     try {
-      const out = accel.processImageData(name, img, params, info);
+      const out = await accel.processImageData(name, img, params, info);
       if (mask) blendMasked(img.data, out.data, mask);
-      lastPath = 'gpu';
+      lastPath = 'gpu'; lastKind = accel.kind || 'webgl';
       return out;
     } catch (err) { console.warn('GPU op failed, using CPU', err); }
   }
@@ -118,9 +121,9 @@ export async function processDeep(name, d, params = {}, info = {}, mask = null) 
   const { width, height } = d;
   if (accel && accel.supportsDeep && accel.supportsDeep(name, width, height, info)) {
     try {
-      const out = accel.processDeep(name, d, params, info);
+      const out = await accel.processDeep(name, d, params, info);
       if (mask) blendMaskedDeep(d.data, out.data, mask);
-      lastPath = 'gpu';
+      lastPath = 'gpu'; lastKind = accel.kind || 'webgl';
       return out;
     } catch (err) { console.warn('GPU 16-bit op failed, using CPU', err); }
   }

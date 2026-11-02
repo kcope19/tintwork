@@ -28,6 +28,9 @@ const check = (cond, msg) => { if (!cond) { errors.push(msg); console.error('FAI
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+// This suite covers the download fallback (Firefox / Safari / no File System Access API); the save-picker
+// path is covered by windows-test.mjs.
+await page.addInitScript(() => { delete window.showOpenFilePicker; delete window.showSaveFilePicker; delete window.showDirectoryPicker; });
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
 await page.goto(url);
@@ -1011,6 +1014,7 @@ const g16 = path.join(root, 'test-assets', 'gradient16.png');
   fs.writeFileSync(g16, encodePNG({ width: W, height: H, data, depth: 16 }));
 }
 // --- engine selection -----------------------------------------------------------------------------
+await page.evaluate(() => window.tintwork.engineReady);
 const auto = await page.evaluate(() => ({ pref: window.tintwork.gfx.pref, engine: !!window.tintwork.engine, reason: window.tintwork.gfx.reason }));
 console.log(`note automatic engine choice in headless Chromium: ${auto.engine ? 'GPU' : `CPU (${auto.reason})`}`);
 const forced = await page.evaluate(() => { const t = window.tintwork; t.setEnginePref('gpu'); const e = t.engine; return e ? { renderer: e.info.renderer, software: e.info.software, max: e.info.maxTextureSize, half: e.info.halfFloat, f32: e.info.float32 } : { err: t.gfx.reason }; });
@@ -1155,7 +1159,7 @@ await page.screenshot({ path: path.join(shots, '4x-16bit-png-open.png') });
 
 // --- engine dialog + fallbacks ---------------------------------------------------------------------
 await menuCmd('engine'); await page.waitForTimeout(150);
-check(await page.locator('#modalTitle').textContent() === 'Rendering engine' && /Active: GPU/.test(await page.locator('#engInfo').textContent()), 'View ▸ Rendering engine… shows the active GPU, its limits and the memory budget');
+check(await page.locator('#modalTitle').textContent() === 'Rendering engine' && /Active: (WebGL2|WebGPU)/.test(await page.locator('#engInfo').textContent()), 'View ▸ Rendering engine… shows the active GPU, its limits and the memory budget');
 await page.screenshot({ path: path.join(shots, '4x-engine-dialog.png') });
 await page.check('input[name=engine][value=cpu]'); await page.click('#modalOk');
 const cpuMode = await page.evaluate(async () => { const t = window.tintwork; t.composite(); const info = document.querySelector('#docinfo').textContent; const img = new ImageData(64, 64); await t.ops.process('gaussianBlur', img, { radius: 4 }, { docW: 64, docH: 64, offX: 0, offY: 0 }); return { engine: !!t.engine, path: t.ops.lastOpPath(), info, pref: localStorage.getItem('tintwork.engine') }; });
