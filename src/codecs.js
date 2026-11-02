@@ -52,6 +52,7 @@ export async function openRawSession(bytes, settings) {
     develop: (s, maxPixels, onHalf = null, xform = null) => call('rawDevelop', { session, settings: s, maxPixels, half: !!onHalf, xform }, [], onHalf),
     /** Defringe eyedropper at (u, v), fractions of the preview: { kind, hue, sat, lo, hi } (see raw.js pickFringe). */
     pick: (s, u, v) => call('rawPick', { session, settings: s, u, v }),
+    range: (s, u, v) => call('rawRange', { session, settings: s, u, v }),
     jpeg: () => call('rawJpeg', { session }),
     close: () => call('rawClose', { session }).catch(() => {}),
   };

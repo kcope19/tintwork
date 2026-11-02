@@ -93,7 +93,9 @@ function caFor(s, set) {
   return R.caScales(set, s.ca);
 }
 function devOpts(s, set, pipe, factor, scale, bits) {
-  return { pipe, orientation: s.orientation, factor, lens: lensFor(s, set), vignette: (set.vignette || 0) / 100, ca: caFor(s, set), distortion: set.distortion || 0, settings: set, scale, bits };
+  // local adjustments: validated once, auto-mask brush colours sampled from the preview copy (the same for every band)
+  const locals = set.local ? R.prepareLocals(set.local, s.small, s.orientation) : null;
+  return { pipe, orientation: s.orientation, factor, lens: lensFor(s, set), vignette: (set.vignette || 0) / 100, ca: caFor(s, set), distortion: set.distortion || 0, settings: set, locals, scale, bits };
 }
 async function previewOf(s, settings) {
   const pipe = R.pipeline(s.meta, s.model, settings, s.autoW);
@@ -163,6 +165,12 @@ const handlers = {
     const s = sessions.get(session); if (!s?.src) throw new Error('RAW session closed');
     const p = await previewOf(s, { ...R.DEFAULT_SETTINGS, ...settings, fringePurple: 0, fringeGreen: 0, fringeMask: false });
     return R.pickFringe(p.data, p.width, p.height, u * p.width - 0.5, v * p.height - 0.5, Math.max(2, Math.round(p.width / 400)));
+  },
+  /** Range-mask eyedropper: luminance and hue at (u, v) as the luminance / colour range masks see them. */
+  async rawRange({ session, settings, u, v }) {
+    const s = sessions.get(session); if (!s?.src) throw new Error('RAW session closed');
+    const set = { ...R.DEFAULT_SETTINGS, ...settings };
+    return R.rangeSample(s.small, R.pipeline(s.meta, s.model, set, s.autoW), s.orientation, u, v);
   },
   /**
    * Full-resolution develop to 16 bits/channel (with an 8-bit copy for the canvas). xform (re-develop into a layer

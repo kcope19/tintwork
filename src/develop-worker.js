@@ -15,7 +15,7 @@ self.onmessage = (e) => {
     }
     const t = performance.now(), r = R.developRows(region, opts), t1 = performance.now();
     const data8 = r.bits === 16 ? R.to8(r.data) : null;
-    const res = { ...r, data8, ms: { ...r.ms, develop: t1 - t - r.ms.nr - r.ms.sharpen, total: performance.now() - t } };
+    const res = { ...r, data8, ms: { ...r.ms, develop: t1 - t - r.ms.nr - r.ms.sharpen - (r.ms.local || 0), total: performance.now() - t } };
     self.postMessage({ id, stage: 'done', res }, data8 ? [r.data.buffer, data8.buffer] : [r.data.buffer]);
   } catch (err) {
     self.postMessage({ id, stage: 'error', error: err?.message || String(err) });
