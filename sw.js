@@ -2,12 +2,14 @@
 // Network-first for app files (so updates show up immediately when online), falling
 // back to the cache when offline. All paths are relative to this file, so the app
 // can live in any sub-folder of any static host.
-const CACHE = 'tintwork-shell-v1.1.0';
+const CACHE = 'tintwork-shell-v1.2.0';
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
   './src/main.js', './src/pixels.js', './src/selection.js', './src/ops.js', './src/worker.js', './src/icons.js',
   './src/curves-editor.js', './src/autosave.js', './src/gpu.js', './src/deep.js', './src/png.js', './src/platform.js', './src/webgpu.js', './src/files.js', './src/bench.js', './src/mesh.js', './src/layerfx.js', './src/auto.js', './src/looks.js', './src/presets.js', './src/batch.js', './vendor/fflate/fflate.js',
-  './src/codecs.js', './src/codec-worker.js', './src/psd.js', './src/raw.js', // v1.1 (the RAW decoder's .wasm is cached the first time a RAW file is opened)
+  './src/codecs.js', './src/codec-worker.js', './src/develop-worker.js', './src/psd.js', './src/raw.js', // v1.1 / v1.2
+  // v1.2: the RAW decoder's WebAssembly is pre-cached so camera RAW files open offline from the first visit
+  './vendor/flashraw/flashraw_simd.wasm', './vendor/flashraw/flashraw.wasm',
   './vendor/flashraw/browser.js', './vendor/flashraw/core.js', './vendor/flashraw/errors.js', './vendor/flashraw/threads.js', './vendor/flashraw/flashraw_bindgen.js', './vendor/flashraw/flashraw_bindgen_jxl.js',
   './src/styles.css', './src/logo.svg', './src/user-guide.js',
   './fonts/fonts.css', './fonts/inter/inter-latin-400-normal.woff2', './fonts/inter/inter-latin-700-normal.woff2',
@@ -16,8 +18,13 @@ const SHELL = [
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
 ];
 
+// Cached too, but a failure does not stop the install: the decoder build for JPEG XL compressed DNG files (4.5 MB).
+const EXTRA = ['./vendor/flashraw/flashraw_simd_jxl.wasm'];
+
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE)
+    .then((c) => c.addAll(SHELL).then(() => Promise.all(EXTRA.map((u) => c.add(u).catch(() => {})))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
