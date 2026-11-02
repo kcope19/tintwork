@@ -9,7 +9,7 @@ import * as ops from './ops.js';
 import { ICONS } from './icons.js';
 import { createEngine } from './gpu.js';
 import { createWebGPUEngine, webgpuAvailable } from './webgpu.js';
-import { runBenchmark, benchText, probeEngines, stackId, BENCH_SIZES, BENCH_OPS } from './bench.js';
+import { runBenchmark, benchText, benchKinds, probeEngines, stackId, BENCH_SIZES, BENCH_OPS } from './bench.js';
 import * as mesh from './mesh.js';
 import { FX_TYPES, FX_ORDER, defaultEffect, hasActiveStyles, normalizeStyles, renderStyled, effectStack, BODY_BLENDS } from './layerfx.js';
 import { fsaSupported, pickOpen, pickSave, writeFile, ensurePermission, listRecent, addRecent, removeRecent, clearRecent, EXPORT_TYPES, putLink, getLink, newLinkId, pickRaw } from './files.js';
@@ -18,9 +18,9 @@ import { decodePNG, encodePNG, pngInfo } from './png.js';
 import { BUILTIN_PRESETS, RATIO_ONLY, allPresets, presetById, presetPixels, centredRatioRect, constrainRect, describePreset, saveCustomPreset, deleteCustomPreset, customPresets } from './presets.js';
 import { formatName, variantSize, uniqueNamer, zipFiles } from './batch.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
-import { isRawName, isPsdName, isPsdBytes, readPSDAsync, writePSDAsync, openRawSession, setDevelopEnv, RAW_EXTS, PSD_EXTS } from './codecs.js';
+import { isRawName, isPsdName, isPsdBytes, readPSDAsync, writePSDAsync, openRawSession, setDevelopEnv, setDevelopEngine, developEngineInfo, getDevelopEnginePref, developBenchmark, RAW_EXTS, PSD_EXTS } from './codecs.js';
 import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEYS } from './psd.js';
-import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS } from './raw.js';
+import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
 const APP_VERSION = '1.5.0';
@@ -1055,10 +1055,15 @@ function openEngineDialog() {
   const opt = (v, label) => `<label class="radio-row"><input type="radio" name="engine" value="${v}" ${gfx.pref === v ? 'checked' : ''}/> ${label}</label>`;
   body.innerHTML = `<div class="field two"><span>Engine</span><span>${opt('auto', 'Automatic (fastest in a quick speed probe)')}${opt('webgpu', 'GPU (WebGPU compute)')}${opt('gpu', 'GPU (WebGL2)')}${opt('cpu', 'CPU (Canvas 2D + worker)')}</span></div>
     <div class="field two"><span>16-bit blur</span><label><input type="checkbox" id="engLinear" ${gfx.linear ? 'checked' : ''}/> Blur &amp; sharpen in linear light (16-bit documents)</label></div>
+    <div class="field two"><span>RAW develop</span><span><select id="engDev" aria-label="RAW develop engine">${[['auto', 'Automatic (a hardware GPU if there is one)'], ['webgpu', 'GPU (WebGPU compute)'], ['webgl2', 'GPU (WebGL2) + CPU filters'], ['cpu', 'CPU (all cores)']].map(([v, l]) => `<option value="${v}"${getDevelopEnginePref() === v ? ' selected' : ''}>${l}</option>`).join('')}</select><br><span class="muted small" id="engDevInfo">Checking…</span></span></div>
     <p class="muted" id="engInfo">${e ? `Active: ${e.kind === 'webgpu' ? 'WebGPU' : 'WebGL2'} — ${escapeHtml(i.renderer)}${i.software ? ' (software renderer)' : ''}<br>Max texture ${i.maxTextureSize}px · tile ${i.tile}px · memory ${e.usedMB.toFixed(0)} / ${e.budgetMB} MB${e.kind === 'webgpu' ? ` · output: ${e.syncOutput ? 'canvas' : 'buffer readback (async)'}` : ` · half-float ${i.halfFloat ? 'yes' : 'no'} · float32 targets ${i.float32 ? 'yes' : 'no'}${i.webgpu ? ' · WebGPU present' : ''}`}${gfx.webgpuReason ? `<br>WebGPU not used: ${escapeHtml(gfx.webgpuReason)}` : ''}`
       : `Active: CPU${gfx.reason ? ` — ${escapeHtml(gfx.reason)}` : ''}`}${gfx.probe ? `<br>Automatic choice: ${ENGINE_NAMES[gfx.probe.choice]} — speed probe (1 MP)${gfx.probe.cached ? ', cached' : ''}: ${['cpu', 'webgl', 'webgpu'].map((k) => `${ENGINE_NAMES[k]} ${gfx.probe.ms?.[k] != null ? gfx.probe.ms[k] + ' ms' : 'n/a'}`).join(' · ')} <button type="button" class="link" id="engReprobe">Measure again</button>` : ''}</p>`;
   body.querySelector('#engReprobe')?.addEventListener('click', () => { try { localStorage.removeItem(PROBE_KEY); } catch { /* ignore */ } closeModal(); setEnginePref('auto').then(() => { status(`Automatic engine: ${ENGINE_NAMES[gfx.probe?.choice || 'cpu']}`); }); });
+  const devInfo = (r) => { const el = body.querySelector('#engDevInfo'); if (el) el.textContent = `In use: ${r.label}${r.renderer ? ` — ${r.renderer}` : ''}${r.software ? ' (software: slower than the CPU)' : ''}${r.note ? ` · ${r.note}` : ''}`; };
+  developEngineInfo().then(devInfo, (err) => devInfo({ label: 'unknown', note: err.message }));
   showModal({ title: 'Rendering engine', body, okLabel: 'Apply', ok: () => {
+    const dv = body.querySelector('#engDev').value;
+    if (dv !== getDevelopEnginePref()) setDevelopEngine(dv).then((r) => status(`RAW develop engine: ${r.label}${r.renderer ? ` (${r.renderer})` : ''}`), () => {});
     const v = body.querySelector('input[name=engine]:checked')?.value || 'auto';
     gfx.linear = body.querySelector('#engLinear').checked; try { localStorage.setItem('tintwork.linear', gfx.linear ? '1' : '0'); } catch { /* ignore */ }
     const report = () => status(gfx.engine ? `Rendering engine: ${gfx.engine.kind === 'webgpu' ? 'WebGPU' : 'WebGL2'} (${gfx.engine.info.renderer})` : `Rendering engine: CPU${gfx.reason ? ` (${gfx.reason})` : ''}`);
@@ -2684,9 +2689,10 @@ function openBenchmarkDialog() {
   if (benchRunning) { status('The benchmark is already running.'); return; }
   const body = document.createElement('div');
   body.className = 'bench';
-  body.innerHTML = `<p class="muted">Times the same operations — Gaussian blur, curves, a 10-layer composite and a mesh warp — on each available engine (CPU, WebGL2, WebGPU) with synthetic test images. Your open documents are not touched. Large sizes take a while; the app is busy meanwhile.</p>
+  body.innerHTML = `<p class="muted">Times the same operations — Gaussian blur, curves, a 10-layer composite, a mesh warp and the RAW develop (preview updates while you drag a slider or paint a mask, and a full-resolution 16-bit develop with masks) — on each available engine (CPU, WebGL2, WebGPU) with synthetic test images. Your open documents are not touched. Large sizes take a while; the app is busy meanwhile.</p>
     <div class="field two"><span>Sizes</span><span><label><input type="checkbox" id="bench1"/> 1 MP (quick check)</label> <label><input type="checkbox" id="bench12" checked/> 12 MP (4000×3000)</label> <label><input type="checkbox" id="bench24" checked/> 24 MP (6000×4000)</label></span></div>
     <div class="field two"><span>Engines</span><span><label><input type="checkbox" id="benchcpu" checked/> CPU</label> <label><input type="checkbox" id="benchwebgl" checked/> WebGL2</label> <label><input type="checkbox" id="benchwebgpu" checked/> WebGPU</label></span></div>
+    <div class="field two"><span>RAW develop</span><span><label><input type="checkbox" id="benchdev" checked/> include the RAW develop tests</label></span></div>
     <div class="bench-actions"><button id="benchRun" class="primary">Run benchmark</button> <button id="benchCopy" disabled>Copy results</button> <span id="benchProgress" class="muted" role="status"></span></div>
     <div id="benchOut" class="bench-out"></div>`;
   let last = null;
@@ -2695,7 +2701,7 @@ function openBenchmarkDialog() {
     const engines = ['cpu', 'webgl', 'webgpu'].filter((k) => body.querySelector(`#bench${k}`).checked);
     if (!sizes.length || !engines.length) { body.querySelector('#benchProgress').textContent = 'Pick at least one size and one engine.'; return; }
     body.querySelector('#benchRun').disabled = true; body.querySelector('#benchCopy').disabled = true;
-    last = await runBenchmarkInApp({ sizes, engines, onProgress: (t) => { body.querySelector('#benchProgress').textContent = t; } });
+    last = await runBenchmarkInApp({ sizes, engines, develop: body.querySelector('#benchdev').checked, onProgress: (t) => { body.querySelector('#benchProgress').textContent = t; } });
     body.querySelector('#benchRun').disabled = false;
     if (!last) return;
     body.querySelector('#benchCopy').disabled = false;
@@ -2719,7 +2725,7 @@ async function copyText(text) {
   } catch { return false; }
 }
 /** Tear the app engine down, run the benchmark, then start the preferred engine again. */
-async function runBenchmarkInApp({ sizes = [12, 24], engines = ['cpu', 'webgl', 'webgpu'], onProgress = () => {} } = {}) {
+async function runBenchmarkInApp({ sizes = [12, 24], engines = ['cpu', 'webgl', 'webgpu'], develop = true, developDims = null, onProgress = () => {} } = {}) {
   if (benchRunning) return null;
   benchRunning = true; setBusy(1);
   try {
@@ -2730,7 +2736,7 @@ async function runBenchmarkInApp({ sizes = [12, 24], engines = ['cpu', 'webgl', 
     gfx.engine = null; ops.setAccelerator(null); gfx.path = 'cpu'; gfx.reason = 'benchmark running'; updateDocInfo();
     const curves = defaultAdjParams('curves'); curves.rgb = [[0, 0], [64, 110], [190, 200], [255, 255]];
     const avail = engines.filter((k) => k !== 'webgpu' || webgpuAvailable());
-    const res = await runBenchmark({ engines: avail, sizes, curves, onProgress, budgetMB: Math.min(GPU_BUDGET_MB, 2048) });
+    const res = await runBenchmark({ engines: avail, sizes, curves, onProgress, budgetMB: Math.min(GPU_BUDGET_MB, 2048), develop: develop ? developBenchmark : null, developDims });
     for (const k of engines) if (!avail.includes(k)) res.engines[k] = { error: 'WebGPU is not available in this browser' };
     gfx.lastBench = res;
     return res;
@@ -2741,9 +2747,10 @@ async function runBenchmarkInApp({ sizes = [12, 24], engines = ['cpu', 'webgl', 
 }
 function benchTableHTML(res) {
   const NM = { cpu: 'CPU', webgl: 'WebGL2', webgpu: 'WebGPU' };
-  const kinds = Object.keys(res.engines).filter((k) => !res.engines[k].error);
+  const kinds = benchKinds(res);
+  const devInfo = res.develop?.error ? `<li><b>RAW develop</b>: failed — ${escapeHtml(res.develop.error)}</li>` : Object.entries(res.develop || {}).map(([k, v]) => `<li><b>RAW develop on ${NM[k]}</b>: ${v.error ? `unavailable — ${escapeHtml(v.error)}` : escapeHtml(v.renderer)}${v.software ? ' <span class="warn">software — not representative of a hardware GPU</span>' : ''}</li>`).join('');
   const info = Object.entries(res.engines).map(([k, v]) => `<li><b>${NM[k]}</b>: ${v.error ? `unavailable — ${escapeHtml(v.error)}` : escapeHtml(k === 'webgpu' ? [v.vendor, v.architecture, v.device, v.description].filter(Boolean).join(' · ') || v.renderer : v.renderer || 'Canvas 2D + worker')}${v.software ? ' <span class="warn">software adapter — not representative of a hardware GPU</span>' : ''}</li>`).join('');
-  const sizes = [...new Set(res.rows.map((r) => r.mp))];
+  const sizes = [...new Set(res.rows.map((r) => r.mp))].sort((a, b) => a - b);
   let rows = '';
   for (const mp of sizes) for (const [op, label] of BENCH_OPS) {
     const cells = kinds.map((k) => res.rows.find((x) => x.mp === mp && x.op === op && x.kind === k));
@@ -2751,7 +2758,7 @@ function benchTableHTML(res) {
     const best = Math.min(...cells.filter((c) => c?.ms != null).map((c) => c.ms));
     rows += `<tr><td>${escapeHtml(label)}</td><td>${mp}</td>${cells.map((c) => `<td class="${c?.ms === best ? 'best' : ''}" title="${escapeHtml(c?.error || '')}">${!c ? '—' : c.ms == null ? 'error' : `${c.ms} ms`}</td>`).join('')}</tr>`;
   }
-  return `<ul class="bench-info">${info}</ul><table class="bench-table"><thead><tr><th>Operation</th><th>MP</th>${kinds.map((k) => `<th>${NM[k]}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+  return `<ul class="bench-info">${info}${devInfo}</ul><table class="bench-table"><thead><tr><th>Operation</th><th>MP</th>${kinds.map((k) => `<th>${NM[k]}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function pickColor(p) {
@@ -4824,12 +4831,17 @@ const rawPresetOptions = (withNone) => `${withNone ? '<option value="">Choose…
 /** Local adjustment sliders: key, label, min, max, step, tooltip. */
 const LOCAL_SLIDERS = [
   ['exposure', 'Exposure (EV)', -4, 4, 0.05], ['contrast', 'Contrast', -100, 100, 1], ['highlights', 'Highlights', -100, 100, 1, 'Pull down (−) or brighten (+) the bright tones'],
-  ['shadows', 'Shadows', -100, 100, 1, 'Lift (+) or deepen (−) the dark tones'], ['temp', 'Temperature', -100, 100, 1], ['tint', 'Tint', -100, 100, 1, 'Green (−) or magenta (+)'],
-  ['saturation', 'Saturation', -100, 100, 1], ['clarity', 'Clarity', -100, 100, 1, 'Mid-size local contrast (about 12 px at full size): adds punch, or softens with negative values'],
+  ['shadows', 'Shadows', -100, 100, 1, 'Lift (+) or deepen (−) the dark tones'], ['whites', 'Whites', -100, 100, 1, 'Brighten (+) or hold back (−) the brightest tones'],
+  ['blacks', 'Blacks', -100, 100, 1, 'Lift (+) or deepen (−) the darkest tones'], ['dehaze', 'Dehaze', -100, 100, 1, 'Cut through haze and mist (+), or add a soft haze (−)'],
+  ['temp', 'Temperature', -100, 100, 1], ['tint', 'Tint', -100, 100, 1, 'Green (−) or magenta (+)'],
+  ['saturation', 'Saturation', -100, 100, 1], ['hue', 'Hue shift (°)', -180, 180, 1, 'Turn the colours inside the mask around the colour wheel, keeping their brightness'], ['clarity', 'Clarity', -100, 100, 1, 'Mid-size local contrast (about 12 px at full size): adds punch, or softens with negative values'],
   ['texture', 'Texture', -100, 100, 1, 'Fine detail such as skin, foliage or fabric (about 3 px); negative values smooth it'], ['sharpness', 'Sharpness', -100, 100, 1, 'Edge sharpening (+) or a slight blur (−)'],
   ['noise', 'Noise reduction', 0, 100, 1, 'Extra luminance noise reduction inside the mask'], ['feather', 'Feather', 0, 100, 1],
 ];
 const RAW_BRUSH_KEY = 'tintwork.rawBrush';
+const DEV_ENGINE_NAMES = { cpu: 'CPU', webgpu: 'WebGPU', webgl2: 'WebGL2' };
+const DRAFT_OVER_MS = 45, DRAFT_SETTLE_MS = 180;
+const LIVE_PAINT_MS = 16; // at most one preview request per frame while a brush stroke is in progress
 const rawBrushPrefs = () => { const d = { size: 5, feather: 50, flow: 100, smooth: 50, auto: false }; try { return { ...d, ...JSON.parse(localStorage.getItem(RAW_BRUSH_KEY) || '{}') }; } catch { return d; } };
 /**
  * RAW develop dialog. opt (re-develop): { initial: settings to start from (also the "before" view), title, okLabel,
@@ -4904,6 +4916,9 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
         <label class="raw-check" title="Tint the area the selected mask affects red (O)"><input type="checkbox" id="rawMaskOv" /> Show mask overlay (O)</label>
         <div id="rawLocalBox" class="hidden">
           ${LOCAL_SLIDERS.map(([k, label, lo, hi, st, tip]) => `<label class="field" data-lrow="${k}"${tip ? ` title="${escapeHtml(tip)}"` : ''}><span>${label}</span><input type="range" data-l="${k}" min="${lo}" max="${hi}" step="${st}" value="0" aria-label="Local ${label}" /><output data-lo="${k}">0</output></label>`).join('')}
+          <div class="raw-sub">Shapes <span class="muted small">(combine shapes: add, subtract or intersect)</span></div>
+          <div id="rawParts" class="raw-parts" role="listbox" aria-label="Mask shapes"></div>
+          <div class="raw-preset-save"><button type="button" id="rawPartLinear" title="Add a graduated shape to this mask (it subtracts at first: change it to add or intersect)">+ Graduated</button><button type="button" id="rawPartRadial" title="Add a radial shape to this mask (it subtracts at first: change it to add or intersect)">+ Radial</button></div>
           <div id="rawBrushBox"><div class="raw-sub">Brush <span class="muted small">(adds to the mask; Alt erases)</span></div>
           <div class="raw-preset-save"><button type="button" id="rawBrushBtn" aria-pressed="false" title="Paint the mask with the mouse; hold Alt to erase (B)">Paint</button><button type="button" id="rawEraseBtn" aria-pressed="false" title="Erase from the mask (or hold Alt while painting)">Erase</button><button type="button" id="rawBrushClear" title="Remove every brush stroke from this mask">Clear strokes</button></div>
           ${[['size', 'Size', 0.5, 30, 0.5, 'Brush radius as a share of the long side of the photo ([ and ] keys)'], ['feather', 'Feather', 0, 100, 1, 'How soft the brush edge is'], ['flow', 'Flow', 5, 100, 1, 'How much each stroke adds; overlapping strokes build up'], ['smooth', 'Smoothing', 0, 100, 1, 'Steadies mouse strokes (the brush trails the pointer a little)']].map(([k, label, lo, hi, st, tip]) => `<label class="field" title="${escapeHtml(tip)}"><span>${label}</span><input type="range" data-b="${k}" min="${lo}" max="${hi}" step="${st}" value="0" aria-label="Brush ${label}" /><output data-bo="${k}">0</output></label>`).join('')}
@@ -4923,8 +4938,13 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
     const cv = body.querySelector('#rawCanvas'), $q = (sel) => body.querySelector(sel);
     // view: 'after' (current settings), 'before' (beforeSettings) or 'split' (before left of the divider, after right)
     let last = null, before = null, view = 'after', splitF = 0.5, lastImg = null, beforeImg = null;
-    const imgOf = (p) => new ImageData(p.data, p.width, p.height);
+    const imgOf = (p) => { const im = new ImageData(p.data, p.width, p.height); if (p.draft) im.draft = true; return im; };
+    let scratch = null;
     const paintImg = (img) => {
+      if (img.draft && cv.width > img.width && Math.abs(cv.width / cv.height - img.width / img.height) < 0.02) { // a live draft: scaled up into the full-size canvas
+        scratch ||= document.createElement('canvas'); scratch.width = img.width; scratch.height = img.height; scratch.getContext('2d').putImageData(img, 0, 0);
+        const g = cv.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'low'; g.drawImage(scratch, 0, 0, cv.width, cv.height); return;
+      }
       if (cv.width !== img.width || cv.height !== img.height) { cv.width = img.width; cv.height = img.height; }
       cv.getContext('2d').putImageData(img, 0, 0);
     };
@@ -4946,8 +4966,8 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       else if (view === 'before') paintImg(beforeImg);
       else if (lastImg) {
         paintImg(lastImg);
-        if (beforeImg.width === lastImg.width && beforeImg.height === lastImg.height) {
-          const sx = Math.round(splitF * lastImg.width); if (sx > 0) cv.getContext('2d').putImageData(beforeImg, 0, 0, 0, 0, sx, lastImg.height);
+        if (beforeImg.width === cv.width && beforeImg.height === cv.height) {
+          const sx = Math.round(splitF * cv.width); if (sx > 0) cv.getContext('2d').putImageData(beforeImg, 0, 0, 0, 0, sx, cv.height);
         }
       }
       placeDivider(); drawOverlay();
@@ -4960,16 +4980,31 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       last = p; lastImg = imgOf(p); render();
       if (s.wb !== 'custom') { s.temp = p.temp; s.tint = p.tint; $q('#rawTemp').value = p.temp; $q('#rawTempR').value = tempToPos(p.temp); $q('[data-k=tint]').value = p.tint; $q('[data-o=tint]').textContent = p.tint; }
       $q('#rawCaEst').textContent = s.caAuto && p.ca ? `(found red ${p.ca.red > 0 ? '+' : ''}${p.ca.red.toFixed(0)}, blue ${p.ca.blue > 0 ? '+' : ''}${p.ca.blue.toFixed(0)})` : '';
-      $q('#rawMs').textContent = `preview ${p.ms} ms`;
+      $q('#rawMs').textContent = `${p.draft ? 'draft' : 'preview'} ${p.ms} ms · ${DEV_ENGINE_NAMES[p.engine] || 'CPU'}`; $q('#rawMs').title = `RAW develop engine: ${DEV_ENGINE_NAMES[p.engine] || 'CPU'} (View › Rendering engine to change it)`;
       ui.previews++;
     };
     let busy = false, again = false, done = false;
+    // live updates: while a slider, handle or brush is moving and the full preview is slow (CPU or a software GPU),
+    // a half-size draft is shown; the full preview follows once the input rests for DRAFT_SETTLE_MS
+    let draftNext = false, wasDraft = false, lastFullMs = 0, settleT = 0;
     const refresh = async () => {
       if (busy) { again = true; return; }
       busy = true;
-      try { do { again = false; const p = await sess.preview(maskOn && s.local?.[localSel] ? { ...s, maskShow: localSel } : { ...s }); if (done) return; draw(p); } while (again); }
-      catch (err) { if (!done) $q('#rawMs').textContent = `Preview failed: ${err.message}`; }
-      finally { busy = false; ui.idle = !again; }
+      try {
+        do {
+          again = false; const d = draftNext; draftNext = false;
+          const p = await sess.preview(maskOn && s.local?.[localSel] ? { ...s, maskShow: localSel } : { ...s }, { draft: d }); if (done) return;
+          if (!d) lastFullMs = p.ms; wasDraft = d; if (d) ui.drafts = (ui.drafts || 0) + 1; draw(p);
+        } while (again);
+      } catch (err) { if (!done) $q('#rawMs').textContent = `Preview failed: ${err.message}`; }
+      finally { busy = false; ui.idle = !again && !wasDraft; }
+    };
+    const live = () => {
+      ui.idle = false;
+      if (ui.allowDrafts && lastFullMs > DRAFT_OVER_MS) draftNext = true;
+      clearTimeout(settleT);
+      settleT = setTimeout(() => { if (done) return; if (wasDraft || draftNext) { draftNext = false; refresh(); } }, DRAFT_SETTLE_MS);
+      refresh();
     };
     const setView = async (v) => {
       view = v;
@@ -4979,8 +5014,10 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
     };
     const setBefore = (on) => setView(on ? 'before' : 'after');
     const setSplit = (f) => { splitF = Math.min(1, Math.max(0, f)); ui.split = splitF; compose(); };
-    const ui = rawUI = { settings: s, info, previews: 0, idle: true, body, refresh: () => { ui.idle = false; refresh(); }, beforeShown: false, view: 'after', split: 0.5, setBefore, setView, setSplit, applyPreset: (v) => applyChoice(v), redevelop: !!opt.onApply,
+    const ui = rawUI = { settings: s, info, previews: 0, idle: true, body, allowDrafts: true, get lastFullMs() { return lastFullMs; }, refresh: () => { ui.idle = false; refresh(); }, beforeShown: false, view: 'after', split: 0.5, setBefore, setView, setSplit, applyPreset: (v) => applyChoice(v), redevelop: !!opt.onApply,
       addLocal: (t) => addLocal(t), setLocal: (i, p) => setLocal(i, p), selectLocal: (i) => selectLocal(i), deleteLocal: (i) => deleteLocal(i),
+      addPart: (t, op, i) => addPart(t, op, i), setPart: (j, p, i) => setPart(j, p, i), deletePart: (j, i) => deletePart(j, i), selectPart: (j) => selectPart(j), get partSel() { return partSel; },
+      get lastPreview() { return last; },
       duplicateLocal: (i) => duplicateLocal(i), renameLocal: (i, n) => renameLocal(i, n), invertLocal: (i) => invertLocal(i), setMaskOn: (on) => setMaskOn(on), maskOn: false,
       setBrushMode: (on) => setBrushMode(on), get brushMode() { return brushMode; }, brush: () => ({ ...brush }), setBrush: (p) => { Object.assign(brush, p); saveBrush(); syncLocal(); },
       rangeAt: (k, u, v) => rangeAt(k, u, v), setRangePick: (k) => setRangePick(k), get rangePick() { return rangePick; },
@@ -5035,8 +5072,18 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
             if (hover.erase) { g.beginPath(); g.moveTo(hx - 4, hy); g.lineTo(hx + 4, hy); g.stroke(); }
             else { g.beginPath(); g.moveTo(hx - 4, hy); g.lineTo(hx + 4, hy); g.moveTo(hx, hy - 4); g.lineTo(hx, hy + 4); g.stroke(); }
           }
-        } else if (a.type === 'linear') {
+        } else drawShape(g, a, on && partSel < 0, P, w, h);
+        if (on) (a.parts || []).forEach((q, j) => { // the other shapes of the selected mask, coloured by how they combine
+          g.strokeStyle = { add: '#8f8', subtract: '#f88', intersect: '#ff8' }[q.op] || '#fff'; g.lineWidth = partSel === j ? 1.5 : 1;
+          if (partSel !== j) g.setLineDash([2, 3]); drawShape(g, q, partSel === j, P, w, h, true); g.setLineDash([]);
+        });
+        g.shadowBlur = 0;
+      });
+    };
+    const drawShape = (g, a, on, P, w, h, keep = false) => {
+        if (a.type === 'linear') {
           const [ax, ay] = P(a.x0, a.y0), [bx, by] = P(a.x1, a.y1), dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1, nx = -dy / L * (w + h), ny = dx / L * (w + h);
+          if (keep && !on) { g.beginPath(); g.moveTo(ax - nx, ay - ny); g.lineTo(ax + nx, ay + ny); g.stroke(); return; }
           if (on) {
             g.beginPath(); for (const [px, py, dash] of [[ax, ay, []], [bx, by, []], [(ax + bx) / 2, (ay + by) / 2, [4, 4]]]) { g.setLineDash(dash); g.beginPath(); g.moveTo(px - nx, py - ny); g.lineTo(px + nx, py + ny); g.stroke(); }
             g.setLineDash([]); g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();
@@ -5050,16 +5097,42 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
             if (a.feather > 0.02) { g.setLineDash([4, 4]); g.beginPath(); g.ellipse(cx, cy, rx * (1 - a.feather), ry * (1 - a.feather), 0, 0, Math.PI * 2); g.stroke(); g.setLineDash([]); }
             for (const [px, py] of [[cx + rx, cy], [cx, cy + ry]]) { g.beginPath(); g.arc(px, py, 5, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill(); }
             g.beginPath(); g.arc(cx, cy, 6, 0, Math.PI * 2); g.stroke();
-          } else { g.beginPath(); g.arc(cx, cy, 5, 0, Math.PI * 2); g.stroke(); }
+          } else if (keep) { g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); g.stroke(); }
+          else { g.beginPath(); g.arc(cx, cy, 5, 0, Math.PI * 2); g.stroke(); }
         }
-        g.shadowBlur = 0;
-      });
     };
     const LDEF = { linear: { exposure: -0.7, x0: 0.5, y0: 0, x1: 0.5, y1: 0.45 }, radial: { exposure: 0.5, cx: 0.5, cy: 0.5, rx: 0.3, ry: 0.3, feather: 0.5, invert: false }, brush: { exposure: 0.5, strokes: [] } };
     const TYPE_NAME = { linear: 'Graduated', radial: 'Radial', brush: 'Brush' };
+    // shapes combined into a mask (a.parts): selecting one makes its handles the ones you drag
+    const PDEF = { linear: { x0: 0.5, y0: 1, x1: 0.5, y1: 0.6 }, radial: { cx: 0.5, cy: 0.5, rx: 0.15, ry: 0.15, feather: 0.5 } };
+    const OP_NAME = { add: 'Add', subtract: 'Subtract', intersect: 'Intersect' };
+    let partSel = -1;
+    const partsHTML = (a) => {
+      const own = a.type === 'brush' ? 'Brush strokes' : `${TYPE_NAME[a.type]} (base shape)`;
+      const rows = [`<div class="raw-part-item${partSel < 0 ? ' on' : ''}" role="option" tabindex="0" data-pi="-1" aria-selected="${partSel < 0}"><span>${escapeHtml(own)}</span></div>`];
+      (a.parts || []).forEach((q, j) => rows.push(`<div class="raw-part-item${partSel === j ? ' on' : ''}" role="option" tabindex="0" data-pi="${j}" aria-selected="${partSel === j}"><select data-pop="${j}" aria-label="How shape ${j + 2} combines">${MASK_OPS.map((o) => `<option value="${o}"${q.op === o ? ' selected' : ''}>${OP_NAME[o]}</option>`).join('')}</select><span>${TYPE_NAME[q.type]}</span><label class="raw-check" title="Use the outside of this shape"><input type="checkbox" data-pinv="${j}"${q.invert ? ' checked' : ''}/> Invert</label><button type="button" data-pdel="${j}" title="Remove this shape" aria-label="Remove shape ${j + 2}">✕</button></div>`));
+      return rows.join('');
+    };
+    const syncParts = (a) => {
+      const host = $q('#rawParts'); if (!a) { host.innerHTML = ''; return; }
+      if (partSel >= (a.parts?.length || 0)) partSel = -1;
+      const html = partsHTML(a); if (host.dataset.html !== html) { host.innerHTML = html; host.dataset.html = html; }
+      $q('#rawPartLinear').disabled = $q('#rawPartRadial').disabled = (a.parts?.length || 0) >= MAX_PARTS;
+    };
+    const addPart = (type, op = 'subtract', i = localSel) => {
+      const a = s.local?.[i]; if (!a || (a.parts ||= []).length >= MAX_PARTS) return -1;
+      const base = a.type === 'radial' ? { cx: a.cx, cy: a.cy, rx: a.rx * 0.5, ry: a.ry * 0.5, feather: 0.5 } : {};
+      a.parts.push({ op, type, ...JSON.parse(JSON.stringify(PDEF[type])), ...(type === 'radial' ? base : {}), invert: false });
+      if (i === localSel) partSel = a.parts.length - 1; if (brushMode) setBrushMode(false);
+      syncLocal(); changed(); return a.parts.length - 1;
+    };
+    const setPart = (j, patch, i = localSel) => { const q = s.local?.[i]?.parts?.[j]; if (!q) return; Object.assign(q, patch); syncLocal(); changed(); };
+    const deletePart = (j, i = localSel) => { const a = s.local?.[i]; if (!a?.parts?.[j]) return; a.parts.splice(j, 1); if (!a.parts.length) delete a.parts; partSel = -1; syncLocal(); changed(); };
+    const selectPart = (j) => { partSel = j; syncLocal(); };
     const localName = (a, i) => a.name || `${TYPE_NAME[a.type] || 'Mask'} ${i + 1}`;
     const localSummary = (a) => {
-      const bits = LOCAL_SLIDERS.filter(([k]) => k !== 'feather' && a[k]).slice(0, 3).map(([k, label]) => `${label.replace(' (EV)', '')} ${a[k] > 0 ? '+' : ''}${k === 'exposure' ? (+a[k]).toFixed(2) : a[k]}`);
+      const bits = LOCAL_SLIDERS.filter(([k]) => k !== 'feather' && a[k]).slice(0, 3).map(([k, label]) => `${label.replace(/ \((EV|°)\)/, '')} ${a[k] > 0 ? '+' : ''}${k === 'exposure' ? (+a[k]).toFixed(2) : k === 'hue' ? `${a[k]}°` : a[k]}`);
+      if (a.parts?.length) bits.push(`${a.parts.length + (a.type === 'brush' ? 0 : 1)} shapes`);
       if (a.lum) bits.push('lum'); if (a.color) bits.push('color'); if (a.invert) bits.push('inverted');
       return bits.join(', ') || 'no effect yet';
     };
@@ -5080,7 +5153,7 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       ov.style.cursor = rangePick ? 'crosshair' : ''; drawOverlay();
     };
     const setMaskOn = (on) => { maskOn = !!on; $q('#rawMaskOv').checked = maskOn; ui.maskOn = maskOn; if (s.local?.length) changed(); };
-    const fmtL = (k, v) => (k === 'exposure' ? `${v > 0 ? '+' : ''}${(+v).toFixed(2)}` : String(v));
+    const fmtL = (k, v) => (k === 'exposure' ? `${v > 0 ? '+' : ''}${(+v).toFixed(2)}` : k === 'hue' ? `${v}°` : String(v));
     const syncLocal = () => {
       const list = s.local || [];
       if (localSel >= list.length) localSel = list.length - 1;
@@ -5090,7 +5163,7 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       if (host.dataset.html !== html) { host.innerHTML = html; host.dataset.html = html; } // rebuilt only when it changes, so a double-click survives selecting
       for (const it of host.querySelectorAll('[data-mi]')) { const on = +it.dataset.mi === localSel; it.classList.toggle('on', on); it.setAttribute('aria-selected', String(on)); }
       if (renaming >= 0) { const inp = host.querySelector('.raw-mask-rename'); inp?.focus(); inp?.select(); }
-      const a = list[localSel]; $q('#rawLocalBox').classList.toggle('hidden', !a);
+      const a = list[localSel]; $q('#rawLocalBox').classList.toggle('hidden', !a); syncParts(a);
       for (const id of ['#rawMaskRename', '#rawMaskDup', '#rawMaskInv', '#rawLocalDel']) $q(id).disabled = !a;
       $q('#rawMaskDup').disabled = !a || list.length >= MAX_LOCALS;
       $q('#rawAddLinear').disabled = $q('#rawAddRadial').disabled = $q('#rawAddBrush').disabled = list.length >= MAX_LOCALS;
@@ -5114,10 +5187,10 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       if (!a && rangePick) setRangePick(null);
       drawOverlay();
     };
-    const selectLocal = (i) => { const prev = localSel; localSel = i; renaming = -1; if (i >= 0) setPicking(false); syncLocal(); if (maskOn && prev !== localSel) changed(); };
+    const selectLocal = (i) => { const prev = localSel; localSel = i; renaming = -1; if (prev !== i) partSel = -1; if (i >= 0) setPicking(false); syncLocal(); if (maskOn && prev !== localSel) changed(); };
     const addLocal = (type) => {
       const list = locals(); if (list.length >= MAX_LOCALS) return -1;
-      list.push({ type, ...JSON.parse(JSON.stringify(LDEF[type])) }); localSel = list.length - 1; picking = false; setPicking(false);
+      list.push({ type, ...JSON.parse(JSON.stringify(LDEF[type])) }); localSel = list.length - 1; partSel = -1; picking = false; setPicking(false);
       if (view === 'before') setView('after');
       syncLocal(); if (type === 'brush') setBrushMode(true); changed(); return localSel;
     };
@@ -5153,13 +5226,13 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
         if (k.startsWith('lum')) { const L = a.lum || { lo: 50, hi: 100, soft: 10 }; L[{ lumLo: 'lo', lumHi: 'hi', lumSoft: 'soft' }[k]] = v; a.lum = L; $q('#rawLumOn').checked = true; }
         else { const C = a.color || { hue: 30, range: 25, soft: 20 }; C[{ colHue: 'hue', colRange: 'range', colSoft: 'soft' }[k]] = v; a.color = C; $q('#rawColOn').checked = true; }
         for (const row of body.querySelectorAll('[data-rrow]')) row.classList.toggle('disabled-row', !a[row.dataset.rrow]);
-        changed(); return;
+        live(); return;
       }
       const k = t.dataset?.l; if (!k) return;
       const v = +t.value; a[k] = k === 'feather' ? v / 100 : v;
       $q(`[data-lo=${k}]`).textContent = fmtL(k, v);
       const it = host.querySelector(`[data-mi="${localSel}"] .small`); if (it) it.textContent = localSummary(a);
-      drawOverlay(); changed();
+      drawOverlay(); live();
     });
     body.addEventListener('change', (e) => {
       const t = e.target, a = s.local?.[localSel];
@@ -5167,6 +5240,20 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       else if (t.id === 'rawAutoMask') { brush.auto = t.checked; saveBrush(); }
       else if (a && t.id === 'rawLumOn') { if (t.checked) a.lum = { lo: +$q('[data-r=lumLo]').value, hi: +$q('[data-r=lumHi]').value, soft: +$q('[data-r=lumSoft]').value }; else delete a.lum; syncLocal(); changed(); }
       else if (a && t.id === 'rawColOn') { if (t.checked) a.color = { hue: +$q('[data-r=colHue]').value, range: +$q('[data-r=colRange]').value, soft: +$q('[data-r=colSoft]').value }; else delete a.color; syncLocal(); changed(); }
+    });
+    $q('#rawPartLinear').onclick = () => addPart('linear');
+    $q('#rawPartRadial').onclick = () => addPart('radial');
+    const partsHost = $q('#rawParts');
+    partsHost.addEventListener('click', (e) => {
+      const del = e.target.closest('[data-pdel]'); if (del) { deletePart(+del.dataset.pdel); return; }
+      if (e.target.closest('select, input, label')) return;
+      const it = e.target.closest('[data-pi]'); if (it) selectPart(+it.dataset.pi);
+    });
+    partsHost.addEventListener('keydown', (e) => { const it = e.target.closest('[data-pi]'); if (it && e.target === it && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); selectPart(+it.dataset.pi); } });
+    partsHost.addEventListener('change', (e) => {
+      e.stopPropagation(); const t = e.target;
+      if (t.dataset.pop) setPart(+t.dataset.pop, { op: t.value });
+      else if (t.dataset.pinv) setPart(+t.dataset.pinv, { invert: t.checked });
     });
     $q('#rawAddLinear').onclick = () => addLocal('linear');
     $q('#rawAddRadial').onclick = () => addLocal('radial');
@@ -5206,8 +5293,12 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       const st = stroke, r = ov.getBoundingClientRect(), L = Math.max(r.width, r.height) || 1, k = 1 - 0.9 * (brush.smooth / 100);
       st.su += (u - st.su) * k; st.sv += (v - st.sv) * k;
       const p = st.s.pts, n = p.length, du = (st.su - p[n - 2]) * r.width / L, dv = (st.sv - p[n - 1]) * r.height / L;
-      if (force || Math.hypot(du, dv) >= Math.max(0.002, st.s.size * 0.12)) { if (n / 2 < 4000) p.push(+st.su.toFixed(5), +st.sv.toFixed(5)); }
+      if (force || Math.hypot(du, dv) >= Math.max(0.002, st.s.size * 0.12)) { if (n / 2 < 4000) { p.push(+st.su.toFixed(5), +st.sv.toFixed(5)); livePaint(); } }
     };
+    // live preview while painting: the newest stroke is rasterised on top of the cached earlier ones (raw.js
+    // cachedRaster) and refresh() keeps only the latest request, so updates never queue up behind the pointer
+    let liveT = 0;
+    const livePaint = () => { const t = performance.now(); if (t - liveT < LIVE_PAINT_MS) return; liveT = t; ui.livePaints = (ui.livePaints || 0) + 1; live(); };
     const startStroke = (u, v, erase) => {
       const a = s.local?.[localSel]; if (a?.type !== 'brush') return false;
       if ((a.strokes ||= []).length >= 400) { toast('This mask has the most strokes it can hold: duplicate it or clear some strokes.'); return false; }
@@ -5232,10 +5323,14 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       if (picking) { pickAt(u, v); return; }
       if (rangePick) { rangeAt(rangePick, u, v); return; }
       if (brushMode) { if (startStroke(u, v, eraseMode || e.altKey)) ov.setPointerCapture(e.pointerId); return; }
-      const list = s.local || []; let a = list[localSel], h = a && handleAt(a, u, v);
-      if (!h) { const j = list.findIndex((b, i) => i !== localSel && handleAt(b, u, v) === 'move'); if (j >= 0) { selectLocal(j); a = list[j]; h = 'move'; } }
+      const list = s.local || []; let a = list[localSel], tgt = a && partSel >= 0 ? a.parts?.[partSel] : a, h = tgt && handleAt(tgt, u, v);
+      if (!h && a) { // another shape of the selected mask (handles first, then its inside), then the mask's own shape
+        const ps = a.parts || [], j = [...ps.keys()].find((k) => k !== partSel && handleAt(ps[k], u, v) && handleAt(ps[k], u, v) !== 'move') ?? [...ps.keys()].find((k) => k !== partSel && handleAt(ps[k], u, v) === 'move');
+        if (j != null) { selectPart(j); tgt = ps[j]; h = handleAt(tgt, u, v); } else if (partSel >= 0 && handleAt(a, u, v)) { selectPart(-1); tgt = a; h = handleAt(a, u, v); }
+      }
+      if (!h) { const j = list.findIndex((b, i) => i !== localSel && handleAt(b, u, v) === 'move'); if (j >= 0) { selectLocal(j); a = tgt = list[j]; h = 'move'; } }
       if (!h) return;
-      ldrag = { h, u, v, start: { ...a } }; ov.setPointerCapture(e.pointerId);
+      ldrag = { h, u, v, tgt, start: { ...tgt } }; ov.setPointerCapture(e.pointerId);
     });
     ov.addEventListener('pointermove', (e) => {
       if (brushMode) {
@@ -5243,8 +5338,8 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
         if (stroke) for (const ev of (e.getCoalescedEvents?.() || []).length ? e.getCoalescedEvents() : [e]) { const [cu, cv2] = uvOf(ev); addPt(cu, cv2); }
         ov.style.cursor = 'none'; drawOverlay(); return;
       }
-      if (!ldrag) { ov.style.cursor = rangePick || picking ? 'crosshair' : 'default'; if (localSel >= 0 && s.local?.[localSel] && !rangePick) { const [u, v] = uvOf(e), h = handleAt(s.local[localSel], u, v); ov.style.cursor = h === 'move' ? 'move' : h ? 'grab' : 'default'; } return; }
-      const [u, v] = uvOf(e), a = s.local[localSel], o = ldrag.start, du = u - ldrag.u, dv = v - ldrag.v;
+      if (!ldrag) { ov.style.cursor = rangePick || picking ? 'crosshair' : 'default'; const a0 = s.local?.[localSel]; if (a0 && !rangePick) { const [u, v] = uvOf(e), t0 = partSel >= 0 ? a0.parts?.[partSel] : a0, h = (t0 && handleAt(t0, u, v)) || (a0.parts || []).map((q) => handleAt(q, u, v)).find(Boolean) || handleAt(a0, u, v); ov.style.cursor = h === 'move' ? 'move' : h ? 'grab' : 'default'; } return; }
+      const [u, v] = uvOf(e), a = ldrag.tgt, o = ldrag.start, du = u - ldrag.u, dv = v - ldrag.v;
       if (a.type === 'linear') {
         if (ldrag.h === 'a') Object.assign(a, { x0: o.x0 + du, y0: o.y0 + dv });
         else if (ldrag.h === 'b') Object.assign(a, { x1: o.x1 + du, y1: o.y1 + dv });
@@ -5252,7 +5347,7 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       } else if (ldrag.h === 'rx') a.rx = Math.max(0.01, Math.abs(u - a.cx));
       else if (ldrag.h === 'ry') a.ry = Math.max(0.01, Math.abs(v - a.cy));
       else Object.assign(a, { cx: o.cx + du, cy: o.cy + dv });
-      drawOverlay(); changed();
+      drawOverlay(); live();
     });
     ov.addEventListener('pointerleave', () => { if (hover) { hover = null; drawOverlay(); } });
     const endL = (e) => { ldrag = null; if (stroke) { if (e?.type === 'pointerup') { const [u, v] = uvOf(e); addPt(u, v, true); } endStroke(); } };
@@ -5291,7 +5386,7 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       else if (t.id === 'rawTemp') { s.temp = Math.min(TEMP_MAX, Math.max(TEMP_MIN, +t.value || 5500)); $q('#rawTempR').value = tempToPos(s.temp); s.wb = 'custom'; $q('#rawWb').value = 'custom'; }
       else return;
       if (view === 'before') setView('after');
-      changed();
+      if (t.type === 'range') live(); else changed();
     });
     body.addEventListener('change', (e) => {
       if (e.target.id === 'rawWb') { s.wb = e.target.value; changed(); }

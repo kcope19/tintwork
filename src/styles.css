@@ -437,3 +437,12 @@ table.variants td { padding: 2px 3px; }
 .raw-sub { font-size: 12px; margin: 8px 0 2px; color: var(--muted); }
 .disabled-row { opacity: .5; }
 #rawMaskActs button, #rawBrushBox button { flex: 1; }
+/* v1.6: shapes combined into one RAW mask */
+.raw-parts { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 4px; }
+.raw-part-item { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; font-size: 12px; }
+.raw-part-item:hover { background: rgba(127,127,127,.12); }
+.raw-part-item.on { border-color: var(--accent, #4a90e2); background: rgba(74,144,226,.15); }
+.raw-part-item > span { flex: 1; }
+.raw-part-item select { font-size: 12px; padding: 1px 2px; }
+.raw-part-item button { padding: 0 6px; min-width: 0; }
+.raw-part-item .raw-check { margin: 0; }
