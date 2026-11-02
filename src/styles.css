@@ -398,3 +398,18 @@ table.variants td { padding: 2px 3px; }
   .raw-view canvas { max-height: 38vh; }
   .raw-controls { max-height: none; }
 }
+/* v1.2: RAW develop additions */
+.raw-canvas-wrap { position: relative; }
+.raw-canvas-wrap canvas { display: block; }
+.raw-ba { position: absolute; left: 10px; top: 10px; background: #000a; color: #fff; font-size: 12px; padding: 3px 8px; border-radius: 4px; pointer-events: none; }
+.raw-viewbar { display: flex; align-items: center; gap: 8px; }
+.raw-viewbar .spacer { flex: 1; }
+#rawBefore.on { background: var(--accent, #e8553a); color: #fff; border-color: transparent; }
+.raw-preset-save { display: flex; gap: 6px; margin: 4px 0 2px; }
+.raw-preset-save input { flex: 1; min-width: 0; }
+.raw-curve { margin: 8px 0 2px; }
+.raw-curve summary { cursor: pointer; font-size: 13px; padding: 2px 0; }
+.raw-curve .curves-graph { width: min(260px, 100%); }
+.dev-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg0, #111); z-index: 5; pointer-events: none; }
+.dev-overlay canvas { max-width: calc(100% - 48px); max-height: calc(100% - 48px); object-fit: contain; box-shadow: 0 2px 16px #0008; }
+.dev-badge { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); background: #000c; color: #fff; padding: 6px 14px; border-radius: 16px; font-size: 13px; }

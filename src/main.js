@@ -20,10 +20,10 @@ import { formatName, variantSize, uniqueNamer, zipFiles } from './batch.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
 import { isRawName, isPsdName, isPsdBytes, readPSDAsync, writePSDAsync, openRawSession, RAW_EXTS, PSD_EXTS } from './codecs.js';
 import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEYS } from './psd.js';
-import { DEFAULT_SETTINGS as RAW_DEFAULTS } from './raw.js';
+import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -4267,7 +4267,7 @@ function placeImage(img, name) {
   l.canvas.getContext('2d').drawImage(img, 0, 0, w, h);
   addLayer(l, 'Place image');
 }
-async function openFile(file, mode = 'open', { interactive = true } = {}) {
+async function openFile(file, mode = 'open', { interactive = true, rawSettings = null } = {}) {
   try {
     if (/\.(json|tintwork)$/i.test(file.name) || file.type === 'application/json') {
       await loadProject(JSON.parse(await file.text()), file.name);
@@ -4275,7 +4275,7 @@ async function openFile(file, mode = 'open', { interactive = true } = {}) {
     }
     // layered PSD and camera RAW always open as a document (placing them would flatten the layers / skip develop)
     if (isPsdName(file.name) || file.type === PSD_TYPE) { if (mode === 'place' && doc()) toast('PSD files open as a new document so their layers are kept.', 4000); await openPSD(file, interactive); return; }
-    if (isRawName(file.name)) { if (mode === 'place' && doc()) toast('Camera RAW files open as a new document.', 4000); await openRAW(file, interactive); return; }
+    if (isRawName(file.name)) { if (mode === 'place' && doc()) toast('Camera RAW files open as a new document.', 4000); await openRAW(file, interactive, rawSettings); return; }
     if (!file.type.startsWith('image/') && !/\.png$/i.test(file.name)) { status(`Unsupported file: ${file.name}`); return; }
     if (mode !== 'place' || !doc()) {
       if (file.type === 'image/png' || /\.png$/i.test(file.name)) {
@@ -4302,7 +4302,7 @@ async function openFile(file, mode = 'open', { interactive = true } = {}) {
 // ---------------------------------------------------------------------------
 const OPEN_ACCEPT = ['image/*', ...PSD_EXTS.map((e) => `.${e}`), ...RAW_EXTS.map((e) => `.${e}`)].join(',');
 const RAW_LAST_KEY = 'tintwork.rawLast';
-const rawLastSettings = () => { try { return { ...RAW_DEFAULTS, ...JSON.parse(localStorage.getItem(RAW_LAST_KEY) || '{}') }; } catch { return { ...RAW_DEFAULTS }; } };
+const rawLastSettings = () => { try { return cleanRawSettings(JSON.parse(localStorage.getItem(RAW_LAST_KEY) || '{}')); } catch { return { ...RAW_DEFAULTS }; } };
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 /** Can this document be 16 bits/channel with `layers` full-size pixel layers? */
 const deepFits = (w, h, layers = 1) => w * h * 8 * Math.max(1, layers) <= (DEEP_LIMIT_MB * 1048576) / 2;
@@ -4481,11 +4481,12 @@ async function flatPSD(canvas) {
 
 // ---- camera RAW ----
 let rawUI = null; // open develop dialog (tests read it through window.tintwork)
+let lastDevelopProgress = null; // { halfBands } of the develop in progress (or the last one)
 /** Open a camera RAW file: develop dialog (or the last settings in batch), then a 16 bits/channel document. */
-async function openRAW(file, interactive = true) {
+async function openRAW(file, interactive = true, rawSettings = null) {
   const t0 = performance.now(); status(`Decoding ${file.name}…`);
   const bytes = new Uint8Array(await file.arrayBuffer()), tRead = performance.now();
-  const settings = interactive ? { ...RAW_DEFAULTS } : rawLastSettings();
+  const settings = interactive ? { ...RAW_DEFAULTS } : cleanRawSettings(rawSettings || rawLastSettings());
   let sess;
   try { sess = await openRawSession(bytes, settings); }
   catch (err) { toast(`${file.name} could not be read as a camera RAW file (${err.message}).`, 7000); console.error(err); return; }
@@ -4513,59 +4514,133 @@ async function openRawJpeg(file, sess, why, interactive) {
   status(`Opened the embedded JPEG of ${file.name} (${fit.w}×${fit.h}, 8-bit)`);
   if (interactive) openInfo('Opened the camera JPEG', `<p>${escapeHtml(msg)}</p>`); else toast(msg, 7000);
 }
-async function developToDocument(file, sess, settings, timing, t0) {
+/**
+ * Progressive placeholder over the canvas area while a RAW develops: the dialog preview at once, then the
+ * half-resolution bands as the workers finish them, until the full-resolution document replaces it.
+ */
+function developOverlay(first) {
+  const vp = $('#viewport'), box = document.createElement('div'); box.className = 'dev-overlay';
+  const cv = document.createElement('canvas'); cv.setAttribute('aria-label', 'Developing preview');
+  const badge = document.createElement('div'); badge.className = 'dev-badge'; badge.textContent = 'Developing full resolution…';
+  box.append(cv, badge); vp.append(box);
+  if (first) { cv.width = first.width; cv.height = first.height; cv.getContext('2d').drawImage(first, 0, 0); }
+  let sized = false;
+  return {
+    band(b) {
+      if (!sized) { // switch to the half-resolution frame, scaling up what is already shown
+        const old = cv.width ? (() => { const c = makeCanvas(cv.width, cv.height); c.getContext('2d').drawImage(cv, 0, 0); return c; })() : null;
+        cv.width = b.width; cv.height = b.height; sized = true;
+        const x = cv.getContext('2d'); if (old) { x.imageSmoothingQuality = 'high'; x.drawImage(old, 0, 0, b.width, b.height); }
+      }
+      const rows = b.rows[1] - b.rows[0]; if (rows > 0) cv.getContext('2d').putImageData(new ImageData(b.data, b.width, rows), 0, b.rows[0]);
+    },
+    remove() { box.remove(); },
+  };
+}
+async function developToDocument(file, sess, settings, timing, t0, { overlayFrom = null, remember = false } = {}) {
   const maxPixels = Math.min(MAX_PIXELS, Math.floor((DEEP_LIMIT_MB * 1048576) / 2 / 8));
-  const tDev = performance.now();
-  const r = await sess.develop(settings, maxPixels);
-  const tBuild = performance.now();
-  const l = createLayer('Background', r.width, r.height);
-  ctxOf(l.canvas).putImageData(new ImageData(r.data8, r.width, r.height), 0, 0); touch(l);
-  l.deep = createDeep(r.width, r.height, r.data16); l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0;
-  state.doc = { width: r.width, height: r.height, layers: [l], activeId: l.id, selection: null, name: file.name, depth: 16, raw: { format: sess.info.format, settings: { ...settings } } };
-  afterDocChange('Open RAW');
-  try { localStorage.setItem(RAW_LAST_KEY, JSON.stringify(settings)); } catch { /* private mode */ }
-  await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res))); // first frame on screen
-  const now = performance.now();
-  Object.assign(timing, { develop: Math.round(tBuild - tDev), worker: r.ms, build: Math.round(now - tBuild), total: Math.round(now - t0), width: r.width, height: r.height, mp: +(r.width * r.height / 1e6).toFixed(1) });
-  lastImport = { ...timing, notes: r.scaled ? [`Developed at ${r.width}×${r.height} to fit this device's memory.`] : [] };
-  if (r.scaled) toast(`Developed at ${r.width}×${r.height} to stay within this device's memory.`, 6000);
-  status(`Opened ${file.name} (${sess.info.format}, ${r.width}×${r.height}, 16 bits/channel) in ${(timing.total / 1000).toFixed(1)} s`);
+  const tDev = performance.now(), ov = overlayFrom !== null ? developOverlay(overlayFrom) : null;
+  let halfBands = 0, tHalfFirst = 0, tHalf = 0, bandsN = 0;
+  lastDevelopProgress = { halfBands: 0, file: file.name };
+  try {
+    const r = await sess.develop(settings, maxPixels, ov ? (b) => { ov.band(b); lastDevelopProgress.halfBands = ++halfBands; tHalfFirst ||= performance.now(); tHalf = performance.now(); } : null);
+    bandsN = r.bands || 1;
+    const tBuild = performance.now();
+    const l = createLayer('Background', r.width, r.height);
+    ctxOf(l.canvas).putImageData(new ImageData(r.data8, r.width, r.height), 0, 0); touch(l);
+    l.deep = createDeep(r.width, r.height, r.data16); l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0;
+    state.doc = { width: r.width, height: r.height, layers: [l], activeId: l.id, selection: null, name: file.name, depth: 16, raw: { format: sess.info.format, settings: { ...settings } } };
+    afterDocChange('Open RAW');
+    if (remember) try { localStorage.setItem(RAW_LAST_KEY, JSON.stringify(settings)); } catch { /* private mode */ } // batch runs leave "last used" alone
+    await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res))); // first frame on screen
+    const now = performance.now();
+    Object.assign(timing, { develop: Math.round(tBuild - tDev), worker: r.ms, bands: bandsN, build: Math.round(now - tBuild), total: Math.round(now - t0), width: r.width, height: r.height, mp: +(r.width * r.height / 1e6).toFixed(1) });
+    if (ov) Object.assign(timing, { halfFirst: Math.round(tHalfFirst - tDev), half: halfBands ? Math.round(tHalf - tDev) : null, halfBands, full: Math.round(now - tDev) });
+    lastImport = { ...timing, notes: r.scaled ? [`Developed at ${r.width}×${r.height} to fit this device's memory.`] : [] };
+    if (r.scaled) toast(`Developed at ${r.width}×${r.height} to stay within this device's memory.`, 6000);
+    status(`Opened ${file.name} (${sess.info.format}, ${r.width}×${r.height}, 16 bits/channel) in ${(timing.total / 1000).toFixed(1)} s`);
+  } finally { ov?.remove(); }
 }
 const TEMP_MIN = 2000, TEMP_MAX = 50000;
 const tempToPos = (T) => Math.round(((500 - 1e6 / Math.min(TEMP_MAX, Math.max(TEMP_MIN, T))) / 480) * 1000); // mired scale: even steps for the eye
 const posToTemp = (p) => Math.round(1e6 / (500 - (p / 1000) * 480) / 10) * 10;
+/** Develop settings presets (localStorage). */
+const RAW_PRESETS_KEY = 'tintwork.rawPresets';
+function rawPresets() {
+  try { const a = JSON.parse(localStorage.getItem(RAW_PRESETS_KEY) || '[]'); return Array.isArray(a) ? a.filter((p) => p && typeof p.name === 'string' && p.name.trim()).map((p) => ({ name: p.name.trim(), settings: cleanRawSettings(p.settings) })) : []; }
+  catch { return []; }
+}
+function saveRawPreset(name, settings) {
+  name = String(name || '').trim().slice(0, 60); if (!name) return false;
+  const list = rawPresets().filter((p) => p.name.toLowerCase() !== name.toLowerCase());
+  list.push({ name, settings: cleanRawSettings(settings) }); list.sort((a, b) => a.name.localeCompare(b.name));
+  try { localStorage.setItem(RAW_PRESETS_KEY, JSON.stringify(list)); return true; } catch { return false; }
+}
+function deleteRawPreset(name) {
+  const list = rawPresets().filter((p) => p.name !== name);
+  try { localStorage.setItem(RAW_PRESETS_KEY, JSON.stringify(list)); } catch { /* private mode */ }
+}
+const hasRawLast = () => { try { return !!localStorage.getItem(RAW_LAST_KEY); } catch { return false; } };
+/** Settings for a batch / preset choice: 'last', 'default' or 'preset:<name>'. */
+function rawSettingsFor(choice) {
+  if (choice === 'default') return { ...RAW_DEFAULTS };
+  if (choice?.startsWith('preset:')) { const p = rawPresets().find((q) => q.name === choice.slice(7)); if (p) return { ...p.settings }; }
+  return rawLastSettings();
+}
+const rawPresetOptions = (withNone) => `${withNone ? '<option value="">Choose…</option>' : ''}${hasRawLast() ? '<option value="last">Last used settings</option>' : ''}<option value="default">Default settings</option>${rawPresets().map((p) => `<option value="preset:${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('')}`;
 function rawDialog(file, sess, timing, t0) {
   return new Promise((resolve) => {
     const info = sess.info, s = { ...RAW_DEFAULTS, temp: info.asShot.temp, tint: info.asShot.tint };
     const body = document.createElement('div'); body.className = 'raw-dev';
-    const slider = (key, label, min, max, step, val, fmt = (v) => v) =>
-      `<label class="field"><span>${label}</span><input type="range" data-k="${key}" min="${min}" max="${max}" step="${step}" value="${val}" aria-label="${label}" /><output data-o="${key}">${fmt(val)}</output></label>`;
-    const ev = (v) => `${v > 0 ? '+' : ''}${(+v).toFixed(2)}`;
-    body.innerHTML = `<div class="raw-view"><canvas id="rawCanvas" aria-label="Develop preview"></canvas><div class="raw-meta muted small">${escapeHtml(info.describe || info.format)}</div></div>
+    const slider = (key, label, min, max, step, val, title = '') =>
+      `<label class="field"${title ? ` title="${escapeHtml(title)}"` : ''}><span>${label}</span><input type="range" data-k="${key}" min="${min}" max="${max}" step="${step}" value="${val}" aria-label="${label}" /><output data-o="${key}">${fmtK(key, val)}</output></label>`;
+    const fmtK = (k, v) => (k === 'exposure' ? `${v > 0 ? '+' : ''}${(+v).toFixed(2)}` : k === 'sharpRadius' ? (+v).toFixed(1) : v);
+    body.innerHTML = `<div class="raw-view"><div class="raw-canvas-wrap"><canvas id="rawCanvas" aria-label="Develop preview"></canvas><span class="raw-ba hidden" id="rawBaTag">Before</span></div>
+        <div class="raw-viewbar"><span class="raw-meta muted small">${escapeHtml(info.describe || info.format)}</span><span class="spacer"></span><button type="button" id="rawBefore" aria-pressed="false" title="Show the image with the default settings (\\ key)">Before / after</button></div></div>
       <div class="raw-controls">
+        <div class="raw-sec">Presets</div>
+        <label class="field two"><span>Apply</span><select id="rawPreset" aria-label="Apply develop preset">${rawPresetOptions(true)}</select></label>
+        <div class="raw-preset-save"><input type="text" id="rawPresetName" placeholder="Preset name" aria-label="Preset name" maxlength="60" /><button type="button" id="rawPresetSave">Save preset</button><button type="button" id="rawPresetDel" title="Delete the chosen preset" disabled>Delete</button></div>
         <div class="raw-sec">White balance</div>
         <label class="field two"><span>Preset</span><select id="rawWb"><option value="as-shot">As shot</option><option value="auto">Auto</option><option value="custom">Custom</option></select></label>
         <label class="field"><span>Temperature</span><input type="range" id="rawTempR" min="0" max="1000" step="1" value="${tempToPos(s.temp)}" aria-label="Temperature" /><input type="number" id="rawTemp" min="${TEMP_MIN}" max="${TEMP_MAX}" step="50" value="${s.temp}" aria-label="Temperature in kelvin" /></label>
         ${slider('tint', 'Tint', -150, 150, 1, s.tint)}
         <div class="raw-sec">Tone</div>
-        ${slider('exposure', 'Exposure (EV)', -5, 5, 0.05, s.exposure, ev)}
+        ${slider('exposure', 'Exposure (EV)', -5, 5, 0.05, s.exposure)}
         ${slider('highlights', 'Highlight recovery', 0, 100, 1, s.highlights)}
         ${slider('shadows', 'Shadows', -100, 100, 1, s.shadows)}
         ${slider('contrast', 'Contrast', -100, 100, 1, s.contrast)}
+        <details class="raw-curve" id="rawCurveBox"><summary>Tone curve <span class="muted small" id="rawCurveState">straight</span></summary><div id="rawCurveHost"></div></details>
+        <div class="raw-sec">Color</div>
+        ${slider('vibrance', 'Vibrance', -100, 100, 1, s.vibrance, 'Boosts muted colours more than ones that are already strong')}
+        ${slider('saturation', 'Saturation', -100, 100, 1, s.saturation)}
+        <div class="raw-sec">Sharpening</div>
+        ${slider('sharpen', 'Amount', 0, 150, 1, s.sharpen)}
+        ${slider('sharpRadius', 'Radius', 0.5, 3, 0.1, s.sharpRadius, 'Size of the edges that are sharpened, in pixels')}
+        ${slider('sharpDetail', 'Detail', 0, 100, 1, s.sharpDetail, 'Low values hold back halos on strong edges; high values sharpen fine texture fully')}
+        ${slider('sharpMask', 'Masking', 0, 100, 1, s.sharpMask, 'Higher values sharpen only edges and leave smooth areas such as skin and sky alone')}
         <div class="raw-sec">Noise reduction</div>
         ${slider('nrLuma', 'Luminance', 0, 100, 1, s.nrLuma)}
         ${slider('nrColor', 'Color', 0, 100, 1, s.nrColor)}
         <div class="raw-sec">Lens</div>
         <label class="field two"><span>Corrections</span><span><input type="checkbox" id="rawLens" ${info.lens ? 'checked' : 'disabled'} /> <span class="muted small">${info.lens ? `From the file: ${[info.lens.distortion && 'distortion', info.lens.vignette && 'vignetting'].filter(Boolean).join(' and ')}` : 'No lens correction data in this file'}</span></span></label>
         ${slider('vignette', 'Vignette fix', -100, 100, 1, s.vignette)}
+        <label class="field two"><span>Color fringes</span><span><input type="checkbox" id="rawCaAuto" /> <span class="muted small">Remove chromatic aberration (automatic)</span> <span class="muted small" id="rawCaEst"></span></span></label>
+        ${slider('caRed', 'Red / cyan', -100, 100, 1, s.caRed, 'Scales the red channel against green: removes red or cyan edges toward the corners')}
+        ${slider('caBlue', 'Blue / yellow', -100, 100, 1, s.caBlue, 'Scales the blue channel against green: removes blue or yellow edges toward the corners')}
         <p class="muted small" id="rawOut">Opens as ${info.width} × ${info.height} px, 16 bits/channel.${info.knownCamera ? '' : ' Camera colour data unknown: colours are approximate.'}${info.incomplete ? ' Some sensor data was missing and is shown black.' : ''}</p>
         <div class="raw-buttons"><button type="button" id="rawReset">Reset</button>${info.jpeg ? `<button type="button" id="rawJpeg" title="Open the camera's own ${info.jpeg.width}×${info.jpeg.height} JPEG rendering instead (8-bit)">Use camera JPEG</button>` : ''}<span class="muted small" id="rawMs"></span></div>
       </div>`;
     const cv = body.querySelector('#rawCanvas'), $q = (sel) => body.querySelector(sel);
-    const draw = (p) => {
+    let last = null, before = null, showBefore = false;
+    const paint = (p) => {
       if (cv.width !== p.width || cv.height !== p.height) { cv.width = p.width; cv.height = p.height; }
       cv.getContext('2d').putImageData(new ImageData(p.data, p.width, p.height), 0, 0);
+    };
+    const draw = (p) => {
+      last = p; if (!showBefore) paint(p);
       if (s.wb !== 'custom') { s.temp = p.temp; s.tint = p.tint; $q('#rawTemp').value = p.temp; $q('#rawTempR').value = tempToPos(p.temp); $q('[data-k=tint]').value = p.tint; $q('[data-o=tint]').textContent = p.tint; }
+      $q('#rawCaEst').textContent = s.caAuto && p.ca ? `(found red ${p.ca.red > 0 ? '+' : ''}${p.ca.red.toFixed(0)}, blue ${p.ca.blue > 0 ? '+' : ''}${p.ca.blue.toFixed(0)})` : '';
       $q('#rawMs').textContent = `preview ${p.ms} ms`;
       ui.previews++;
     };
@@ -4577,24 +4652,70 @@ function rawDialog(file, sess, timing, t0) {
       catch (err) { if (!done) $q('#rawMs').textContent = `Preview failed: ${err.message}`; }
       finally { busy = false; ui.idle = !again; }
     };
-    const ui = rawUI = { settings: s, info, previews: 0, idle: true, body, refresh: () => { ui.idle = false; refresh(); } };
+    const setBefore = async (on) => {
+      showBefore = on; $q('#rawBefore').setAttribute('aria-pressed', String(on)); $q('#rawBefore').classList.toggle('on', on); $q('#rawBaTag').classList.toggle('hidden', !on);
+      if (on) { if (!before) before = sess.preview({ ...RAW_DEFAULTS }); const p = await before; if (showBefore && !done) paint(p); }
+      else if (last) paint(last);
+      ui.beforeShown = on;
+    };
+    const ui = rawUI = { settings: s, info, previews: 0, idle: true, body, refresh: () => { ui.idle = false; refresh(); }, beforeShown: false, setBefore, applyPreset: (v) => applyChoice(v) };
     const changed = () => { ui.idle = false; refresh(); };
+    // tone curve editor (same editor as the Curves adjustment)
+    let curveVals = null;
+    const mountCurve = () => {
+      curveVals = s.curve ? JSON.parse(JSON.stringify(s.curve)) : {};
+      const host = $q('#rawCurveHost'); host.replaceChildren(createCurvesEditor(curveVals, (v) => {
+        s.curve = curveIsIdentity(v) ? null : JSON.parse(JSON.stringify(v)); $q('#rawCurveState').textContent = s.curve ? 'adjusted' : 'straight'; changed();
+      }));
+      $q('#rawCurveState').textContent = s.curve ? 'adjusted' : 'straight';
+    };
+    mountCurve();
+    const sync = () => { // controls ← s
+      body.querySelectorAll('[data-k]').forEach((el) => { el.value = s[el.dataset.k]; const o = $q(`[data-o=${el.dataset.k}]`); if (o) o.textContent = fmtK(el.dataset.k, s[el.dataset.k]); });
+      $q('#rawWb').value = s.wb; $q('#rawTemp').value = s.temp; $q('#rawTempR').value = tempToPos(s.temp);
+      if (info.lens) $q('#rawLens').checked = s.lens !== false;
+      $q('#rawCaAuto').checked = !!s.caAuto; mountCurve();
+    };
+    const applyChoice = (v) => {
+      if (!v) return;
+      const p = rawSettingsFor(v), keepWB = p.wb !== 'custom';
+      Object.assign(s, p); if (keepWB) { s.temp = info.asShot.temp; s.tint = info.asShot.tint; }
+      sync(); changed();
+      $q('#rawPresetDel').disabled = !v.startsWith('preset:');
+      if (v.startsWith('preset:')) $q('#rawPresetName').value = v.slice(7);
+    };
     body.addEventListener('input', (e) => {
       const t = e.target;
-      if (t.dataset.k) { s[t.dataset.k] = +t.value; const o = $q(`[data-o=${t.dataset.k}]`); if (o) o.textContent = t.dataset.k === 'exposure' ? ev(t.value) : t.value; if (t.dataset.k === 'tint') { s.wb = 'custom'; $q('#rawWb').value = 'custom'; } }
+      if (t.dataset.k) { s[t.dataset.k] = +t.value; const o = $q(`[data-o=${t.dataset.k}]`); if (o) o.textContent = fmtK(t.dataset.k, t.value); if (t.dataset.k === 'tint') { s.wb = 'custom'; $q('#rawWb').value = 'custom'; } }
       else if (t.id === 'rawTempR') { s.temp = posToTemp(+t.value); $q('#rawTemp').value = s.temp; s.wb = 'custom'; $q('#rawWb').value = 'custom'; }
       else if (t.id === 'rawTemp') { s.temp = Math.min(TEMP_MAX, Math.max(TEMP_MIN, +t.value || 5500)); $q('#rawTempR').value = tempToPos(s.temp); s.wb = 'custom'; $q('#rawWb').value = 'custom'; }
       else return;
+      if (showBefore) setBefore(false);
       changed();
     });
     body.addEventListener('change', (e) => {
       if (e.target.id === 'rawWb') { s.wb = e.target.value; changed(); }
       else if (e.target.id === 'rawLens') { s.lens = e.target.checked; changed(); }
+      else if (e.target.id === 'rawCaAuto') { s.caAuto = e.target.checked; changed(); }
+      else if (e.target.id === 'rawPreset') applyChoice(e.target.value);
     });
+    $q('#rawBefore').onclick = () => setBefore(!showBefore);
+    body.addEventListener('keydown', (e) => { if (e.key === '\\' && !(e.target.tagName === 'INPUT' && /text|number/.test(e.target.type))) { e.preventDefault(); setBefore(!showBefore); } });
+    $q('#rawPresetSave').onclick = () => {
+      const name = $q('#rawPresetName').value.trim();
+      if (!name) { $q('#rawPresetName').focus(); toast('Type a name for the preset first.'); return; }
+      if (!saveRawPreset(name, s)) { toast('The preset could not be saved (browser storage is full or disabled).', 5000); return; }
+      $q('#rawPreset').innerHTML = rawPresetOptions(true); $q('#rawPreset').value = `preset:${name}`; $q('#rawPresetDel').disabled = false;
+      status(`Saved develop preset “${name}”.`);
+    };
+    $q('#rawPresetDel').onclick = () => {
+      const v = $q('#rawPreset').value; if (!v.startsWith('preset:')) return;
+      deleteRawPreset(v.slice(7)); $q('#rawPreset').innerHTML = rawPresetOptions(true); $q('#rawPresetDel').disabled = true;
+      status(`Deleted develop preset “${v.slice(7)}”.`);
+    };
     $q('#rawReset').onclick = () => {
-      Object.assign(s, RAW_DEFAULTS);
-      body.querySelectorAll('[data-k]').forEach((el) => { el.value = s[el.dataset.k]; const o = $q(`[data-o=${el.dataset.k}]`); if (o) o.textContent = el.dataset.k === 'exposure' ? ev(s.exposure) : s[el.dataset.k]; });
-      $q('#rawWb').value = 'as-shot'; if (info.lens) $q('#rawLens').checked = true; changed();
+      Object.assign(s, RAW_DEFAULTS, { temp: info.asShot.temp, tint: info.asShot.tint }); if (!info.lens) s.lens = true;
+      $q('#rawPreset').value = ''; sync(); changed();
     };
     const finish = () => { if (!done) { done = true; rawUI = null; resolve(); } };
     $q('#rawJpeg')?.addEventListener('click', async () => {
@@ -4606,11 +4727,14 @@ function rawDialog(file, sess, timing, t0) {
     showModal({
       title: `Develop ${file.name}`, body, okLabel: 'Open',
       ok: () => {
-        const okBtn = $('#modalOk'); okBtn.disabled = true; okBtn.textContent = 'Developing…';
+        // close at once: the canvas area shows the preview, then half resolution, while the full develop runs
+        const first = makeCanvas(cv.width, cv.height); first.getContext('2d').drawImage(cv, 0, 0);
+        if (showBefore && last) { first.getContext('2d').putImageData(new ImageData(last.data, last.width, last.height), 0, 0); }
+        done = true; rawUI = null; closeModal(); status(`Developing ${file.name}…`);
         (async () => {
-          try { await developToDocument(file, sess, { ...s }, timing, t0); }
+          try { await developToDocument(file, sess, cleanRawSettings(s), timing, t0, { overlayFrom: first, remember: true }); }
           catch (err) { reportError(`${file.name} could not be developed`, err); }
-          finally { okBtn.disabled = false; done = true; rawUI = null; closeModal(); resolve(); }
+          finally { resolve(); }
         })();
         return false;
       },
@@ -6146,7 +6270,7 @@ function openExportVariantsDialog() {
  * Batch: open each file in a temporary tab, apply an action and / or a look, export every variant, close the tab.
  * sources: File[] or { name, getFile() }[]. Resolves { done, failed: [{ name, error }], cancelled, files }.
  */
-async function runBatch(sources, { actionId = null, lookId = null, intensity = 100, variants, pattern = '{name}-{preset}', sink, signal, onProgress } = {}) {
+async function runBatch(sources, { actionId = null, lookId = null, intensity = 100, rawSettings = null, variants, pattern = '{name}-{preset}', sink, signal, onProgress } = {}) {
   const home = doc(), files = [], failed = []; let done = 0, n = 0;
   const uniq = uniqueNamer(), wrapSink = { write: (name, blob) => sink.write(uniq(name), blob) };
   for (const s of sources) {
@@ -6157,7 +6281,7 @@ async function runBatch(sources, { actionId = null, lookId = null, intensity = 1
     try {
       const file = s instanceof Blob ? s : await s.getFile();
       if (home && doc() !== home && tabs.some((t) => t.doc === home)) switchTab(tabs.findIndex((t) => t.doc === home));
-      const before = doc(); await openFile(file, 'open', { interactive: false });
+      const before = doc(); await openFile(file, 'open', { interactive: false, rawSettings });
       if (!doc() || doc() === before) throw new Error('could not open this file');
       opened = doc();
       if (actionId) { const r = await playAction(actionId, opened); if (!r.ok) throw new Error(r.errors[0] || 'action failed'); }
@@ -6188,6 +6312,7 @@ function openBatchDialog() {
       { label: 'Action', html: `<select id="bAct"><option value="">(none)</option>${acts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('')}</select>` },
       { label: 'Look', html: `<select id="bLook"><option value="">(none)</option>${looks.map((l) => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.name)}</option>`).join('')}</select>` },
       { label: 'Look intensity (%)', html: `<input type="number" id="bInt" min="0" max="100" value="100" style="width:72px"/>` },
+      { label: 'RAW files develop with', html: `<select id="bRaw" title="Develop settings for camera RAW files in the batch">${rawPresetOptions(false)}</select>` },
       { label: 'File names', html: `<input type="text" id="bPattern" value="{name}-edited" />` },
     ]) + '<p class="muted small">Tokens: {name} {preset} {w} {h} {N} (file number, {N:3} padded) {date}. Output goes to a folder you choose (or a .zip download).</p><b>Outputs</b>';
   body.append(variantEditor(list));
@@ -6196,7 +6321,7 @@ function openBatchDialog() {
   body.querySelector('#bSrcFiles').onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = OPEN_ACCEPT; inp.onchange = () => { sources = [...inp.files]; info(); }; inp.click(); };
   showModal({ title: 'Batch process', body, okLabel: 'Run batch', ok: () => {
     if (!sources.length) { toast('Choose a folder or some images first.'); return false; }
-    const opts = { actionId: body.querySelector('#bAct').value || null, lookId: body.querySelector('#bLook').value || null, intensity: +body.querySelector('#bInt').value || 100, variants: list, pattern: body.querySelector('#bPattern').value || '{name}-edited' };
+    const opts = { actionId: body.querySelector('#bAct').value || null, lookId: body.querySelector('#bLook').value || null, intensity: +body.querySelector('#bInt').value || 100, rawSettings: rawSettingsFor(body.querySelector('#bRaw').value), variants: list, pattern: body.querySelector('#bPattern').value || '{name}-edited' };
     (async () => {
       const sink = await chooseSink('tintwork-batch.zip'); if (!sink) { status('Batch cancelled.'); return; }
       const ui = progressUI('Batch'); const src = sources;
@@ -6241,6 +6366,8 @@ window.tintwork = {
   // v1.1
   openPSD, openRAW, documentFromPSD, documentToPSD, flatPSD, get rawUI() { return rawUI; }, get lastImport() { return lastImport; }, get lastExportNotes() { return lastExportNotes; },
   readPSDAsync, writePSDAsync, openRawSession, isRawName, isPsdName, RAW_DEFAULTS, PSD_TYPE, DEEP_LIMIT_MB,
+  // v1.2
+  rawPresets, saveRawPreset, deleteRawPreset, rawSettingsFor, rawLastSettings, cleanRawSettings, get lastDevelopProgress() { return lastDevelopProgress; },
   // v0.9
   tabs, switchTab, closeTab, cycleTab, copyLayerToDoc, tabDirty, stashTab,
   presets: { allPresets, presetById, presetPixels, centredRatioRect, constrainRect, saveCustomPreset, deleteCustomPreset, customPresets }, setCropPreset, applyCropTool, resizeToPreset, cropAspect,
