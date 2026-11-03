@@ -1,0 +1,168 @@
+{
+  "url": "https://kcope19.github.io/tintwork/",
+  "label": "before",
+  "date": "2026-11-03T04:58:47.141Z",
+  "runs": [
+    {
+      "engine": "chromium",
+      "tReady": 327,
+      "nav": {
+        "dcl": 250,
+        "load": 275,
+        "fcp": 200
+      },
+      "firstBytes": 508505,
+      "requests": 117,
+      "thirdParty": [],
+      "bad": [],
+      "failed": [],
+      "errors": [],
+      "swReady": "ready",
+      "offline": "works",
+      "version": "1.6.0"
+    },
+    {
+      "engine": "chromium",
+      "tReady": 307,
+      "nav": {
+        "dcl": 255,
+        "load": 287,
+        "fcp": 208
+      },
+      "firstBytes": 508450,
+      "requests": 117,
+      "thirdParty": [],
+      "bad": [],
+      "failed": [],
+      "errors": [],
+      "swReady": "ready",
+      "offline": "works",
+      "version": "1.6.0"
+    },
+    {
+      "engine": "chromium",
+      "tReady": 260,
+      "nav": {
+        "dcl": 212,
+        "load": 241,
+        "fcp": 168
+      },
+      "firstBytes": 508442,
+      "requests": 117,
+      "thirdParty": [],
+      "bad": [],
+      "failed": [],
+      "errors": [],
+      "swReady": "ready",
+      "offline": "works",
+      "version": "1.6.0"
+    }
+  ],
+  "checks": [
+    {
+      "ok": true,
+      "msg": "no console errors on load (3/3 runs)",
+      "extra": []
+    },
+    {
+      "ok": true,
+      "msg": "no 4xx/5xx or failed requests on load",
+      "extra": []
+    },
+    {
+      "ok": true,
+      "msg": "no third-party requests (all same-origin)",
+      "extra": []
+    },
+    {
+      "ok": true,
+      "msg": "service worker installs"
+    },
+    {
+      "ok": true,
+      "msg": "reload works offline after the first visit",
+      "extra": [
+        "works",
+        "works",
+        "works"
+      ]
+    },
+    {
+      "ok": false,
+      "msg": "meta description present"
+    },
+    {
+      "ok": false,
+      "msg": "social preview (Open Graph title + image)"
+    },
+    {
+      "ok": false,
+      "msg": "Content-Security-Policy present"
+    },
+    {
+      "ok": false,
+      "msg": "canonical link"
+    },
+    {
+      "ok": true,
+      "msg": "manifest has the fields Chrome / Edge need to offer install"
+    },
+    {
+      "ok": true,
+      "msg": "manifest icon icons/icon-192.png loads (200)"
+    },
+    {
+      "ok": true,
+      "msg": "manifest icon icons/icon-512.png loads (200)"
+    },
+    {
+      "ok": true,
+      "msg": "manifest icon icons/icon-maskable-512.png loads (200)"
+    },
+    {
+      "ok": true,
+      "msg": "manifest icon src/logo.svg loads (200)"
+    },
+    {
+      "ok": false,
+      "msg": "unknown URLs show a Tintwork 404 page (status 404)"
+    },
+    {
+      "ok": true,
+      "msg": "sw.js served (cache-control: max-age=600)"
+    },
+    {
+      "ok": true,
+      "msg": "index.html served (cache-control: max-age=600)"
+    },
+    {
+      "ok": true,
+      "msg": "README / user guide links resolve (14 checked)",
+      "extra": []
+    }
+  ],
+  "webkit": {
+    "engine": "webkit",
+    "tReady": 385,
+    "nav": {
+      "dcl": 332,
+      "load": 355,
+      "fcp": 205
+    },
+    "firstBytes": 0,
+    "requests": 121,
+    "thirdParty": [],
+    "bad": [],
+    "failed": [],
+    "errors": [],
+    "swReady": "ready",
+    "offline": "works",
+    "version": "1.6.0"
+  },
+  "summary": {
+    "readyMs": 307,
+    "fcpMs": 200,
+    "firstLoadKB": 497,
+    "requests": 117
+  }
+}

@@ -1,0 +1,1075 @@
+{
+  "url": "https://kcope19.github.io/tintwork/",
+  "label": "before",
+  "date": "2026-11-03T05:34:33.448Z",
+  "results": [
+    {
+      "id": 1,
+      "name": "RAW: fix exposure + white balance, open as 16-bit",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "4016px, 16-bit, wb auto, exposure 0.4",
+      "steps": 4,
+      "ms": 3589,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "pick: file google-pixel-4a.dng",
+        "click: White balance preset → auto",
+        "drag: Exposure slider → 0.4",
+        "click: OK"
+      ],
+      "paid": {
+        "Lightroom Classic": 3,
+        "Photoshop (Camera Raw)": 4,
+        "Affinity Photo (Develop)": 5,
+        "Photopea": 6
+      }
+    },
+    {
+      "id": 1,
+      "name": "RAW: fix exposure + white balance, open as 16-bit",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "4016px, 16-bit, wb auto, exposure 0.4",
+      "steps": 4,
+      "ms": 3236,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "pick: file google-pixel-4a.dng",
+        "click: White balance preset → auto",
+        "drag: Exposure slider → 0.4",
+        "click: OK"
+      ],
+      "paid": {
+        "Lightroom Classic": 3,
+        "Photoshop (Camera Raw)": 4,
+        "Affinity Photo (Develop)": 5,
+        "Photopea": 6
+      }
+    },
+    {
+      "id": 1,
+      "name": "RAW: fix exposure + white balance, open as 16-bit",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "4016px, 16-bit, wb auto, exposure 0.4",
+      "steps": 4,
+      "ms": 3169,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "pick: file google-pixel-4a.dng",
+        "click: White balance preset → auto",
+        "drag: Exposure slider → 0.4",
+        "click: OK"
+      ],
+      "paid": {
+        "Lightroom Classic": 3,
+        "Photoshop (Camera Raw)": 4,
+        "Affinity Photo (Develop)": 5,
+        "Photopea": 6
+      }
+    },
+    {
+      "id": 2,
+      "name": "Crop and straighten a tilted horizon",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "residual tilt 0.00°, 1782×1188",
+      "steps": 7,
+      "ms": 5803,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file seascape.jpg",
+        "click: tool straighten",
+        "drag: along the horizon",
+        "click: tool crop",
+        "drag: crop rectangle",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic": 4,
+        "Photoshop": 4,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 4,
+        "Photopea": 5
+      }
+    },
+    {
+      "id": 2,
+      "name": "Crop and straighten a tilted horizon",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "residual tilt 0.00°, 1782×1188",
+      "steps": 7,
+      "ms": 5788,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file seascape.jpg",
+        "click: tool straighten",
+        "drag: along the horizon",
+        "click: tool crop",
+        "drag: crop rectangle",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic": 4,
+        "Photoshop": 4,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 4,
+        "Photopea": 5
+      }
+    },
+    {
+      "id": 2,
+      "name": "Crop and straighten a tilted horizon",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "residual tilt 0.00°, 1782×1188",
+      "steps": 7,
+      "ms": 5876,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file seascape.jpg",
+        "click: tool straighten",
+        "drag: along the horizon",
+        "click: tool crop",
+        "drag: crop rectangle",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic": 4,
+        "Photoshop": 4,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 4,
+        "Photopea": 5
+      }
+    },
+    {
+      "id": 3,
+      "name": "Remove a blemish",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "blemish RGB 90,58,45 → 216,162,126 (skin 216,162,126, Δ 0)",
+      "steps": 4,
+      "ms": 5592,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool spot",
+        "drag: paint over the blemish"
+      ],
+      "paid": {
+        "Photoshop": 2,
+        "Lightroom Classic": 2,
+        "Affinity Photo": 2,
+        "Pixelmator Pro": 2,
+        "Photopea": 2
+      }
+    },
+    {
+      "id": 3,
+      "name": "Remove a blemish",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "blemish RGB 90,58,45 → 216,162,126 (skin 216,162,126, Δ 0)",
+      "steps": 4,
+      "ms": 5598,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool spot",
+        "drag: paint over the blemish"
+      ],
+      "paid": {
+        "Photoshop": 2,
+        "Lightroom Classic": 2,
+        "Affinity Photo": 2,
+        "Pixelmator Pro": 2,
+        "Photopea": 2
+      }
+    },
+    {
+      "id": 3,
+      "name": "Remove a blemish",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "blemish RGB 90,58,45 → 216,162,126 (skin 216,162,126, Δ 0)",
+      "steps": 4,
+      "ms": 5651,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool spot",
+        "drag: paint over the blemish"
+      ],
+      "paid": {
+        "Photoshop": 2,
+        "Lightroom Classic": 2,
+        "Affinity Photo": 2,
+        "Pixelmator Pro": 2,
+        "Photopea": 2
+      }
+    },
+    {
+      "id": 4,
+      "name": "Select the subject and blur the background",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "background texture σ 4.7 → 2.3; face shift Δ 0.0",
+      "steps": 12,
+      "ms": 7650,
+      "errors": [],
+      "notes": [
+        "Radius: no number field, slider only"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool wand",
+        "type: Tolerance = 70",
+        "click: background at 150,150",
+        "click: Shift+more background at 2250,1450",
+        "click: Shift+more background at 300,1300",
+        "click: Filter menu",
+        "click: Filter ▸ Gaussian blur",
+        "drag: Radius slider → 30",
+        "click: OK",
+        "key: Control+d"
+      ],
+      "paid": {
+        "Photoshop (Select Subject)": 5,
+        "Lightroom Classic (Select Subject mask)": 4,
+        "Affinity Photo": 7,
+        "Pixelmator Pro (ML select)": 5,
+        "Photopea (Magic Cut / select)": 6
+      }
+    },
+    {
+      "id": 4,
+      "name": "Select the subject and blur the background",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "background texture σ 4.7 → 2.3; face shift Δ 0.0",
+      "steps": 12,
+      "ms": 7731,
+      "errors": [],
+      "notes": [
+        "Radius: no number field, slider only"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool wand",
+        "type: Tolerance = 70",
+        "click: background at 150,150",
+        "click: Shift+more background at 2250,1450",
+        "click: Shift+more background at 300,1300",
+        "click: Filter menu",
+        "click: Filter ▸ Gaussian blur",
+        "drag: Radius slider → 30",
+        "click: OK",
+        "key: Control+d"
+      ],
+      "paid": {
+        "Photoshop (Select Subject)": 5,
+        "Lightroom Classic (Select Subject mask)": 4,
+        "Affinity Photo": 7,
+        "Pixelmator Pro (ML select)": 5,
+        "Photopea (Magic Cut / select)": 6
+      }
+    },
+    {
+      "id": 4,
+      "name": "Select the subject and blur the background",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "background texture σ 4.7 → 2.3; face shift Δ 0.0",
+      "steps": 12,
+      "ms": 7729,
+      "errors": [],
+      "notes": [
+        "Radius: no number field, slider only"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool wand",
+        "type: Tolerance = 70",
+        "click: background at 150,150",
+        "click: Shift+more background at 2250,1450",
+        "click: Shift+more background at 300,1300",
+        "click: Filter menu",
+        "click: Filter ▸ Gaussian blur",
+        "drag: Radius slider → 30",
+        "click: OK",
+        "key: Control+d"
+      ],
+      "paid": {
+        "Photoshop (Select Subject)": 5,
+        "Lightroom Classic (Select Subject mask)": 4,
+        "Affinity Photo": 7,
+        "Pixelmator Pro (ML select)": 5,
+        "Photopea (Magic Cut / select)": 6
+      }
+    },
+    {
+      "id": 5,
+      "name": "Dodge and burn a portrait",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "brow band R 195 → 222, 2 layers",
+      "steps": 6,
+      "ms": 5919,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "key: Control+j",
+        "click: tool tone",
+        "drag: dodge the brow band",
+        "drag: dodge again"
+      ],
+      "paid": {
+        "Photoshop": 6,
+        "Lightroom Classic (local brush)": 5,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 4,
+        "Photopea": 5
+      }
+    },
+    {
+      "id": 5,
+      "name": "Dodge and burn a portrait",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "brow band R 195 → 222, 2 layers",
+      "steps": 6,
+      "ms": 5948,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "key: Control+j",
+        "click: tool tone",
+        "drag: dodge the brow band",
+        "drag: dodge again"
+      ],
+      "paid": {
+        "Photoshop": 6,
+        "Lightroom Classic (local brush)": 5,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 4,
+        "Photopea": 5
+      }
+    },
+    {
+      "id": 5,
+      "name": "Dodge and burn a portrait",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "brow band R 195 → 222, 2 layers",
+      "steps": 6,
+      "ms": 5903,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "key: Control+j",
+        "click: tool tone",
+        "drag: dodge the brow band",
+        "drag: dodge again"
+      ],
+      "paid": {
+        "Photoshop": 6,
+        "Lightroom Classic (local brush)": 5,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 4,
+        "Photopea": 5
+      }
+    },
+    {
+      "id": 6,
+      "name": "Add a text watermark at 50% opacity",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "text layer “© K. Cope 2026”, opacity 50%",
+      "steps": 8,
+      "ms": 5335,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool text",
+        "click: watermark spot at 1700,1500",
+        "type: Text = © K. Cope 2026",
+        "type: Size = 72",
+        "click: OK",
+        "drag: Layer opacity slider → 50"
+      ],
+      "paid": {
+        "Photoshop": 6,
+        "Lightroom Classic (export watermark)": 6,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 5,
+        "Photopea": 5
+      }
+    },
+    {
+      "id": 6,
+      "name": "Add a text watermark at 50% opacity",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "text layer “© K. Cope 2026”, opacity 50%",
+      "steps": 8,
+      "ms": 5319,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool text",
+        "click: watermark spot at 1700,1500",
+        "type: Text = © K. Cope 2026",
+        "type: Size = 72",
+        "click: OK",
+        "drag: Layer opacity slider → 50"
+      ],
+      "paid": {
+        "Photoshop": 6,
+        "Lightroom Classic (export watermark)": 6,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 5,
+        "Photopea": 5
+      }
+    },
+    {
+      "id": 6,
+      "name": "Add a text watermark at 50% opacity",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "text layer “© K. Cope 2026”, opacity 50%",
+      "steps": 8,
+      "ms": 5362,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool text",
+        "click: watermark spot at 1700,1500",
+        "type: Text = © K. Cope 2026",
+        "type: Size = 72",
+        "click: OK",
+        "drag: Layer opacity slider → 50"
+      ],
+      "paid": {
+        "Photoshop": 6,
+        "Lightroom Classic (export watermark)": 6,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 5,
+        "Photopea": 5
+      }
+    },
+    {
+      "id": 7,
+      "name": "Instagram portrait post: 4:5 crop, 1080×1350 JPEG",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "portrait.jpg: 1080×1350, 168 KB",
+      "steps": 8,
+      "ms": 5583,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool crop",
+        "click: Ratio → portrait45",
+        "key: Enter",
+        "key: Control+Shift+e",
+        "click: Format → image/jpeg",
+        "click: OK"
+      ],
+      "paid": {
+        "Lightroom Classic": 7,
+        "Photoshop": 8,
+        "Affinity Photo": 8,
+        "Pixelmator Pro": 7,
+        "Photopea": 8
+      }
+    },
+    {
+      "id": 7,
+      "name": "Instagram portrait post: 4:5 crop, 1080×1350 JPEG",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "portrait.jpg: 1080×1350, 168 KB",
+      "steps": 8,
+      "ms": 5595,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool crop",
+        "click: Ratio → portrait45",
+        "key: Enter",
+        "key: Control+Shift+e",
+        "click: Format → image/jpeg",
+        "click: OK"
+      ],
+      "paid": {
+        "Lightroom Classic": 7,
+        "Photoshop": 8,
+        "Affinity Photo": 8,
+        "Pixelmator Pro": 7,
+        "Photopea": 8
+      }
+    },
+    {
+      "id": 7,
+      "name": "Instagram portrait post: 4:5 crop, 1080×1350 JPEG",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "portrait.jpg: 1080×1350, 168 KB",
+      "steps": 8,
+      "ms": 5593,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool crop",
+        "click: Ratio → portrait45",
+        "key: Enter",
+        "key: Control+Shift+e",
+        "click: Format → image/jpeg",
+        "click: OK"
+      ],
+      "paid": {
+        "Lightroom Classic": 7,
+        "Photoshop": 8,
+        "Affinity Photo": 8,
+        "Pixelmator Pro": 7,
+        "Photopea": 8
+      }
+    },
+    {
+      "id": 8,
+      "name": "Print export: 8×10 in at 300 ppi JPEG",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "2400×3000, JFIF density 1 (unit 0)",
+      "steps": 9,
+      "ms": 5835,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool crop",
+        "click: Ratio → p8x10",
+        "click: swap orientation",
+        "key: Enter",
+        "key: Control+Shift+e",
+        "click: Format → image/jpeg",
+        "click: OK"
+      ],
+      "paid": {
+        "Lightroom Classic": 6,
+        "Photoshop": 8,
+        "Affinity Photo": 8,
+        "Pixelmator Pro": 7,
+        "Photopea": 9
+      }
+    },
+    {
+      "id": 8,
+      "name": "Print export: 8×10 in at 300 ppi JPEG",
+      "run": 2,
+      "ok": false,
+      "skip": false,
+      "detail": "2400×3000, JFIF density 1 (unit 0)",
+      "steps": 9,
+      "ms": 5815,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool crop",
+        "click: Ratio → p8x10",
+        "click: swap orientation",
+        "key: Enter",
+        "key: Control+Shift+e",
+        "click: Format → image/jpeg",
+        "click: OK"
+      ],
+      "paid": {
+        "Lightroom Classic": 6,
+        "Photoshop": 8,
+        "Affinity Photo": 8,
+        "Pixelmator Pro": 7,
+        "Photopea": 9
+      }
+    },
+    {
+      "id": 8,
+      "name": "Print export: 8×10 in at 300 ppi JPEG",
+      "run": 3,
+      "ok": false,
+      "skip": false,
+      "detail": "2400×3000, JFIF density 1 (unit 0)",
+      "steps": 9,
+      "ms": 5804,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: tool crop",
+        "click: Ratio → p8x10",
+        "click: swap orientation",
+        "key: Enter",
+        "key: Control+Shift+e",
+        "click: Format → image/jpeg",
+        "click: OK"
+      ],
+      "paid": {
+        "Lightroom Classic": 6,
+        "Photoshop": 8,
+        "Affinity Photo": 8,
+        "Pixelmator Pro": 7,
+        "Photopea": 9
+      }
+    },
+    {
+      "id": 9,
+      "name": "Batch-resize a folder of 6 photos to 2048 px long edge JPEG",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, 1.2 s for the batch",
+      "steps": 9,
+      "ms": 2403,
+      "errors": [],
+      "notes": [
+        "Batch process is in the File menu even with no document open"
+      ],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (Export)": 6,
+        "Photoshop (Image Processor)": 7,
+        "Affinity Photo (Batch Job)": 8,
+        "Pixelmator Pro (Export / Shortcuts)": 7,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 9,
+      "name": "Batch-resize a folder of 6 photos to 2048 px long edge JPEG",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, 1.0 s for the batch",
+      "steps": 9,
+      "ms": 2297,
+      "errors": [],
+      "notes": [
+        "Batch process is in the File menu even with no document open"
+      ],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (Export)": 6,
+        "Photoshop (Image Processor)": 7,
+        "Affinity Photo (Batch Job)": 8,
+        "Pixelmator Pro (Export / Shortcuts)": 7,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 9,
+      "name": "Batch-resize a folder of 6 photos to 2048 px long edge JPEG",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, 1.1 s for the batch",
+      "steps": 9,
+      "ms": 2314,
+      "errors": [],
+      "notes": [
+        "Batch process is in the File menu even with no document open"
+      ],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (Export)": 6,
+        "Photoshop (Image Processor)": 7,
+        "Affinity Photo (Batch Job)": 8,
+        "Pixelmator Pro (Export / Shortcuts)": 7,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 10,
+      "name": "Fix converging verticals on a building",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "left edge x at 15% / 85% height: 464 / 312; right edge 1535 / 1687",
+      "steps": 7,
+      "ms": 7318,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file building.jpg",
+        "click: Edit menu",
+        "click: Edit ▸ Perspective",
+        "drag: top-left corner outwards",
+        "drag: top-right corner outwards",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 10,
+      "name": "Fix converging verticals on a building",
+      "run": 2,
+      "ok": false,
+      "skip": false,
+      "detail": "left edge x at 15% / 85% height: 464 / 312; right edge 1535 / 1687",
+      "steps": 7,
+      "ms": 7406,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file building.jpg",
+        "click: Edit menu",
+        "click: Edit ▸ Perspective",
+        "drag: top-left corner outwards",
+        "drag: top-right corner outwards",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 10,
+      "name": "Fix converging verticals on a building",
+      "run": 3,
+      "ok": false,
+      "skip": false,
+      "detail": "left edge x at 15% / 85% height: 464 / 312; right edge 1535 / 1687",
+      "steps": 7,
+      "ms": 7322,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file building.jpg",
+        "click: Edit menu",
+        "click: Edit ▸ Perspective",
+        "drag: top-left corner outwards",
+        "drag: top-right corner outwards",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 11,
+      "name": "Combine two photos with a gradient mask (sky blend)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "top 61,37,72 / bottom 231,217,168 (expect sky purple top, sand bottom)",
+      "steps": 8,
+      "ms": 5812,
+      "errors": [],
+      "notes": [
+        "default foreground is #e8553a, not black: press D before painting a mask"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file seascape.jpg",
+        "key: Ctrl+Shift+O (place image)",
+        "pick: file sky.jpg",
+        "click: Add layer mask",
+        "click: tool gradient",
+        "key: d",
+        "drag: gradient on the mask (sea → sky)"
+      ],
+      "paid": {
+        "Photoshop": 6,
+        "Affinity Photo": 6,
+        "Pixelmator Pro": 6,
+        "Photopea": 6,
+        "Lightroom Classic": "not possible"
+      }
+    },
+    {
+      "id": 11,
+      "name": "Combine two photos with a gradient mask (sky blend)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "top 61,37,72 / bottom 231,217,168 (expect sky purple top, sand bottom)",
+      "steps": 8,
+      "ms": 5807,
+      "errors": [],
+      "notes": [
+        "default foreground is #e8553a, not black: press D before painting a mask"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file seascape.jpg",
+        "key: Ctrl+Shift+O (place image)",
+        "pick: file sky.jpg",
+        "click: Add layer mask",
+        "click: tool gradient",
+        "key: d",
+        "drag: gradient on the mask (sea → sky)"
+      ],
+      "paid": {
+        "Photoshop": 6,
+        "Affinity Photo": 6,
+        "Pixelmator Pro": 6,
+        "Photopea": 6,
+        "Lightroom Classic": "not possible"
+      }
+    },
+    {
+      "id": 11,
+      "name": "Combine two photos with a gradient mask (sky blend)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "top 61,37,72 / bottom 231,217,168 (expect sky purple top, sand bottom)",
+      "steps": 8,
+      "ms": 5837,
+      "errors": [],
+      "notes": [
+        "default foreground is #e8553a, not black: press D before painting a mask"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file seascape.jpg",
+        "key: Ctrl+Shift+O (place image)",
+        "pick: file sky.jpg",
+        "click: Add layer mask",
+        "click: tool gradient",
+        "key: d",
+        "drag: gradient on the mask (sea → sky)"
+      ],
+      "paid": {
+        "Photoshop": 6,
+        "Affinity Photo": 6,
+        "Pixelmator Pro": 6,
+        "Photopea": 6,
+        "Lightroom Classic": "not possible"
+      }
+    },
+    {
+      "id": 12,
+      "name": "Re-edit a saved project (change an adjustment after reopening)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "reopened portrait.tintwork; brightness now -20",
+      "steps": 12,
+      "ms": 6640,
+      "errors": [],
+      "notes": [
+        "Brightness: no number field, slider only",
+        "Brightness: no number field, slider only"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: New adjustment layer",
+        "click: Brightness / contrast",
+        "drag: Brightness slider → 30",
+        "click: OK",
+        "key: Control+s",
+        "key: Control+Alt+w",
+        "click: recent project",
+        "dblclick: adjustment layer thumbnail",
+        "drag: Brightness slider → -20",
+        "click: OK"
+      ],
+      "paid": {
+        "Photoshop (PSD adjustment layer)": 5,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 5,
+        "Lightroom Classic (catalog, always editable)": 3,
+        "Photopea": 6
+      }
+    },
+    {
+      "id": 12,
+      "name": "Re-edit a saved project (change an adjustment after reopening)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "reopened portrait.tintwork; brightness now -20",
+      "steps": 12,
+      "ms": 6547,
+      "errors": [],
+      "notes": [
+        "Brightness: no number field, slider only",
+        "Brightness: no number field, slider only"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: New adjustment layer",
+        "click: Brightness / contrast",
+        "drag: Brightness slider → 30",
+        "click: OK",
+        "key: Control+s",
+        "key: Control+Alt+w",
+        "click: recent project",
+        "dblclick: adjustment layer thumbnail",
+        "drag: Brightness slider → -20",
+        "click: OK"
+      ],
+      "paid": {
+        "Photoshop (PSD adjustment layer)": 5,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 5,
+        "Lightroom Classic (catalog, always editable)": 3,
+        "Photopea": 6
+      }
+    },
+    {
+      "id": 12,
+      "name": "Re-edit a saved project (change an adjustment after reopening)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "reopened portrait.tintwork; brightness now -20",
+      "steps": 12,
+      "ms": 6394,
+      "errors": [],
+      "notes": [
+        "Brightness: no number field, slider only",
+        "Brightness: no number field, slider only"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "click: New adjustment layer",
+        "click: Brightness / contrast",
+        "drag: Brightness slider → 30",
+        "click: OK",
+        "key: Control+s",
+        "key: Control+Alt+w",
+        "click: recent project",
+        "dblclick: adjustment layer thumbnail",
+        "drag: Brightness slider → -20",
+        "click: OK"
+      ],
+      "paid": {
+        "Photoshop (PSD adjustment layer)": 5,
+        "Affinity Photo": 5,
+        "Pixelmator Pro": 5,
+        "Lightroom Classic (catalog, always editable)": 3,
+        "Photopea": 6
+      }
+    }
+  ],
+  "phone": {
+    "ok": true,
+    "export": "share sheet / none",
+    "ms": 17119,
+    "errors": []
+  }
+}

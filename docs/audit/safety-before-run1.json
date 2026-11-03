@@ -1,0 +1,66 @@
+{
+ "date": "2026-11-03T05:23:45.681Z",
+ "base": "https://kcope19.github.io/tintwork/",
+ "results": [
+  {
+   "ok": true,
+   "msg": "no third-party requests during open/edit/export (40 requests, third-party: none)"
+  },
+  {
+   "ok": true,
+   "msg": "no uploads: every request is GET (none)"
+  },
+  {
+   "ok": false,
+   "msg": "Content-Security-Policy limits connections to the site itself (…)"
+  },
+  {
+   "ok": true,
+   "msg": "no CSP violations during the session (none)"
+  },
+  {
+   "ok": true,
+   "msg": "no console errors (none)"
+  },
+  {
+   "ok": true,
+   "msg": "closing a tab with unsaved changes asks first (beforeunload)"
+  },
+  {
+   "ok": true,
+   "msg": "after a crash the next visit offers recovery (\"Tintwork closed with unsaved changes. Autosaved copy found:unsaved work800 × 600\")"
+  },
+  {
+   "ok": true,
+   "msg": "a full disk / quota error shows a warning (\"Autosave is unavailable here (The quota has been exceeded.). Save your project to keep you\")"
+  },
+  {
+   "ok": true,
+   "msg": "a corrupt 60000×60000 PNG is refused with a message (\"huge.png could not be read. The file may be damaged or in a format this browser cannot dec\")"
+  },
+  {
+   "ok": true,
+   "msg": "no uncaught errors on the bad file (none)"
+  },
+  {
+   "ok": false,
+   "msg": "Alt moves focus to the menu bar (\"null\") so menus work without a mouse"
+  },
+  {
+   "ok": false,
+   "msg": "a dialog takes focus and Tab stays inside it (opened true, focus inside false, after 40 Tabs false)"
+  },
+  {
+   "ok": true,
+   "msg": "Escape closes the dialog"
+  },
+  {
+   "ok": true,
+   "msg": "a :focus-visible outline style exists for keyboard users"
+  },
+  {
+   "ok": false,
+   "msg": "no menu advertises a browser-reserved shortcut (41 shortcuts listed; reserved used: Ctrl+Shift+Tab)"
+  }
+ ]
+}

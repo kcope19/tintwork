@@ -1,0 +1,205 @@
+{
+ "date": "2026-11-03T05:18:38.881Z",
+ "results": [
+  {
+   "ok": true,
+   "msg": "8-bit multiply @ 100% matches W3C formula (worst error 0.76 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit multiply @ 50% matches W3C formula (worst error 1.04 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit screen @ 100% matches W3C formula (worst error 0.41 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit screen @ 50% matches W3C formula (worst error 0.50 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit overlay @ 100% matches W3C formula (worst error 0.84 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit overlay @ 50% matches W3C formula (worst error 0.76 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit darken @ 100% matches W3C formula (worst error 0.00 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit darken @ 50% matches W3C formula (worst error 0.50 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit lighten @ 100% matches W3C formula (worst error 0.00 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit lighten @ 50% matches W3C formula (worst error 0.50 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit color-dodge @ 100% matches W3C formula (worst error 0.31 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit color-dodge @ 50% matches W3C formula (worst error 0.50 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit color-burn @ 100% matches W3C formula (worst error 0.45 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit color-burn @ 50% matches W3C formula (worst error 0.58 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit hard-light @ 100% matches W3C formula (worst error 0.84 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit hard-light @ 50% matches W3C formula (worst error 0.59 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit soft-light @ 100% matches W3C formula (worst error 0.41 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit soft-light @ 50% matches W3C formula (worst error 0.37 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit difference @ 100% matches W3C formula (worst error 0.00 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit difference @ 50% matches W3C formula (worst error 0.50 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit exclusion @ 100% matches W3C formula (worst error 1.53 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "8-bit exclusion @ 50% matches W3C formula (worst error 1.76 /255)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit multiply @ 100% matches W3C formula (worst error 0.47 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit multiply @ 50% matches W3C formula (worst error 0.50 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit screen @ 100% matches W3C formula (worst error 0.47 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit screen @ 50% matches W3C formula (worst error 0.50 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit overlay @ 100% matches W3C formula (worst error 0.50 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit overlay @ 50% matches W3C formula (worst error 0.47 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit darken @ 100% matches W3C formula (worst error 0.00 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit darken @ 50% matches W3C formula (worst error 0.50 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit lighten @ 100% matches W3C formula (worst error 0.00 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit lighten @ 50% matches W3C formula (worst error 0.50 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit color-dodge @ 100% matches W3C formula (worst error 0.13 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit color-dodge @ 50% matches W3C formula (worst error 0.50 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit color-burn @ 100% matches W3C formula (worst error 0.37 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit color-burn @ 50% matches W3C formula (worst error 0.31 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit hard-light @ 100% matches W3C formula (worst error 0.50 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit hard-light @ 50% matches W3C formula (worst error 0.50 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit soft-light @ 100% matches W3C formula (worst error 0.47 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit soft-light @ 50% matches W3C formula (worst error 0.48 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit difference @ 100% matches W3C formula (worst error 0.00 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit difference @ 50% matches W3C formula (worst error 0.50 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit exclusion @ 100% matches W3C formula (worst error 0.50 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit exclusion @ 50% matches W3C formula (worst error 0.50 /65535)"
+  },
+  {
+   "ok": true,
+   "msg": "levels (20/230, γ 1.6, out 10/245) within 1 level of the reference at all 256 inputs (max err 0.50)"
+  },
+  {
+   "ok": true,
+   "msg": "invert is exactly 255 − v"
+  },
+  {
+   "ok": true,
+   "msg": "grayscale uses Rec. 709 luma (R,G,B → 54, 182, 18)"
+  },
+  {
+   "ok": true,
+   "msg": "PNG 16-bit export has bit depth 16"
+  },
+  {
+   "ok": true,
+   "msg": "16-bit PNG round-trip is exact (0 mismatched samples of 3072; 2816 distinct values)"
+  },
+  {
+   "ok": true,
+   "msg": "no page errors ()"
+  }
+ ]
+}
