@@ -4,7 +4,7 @@ v1.8 adds nine jobs (13–21) that use **real photos** (public domain / CC0, `te
 features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from v1.7 (below, kept for history).
 
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
-v1.8.0, 3 runs after deploy (see the table). Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
+v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
 ## v1.8 scorecard (real photos and new features)
 
@@ -21,16 +21,16 @@ How the new jobs are measured:
 
 | # | Job | Before (v1.7, live) | After (v1.8, live) | Tintwork steps excl. open | Competitors (docs) | Verdict |
 |---|-----|------|------|------|------|------|
-| 13 (3R) | Remove a blemish on a real portrait | pass 3/3: error 25.0 → 5.3 levels (79% removed) | AFTER13 | 2 | 2 in all five | **trails** |
-| 14 (4R) | Select a real subject (box + 2 strokes) | fail 3/3: no object select | AFTER14 | 5 | Photoshop Object Selection 2, Lightroom Select Subject 2, Pixelmator Pro 3, Affinity 4, Photopea 4 | **trails** |
-| 21 (4R) | Holdout subject, box only | fail 3/3: no object select | AFTER21 | 3 | as above | **trails (closer)** |
-| 15 | Baseline: same subject with the magic wand (v1.7 route) | IoU 0.201 (fails by design) | AFTER15 | 10 | — | baseline |
-| 16 (10R) | Auto upright, church among towers | fail 3/3: no Auto | AFTER16 | 3 | Lightroom Upright Auto 2, Camera Raw 4, Affinity 5, Pixelmator Pro 4, Photopea 5 | **trails** |
-| 17 (10R) | Auto upright, high-rise looking up | fail 3/3: no Auto | AFTER17 | 3 | as above | **trails** |
-| 18 (10R) | Guided upright on the church photo | not measurable on v1.7 (no correction record in the test API) | AFTER18 | 5 | Lightroom Guided 5, Camera Raw 7, Affinity 5, Pixelmator Pro 4, Photopea 5 | **matches** |
-| 19 | Export for web with a saved preset + watermark | fail 3/3: no presets | AFTER19 | 7 first time, **1** after | Lightroom 6 first time, 1–2 after | **matches** |
-| 20 | Batch 6 photos to 2048 px with a watermark | fail 3/3: no batch watermark | AFTER20 | 12 | Lightroom 6–7 (export preset with watermark) | **trails** |
-| 10 | Converging verticals, synthetic building | pass 3/3 via Guided, 7 steps | AFTER10 | 3 (Auto) | Lightroom 2 | **trails** |
+| 13 (3R) | Remove a blemish on a real portrait | pass 3/3: error 25.0 → 5.3 levels (79% removed) | pass 3/3: 25.0 → 5.3 levels (79% removed), 66 s per run | 2 | 2 in all five | **trails** |
+| 14 (4R) | Select a real subject (box + 2 strokes) | fail 3/3: no object select | pass 3/3: IoU 0.954, 7 steps, 1.2 s per solve | 5 | Photoshop Object Selection 2, Lightroom Select Subject 2, Pixelmator Pro 3, Affinity 4, Photopea 4 | **trails** |
+| 21 (4R) | Holdout subject, box only | fail 3/3: no object select | pass 3/3: IoU 0.974, 5 steps | 3 | as above | **trails (closer)** |
+| 15 | Baseline: same subject with the magic wand (v1.7 route) | IoU 0.201 (fails by design) | IoU 0.201 (unchanged; baseline) | 10 | — | baseline |
+| 16 (10R) | Auto upright, church among towers | fail 3/3: no Auto | pass 3/3: −0.23° / −0.18° / 0.12° | 3 | Lightroom Upright Auto 2, Camera Raw 4, Affinity 5, Pixelmator Pro 4, Photopea 5 | **trails** |
+| 17 (10R) | Auto upright, high-rise looking up | fail 3/3: no Auto | **fail 3/3**: −0.50° / 0.10° (bar is < 0.5°) | 3 | as above | **trails** |
+| 18 (10R) | Guided upright on the church photo | not measurable on v1.7 (no correction record in the test API) | pass 3/3: 0.02° / −0.12° / 0.04° | 5 | Lightroom Guided 5, Camera Raw 7, Affinity 5, Pixelmator Pro 4, Photopea 5 | **matches** |
+| 19 | Export for web with a saved preset + watermark | fail 3/3: no presets | pass 3/3: 9 steps first time, 1 step to repeat; watermark only in its corner | 7 first time, **1** after | Lightroom 6 first time, 1–2 after | **matches** |
+| 20 | Batch 6 photos to 2048 px with a watermark | fail 3/3: no batch watermark | pass 3/3: 6 files, watermark in each | 12 | Lightroom 6–7 (export preset with watermark) | **trails** |
+| 10 | Converging verticals, synthetic building | pass 3/3 via Guided, 7 steps | pass 3/3 via Auto, 5 steps; lean −0.09° / 0.00° | 3 (Auto) | Lightroom 2 | **trails** |
 
 **Summary (v1.8): 0 beat, 2 match (18, 19), the rest trail; 1 real-photo upright job fails its own 0.5° bar.**
 
