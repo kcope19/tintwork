@@ -116,6 +116,75 @@ if (hasLogo) {
   check(v18 === true, `v1.8 presets (watermark: true) still load (${v18})`);
 }
 
+// --- 2. Auto upright modes: Level / Vertical / Full
+const hasModes = await T(() => typeof window.tintwork.segment?.uprightHomography === 'function');
+check(hasModes, 'upright modes exist (Level / Vertical / Full)');
+if (hasModes) {
+  // map truth points through the last correction (layer box → corner points), then angles from vertical / horizontal
+  const mapped = async (segs) => { const r = await T((segs) => { const H = window.tintwork.lastUpright?.H; if (!H) return null; const ap = ([x, y]) => { const w = H[6] * x + H[7] * y + H[8]; return [(H[0] * x + H[1] * y + H[2]) / w, (H[3] * x + H[4] * y + H[5]) / w]; }; return segs.map(([a, b]) => [ap(a), ap(b)]); }, segs); return Array.isArray(r) ? r : segs.map(() => [[0, 0], [1e-9, 1e-9]]); };
+  const vdeg = ([[x1, y1], [x2, y2]]) => Math.atan2(x2 - x1, y2 - y1) * 180 / Math.PI;
+  const hdeg = ([[x1, y1], [x2, y2]]) => Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+  const norm = (a) => { while (a > 90) a -= 180; while (a <= -90) a += 180; return a; };
+  const maxAbs = (a) => Math.max(...a.map((v) => Math.abs(norm(v))));
+  const apply = async (cmd, edges = 'keep') => { await T((c) => window.tintwork.run(c), cmd); await page.locator(`#optionsbar [data-cmd="uprightEdges_${edges}"]`).click(); const lu = await T(() => window.tintwork.lastUpright); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle()); return { ...lu, ...(await T(() => window.tintwork.lastUpright)) }; };
+  // (a) a horizon tilted 3° with level stripes and no verticals
+  const horizon = () => T(async () => {
+    const t = window.tintwork; t.newDocument(1200, 800, 'white', 'horizon'); const l = t.activeLayer(), x = l.canvas.getContext('2d');
+    x.fillStyle = '#9cc6e8'; x.fillRect(0, 0, 1200, 800); x.save(); x.translate(600, 400); x.rotate(3 * Math.PI / 180);
+    x.fillStyle = '#1d3f5e'; x.fillRect(-900, 0, 1800, 700); x.fillStyle = '#e8e2d0'; for (const y of [120, 220, 300]) x.fillRect(-900, y, 1800, 10); x.restore();
+    t.touch(l); t.markDirty(); t.renderNow(); await t.compositeSettled?.();
+  });
+  const rot3 = (pts) => { const t = 3 * Math.PI / 180, c = Math.cos(t), s = Math.sin(t); return pts.map(([x, y]) => [600 + x * c - y * s, 400 + x * s + y * c]); };
+  const hTruth = [rot3([[-500, 0], [500, 0]]), rot3([[-500, 120], [500, 120]]), rot3([[-500, 300], [500, 300]])];
+  await horizon(); const lv = await apply('uprightLevel');
+  const lvAfter = (await mapped(hTruth)).map(hdeg);
+  check(lv.mode === 'level' && maxAbs(lvAfter) < 0.15, `Level: horizon tilted 3° → ${lvAfter.map((a) => a.toFixed(2)).join('° / ')}° (${lv.hlines} horizontal lines, ${lv.ms} ms)`);
+  await horizon(); const au = await apply('autoUpright');
+  const auAfter = (await mapped(hTruth)).map(hdeg);
+  check(au.mode === 'level' && maxAbs(auAfter) < 0.15, `Auto with no verticals falls back to Level (${au.mode}, ${auAfter.map((a) => a.toFixed(2)).join('° / ')}°)`);
+  await horizon(); const vo = await apply('uprightVertical');
+  check(vo.mode === 'none', `Vertical on the same horizon does nothing (${vo.mode}): it only reads vertical lines`);
+  // (b) a facade seen from below and from the side: both families converge (drawn through a known homography)
+  const G = [[160, 70], [1080, 20], [1150, 880], [70, 820]]; // where the facade's 1200×900 rectangle lands
+  const facade = () => T(async (G) => {
+    const t = window.tintwork, m = t.mesh || null; t.newDocument(1220, 900, 'white', 'facade'); const l = t.activeLayer(), x = l.canvas.getContext('2d');
+    // bilinear-free projective map from the unit square to G
+    const H = (() => { const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = G, dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2, sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3, den = dx1 * dy2 - dx2 * dy1, g = (sx * dy2 - dx2 * sy) / den, h = (dx1 * sy - sx * dy1) / den; return [x1 - x0 + g * x1, x3 - x0 + h * x3, x0, y1 - y0 + g * y1, y3 - y0 + h * y3, y0, g, h, 1]; })();
+    const P = (u, v) => { const w = H[6] * u + H[7] * v + 1; return [(H[0] * u + H[1] * v + H[2]) / w, (H[3] * u + H[4] * v + H[5]) / w]; };
+    x.fillStyle = '#6d9ccc'; x.fillRect(0, 0, 1220, 900);
+    const quad = (u0, v0, u1, v1, c) => { x.beginPath(); x.moveTo(...P(u0, v0)); x.lineTo(...P(u1, v0)); x.lineTo(...P(u1, v1)); x.lineTo(...P(u0, v1)); x.closePath(); x.fillStyle = c; x.fill(); };
+    quad(0, 0, 1, 1, '#c9b79c');
+    for (let i = 0; i < 6; i++) quad(0.06 + i * 0.155, 0.06, 0.06 + i * 0.155 + 0.07, 0.94, '#2c3440'); // window columns
+    for (let j = 1; j < 5; j++) quad(0.02, j * 0.2 - 0.01, 0.98, j * 0.2 + 0.01, '#efe6d6'); // floor slabs
+    t.touch(l); t.markDirty(); t.renderNow(); await t.compositeSettled?.();
+    window.__facadeP = [P(0, 0), P(1, 0), P(1, 1), P(0, 1)];
+  }, G);
+  const fv = [[G[0], G[3]], [G[1], G[2]]], fh = [[G[0], G[1]], [G[3], G[2]]];
+  await facade(); const fu = await apply('uprightFull');
+  const fm = await mapped([...fv, ...fh]), fva = fm.slice(0, 2).map(vdeg), fha = fm.slice(2).map(hdeg);
+  check(fu.mode === 'full' && maxAbs(fva) < 0.3 && maxAbs(fha) < 0.3, `Full: facade edges ${[...fv.map(vdeg), ...fh.map(hdeg)].map((a) => norm(a).toFixed(1)).join('/')}° → verticals ${fva.map((a) => a.toFixed(2)).join('/')}°, horizontals ${fha.map((a) => a.toFixed(2)).join('/')}° (${fu.lines}+${fu.hlines} lines, ${fu.ms} ms)`);
+  await facade(); const vu = await apply('uprightVertical');
+  const vm = await mapped([...fv, ...fh]), vva = vm.slice(0, 2).map(vdeg), vha = vm.slice(2).map(hdeg);
+  check(vu.mode === 'keystone' && maxAbs(vva) < 0.3 && maxAbs(vha) > 1, `Vertical: verticals ${vva.map((a) => a.toFixed(2)).join('/')}°, horizontals left as they were (${vha.map((a) => a.toFixed(1)).join('/')}°)`);
+  await facade(); const lf = await apply('uprightLevel');
+  const lm = await mapped([[[0, 0], [1220, 0]], [[0, 0], [0, 900]]]), side = (s) => Math.hypot(s[1][0] - s[0][0], s[1][1] - s[0][1]);
+  check(lf.mode === 'level' && Math.abs(side(lm[0]) - 1220) < 1 && Math.abs(side(lm[1]) - 900) < 1 && Math.abs(norm(hdeg(lm[0]) - vdeg(lm[1]) * -1)) < 0.05, `Level is a pure rotation (frame sides ${side(lm[0]).toFixed(1)} × ${side(lm[1]).toFixed(1)}, rotated ${hdeg(lm[0]).toFixed(2)}°)`);
+  // (c) options bar and Image menu
+  await facade(); await T(() => window.tintwork.run('perspective'));
+  const bar = await T(() => ['autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull'].map((c) => document.querySelectorAll(`#optionsbar [data-cmd="${c}"]`).length).join(''));
+  check(bar === '1111', `Perspective options bar: Auto · Level · Vertical · Full (${bar})`);
+  await page.locator('#optionsbar [data-cmd="uprightFull"]').click(); await page.waitForTimeout(100);
+  check(await T(() => window.tintwork.lastUpright?.mode === 'full' && document.querySelector('#optionsbar [data-cmd="uprightFull"]').classList.contains('on')), 'clicking Full in the options bar runs it and highlights it');
+  await page.keyboard.press('Escape');
+  const menu = await T(() => ['uprightLevel', 'uprightVertical', 'uprightFull'].every((c) => document.querySelector(`#menus .menu-items button[data-cmd="${c}"]`)));
+  check(menu, 'Image menu: Upright level / vertical / full');
+  // (d) real photos (CC0): Full keeps the verticals within 1° (truth edges fitted to the photo, see WORKFLOW_BENCHMARK.md)
+  for (const [f, seeds] of [['c6.jpg', [[[481, 368], [449, 573]], [[845, 368], [887, 598]]]], ['c4.jpg', [[[124, 446], [15, 1774]], [[543, 277], [541, 547]], [[935, 492], [968, 996]]]]]) {
+    await open(f, REAL(f)); const r = await apply('uprightFull', 'crop'); const a = (await mapped(seeds)).map(vdeg), holes = await T(async () => { const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] < 250) n++; return n; });
+    check(r.mode === 'full' && maxAbs(a) < 1 && holes === 0, `real ${f}: Full from ${r.lines} vertical + ${r.hlines} horizontal lines, truth edges ${seeds.map(vdeg).map((v) => v.toFixed(2)).join('/')}° → ${a.map((v) => v.toFixed(2)).join('/')}°, cropped, ${holes} see-through pixels (${r.ms} ms)`);
+  }
+}
+
 // --- wording, errors
 const words = await T(() => document.body.innerText + ' ' + [...document.querySelectorAll('[title],[aria-label]')].map((e) => e.title + ' ' + e.getAttribute('aria-label')).join(' '));
 check(!/photoshop|adobe/i.test(words), 'no other editor brand names in the UI');

@@ -511,8 +511,40 @@ export function estimateUpright(lines, W, H, { tolDeg = 1.2 } = {}) {
   // distance of the VP from the image centre, in image heights; very far = parallel lines = just a tilt
   const far = Math.abs(v[2]) < 1e-12 ? Infinity : Math.hypot(v[0] / v[2] - W / 2, v[1] / v[2] - H / 2) / H;
   const meanAng = inl.reduce((s, k) => s + lines[k].angle * lines[k].len, 0) / inl.reduce((s, k) => s + lines[k].len, 0);
-  if (far > 40) return { mode: Math.abs(meanAng) < 0.05 ? 'none' : 'rotate', angle: meanAng, inliers: inl, lines };
-  return { mode: 'keystone', vp: Math.abs(v[2]) < 1e-12 ? null : [v[0] / v[2], v[1] / v[2]], far, angle: meanAng, inliers: inl, lines };
+  if (far > 40) return { mode: Math.abs(meanAng) < 0.05 ? 'none' : 'rotate', angle: meanAng, vh: v, inliers: inl, lines };
+  return { mode: 'keystone', vp: Math.abs(v[2]) < 1e-12 ? null : [v[0] / v[2], v[1] / v[2]], vh: v, far, angle: meanAng, inliers: inl, lines };
+}
+/**
+ * Full upright (v1.9): one homography that sends the vertical vanishing point `vv` to the vertical direction at infinity
+ * and the horizontal one `vh` to the horizontal direction at infinity (both homogeneous [x, y, w]; null = leave that
+ * family alone). Row 3 is the line through both points (it becomes the line at infinity); rows 1 and 2 are the closest
+ * rows to the identity that satisfy r1·vv = 0, r2·vh = 0 and keep the centre (cx, cy) where it is.
+ * Returns [h0..h8] row-major (same layout as mesh.homography) or null.
+ */
+export function uprightHomography(vv, vh, cx, cy) {
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const V = vv || [0, 1, 0], Hh = vh || [1, 0, 0];
+  let r3 = cross(V, Hh); const c3 = r3[0] * cx + r3[1] * cy + r3[2];
+  if (!Number.isFinite(c3) || Math.abs(c3) < 1e-12 * Math.hypot(...r3)) return null;
+  r3 = r3.map((t) => t / c3);
+  // keep only a modest projective part: |r3·(x, y)| stays < 1 over the frame (checked by the caller via the corners)
+  const row = (v, want, target, cc) => { // closest (a, b) to `want` with a·px + b·py = q, c = cc − a·cx − b·cy
+    const px = v[0] - cx * v[2], py = v[1] - cy * v[2], q = -cc * v[2], n = px * px + py * py;
+    if (n < 1e-18) return null;
+    const t = (q - (px * want[0] + py * want[1])) / n, a = want[0] + t * px, b = want[1] + t * py;
+    return [a, b, cc - a * cx - b * cy];
+  };
+  // H·c must equal (cx, cy, 1): r1·c = cx, r2·c = cy (r3·c = 1)
+  const r1 = vv ? row(V, [1, 0], 0, cx) : [1, 0, 0], r2 = vh ? row(Hh, [0, 1], 0, cy) : [0, 1, 0];
+  if (!r1 || !r2) return null;
+  const H = [...r1, ...r2, ...r3];
+  return H.every(Number.isFinite) ? H : null;
+}
+/** Direction (degrees, from the axis) a family of lines with vanishing point `v` (homogeneous) has at (cx, cy). */
+export function directionAt(v, cx, cy, orient = 'v') {
+  let dx, dy; if (Math.abs(v[2]) < 1e-12) { dx = v[0]; dy = v[1]; } else { dx = v[0] / v[2] - cx; dy = v[1] / v[2] - cy; }
+  let a = orient === 'v' ? Math.atan2(dx, dy) * 180 / Math.PI : Math.atan2(dy, dx) * 180 / Math.PI;
+  while (a > 90) a -= 180; while (a <= -90) a += 180; return a;
 }
 function smallestEigvec3(M) {
   // inverse iteration on a 3×3 symmetric PSD matrix

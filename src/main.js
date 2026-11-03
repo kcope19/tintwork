@@ -2563,7 +2563,7 @@ async function renderMeshAny(img, outW, outH, m, ox = 0, oy = 0) {
 
 // --- Perspective & warp (Edit menu): drag corner / grid handles; Enter applies, Esc cancels -----------
 function mxfGrid(n) { const x = state.mxf; if (!x || x.mode !== 'warp' || x.n === n) return; x.n = n; mxfResetPoints(x); mxfPreview(); mxfRender(); buildOptionsBar(); }
-const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'autoUpright', 'uprightEdges_crop', 'uprightEdges_fill', 'uprightEdges_keep', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
+const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'uprightEdges_crop', 'uprightEdges_fill', 'uprightEdges_keep', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
 function startMeshXf(mode) {
   const d = doc(), l = activeLayer();
   if (!l || state.mxf) return;
@@ -2667,30 +2667,83 @@ async function applyMeshXf() {
  * Lines that are parallel but tilted give a plain rotation instead.
  */
 let lastUpright = null;
-function autoUprightCmd() {
+/**
+ * v1.9 modes: 'vertical' (the v1.8 Auto: verticals made upright and parallel, or a rotation when they are parallel
+ * already), 'level' (a rotation that levels the horizontals), 'full' (one homography that straightens both families)
+ * and 'auto' (vertical; level when no verticals agree).
+ */
+function autoUprightCmd(req = 'auto') {
   if (!doc()) return null;
   if (state.mxf && state.mxf.mode !== 'perspective') { status('Finish the warp first (Enter applies).'); return null; }
   if (!state.mxf) startMeshXf('perspective');
   const x = state.mxf; if (!x || x.mode !== 'perspective') return null;
   mxfResetPoints(x); x.guides = []; x.guideMode = false;
-  const img = x.small, k = x.k, t0 = performance.now();
-  const lines = seg.detectLines(img, { orient: 'v' }), u = seg.estimateUpright(lines, img.width, img.height);
+  const img = x.small, k = x.k, t0 = performance.now(), cx = x.ox + x.w / 2, cy = x.oy + x.h / 2;
   const toDoc = ([a, b]) => [x.ox + a / k, x.oy + b / k];
-  let next = null;
-  if (u.mode === 'keystone') next = uprightFromGuides(x.pts, seg.guidesFromVP(u.vp, img.width, img.height).map((g) => g.map(toDoc)));
-  else if (u.mode === 'rotate') {
-    const t = u.angle * Math.PI / 180, c = Math.cos(t), sn = Math.sin(t), cx = x.ox + x.w / 2, cy = x.oy + x.h / 2;
-    next = x.pts.map(([a, b]) => [cx + (a - cx) * c - (b - cy) * sn, cy + (a - cx) * sn + (b - cy) * c]);
+  const toDocH = (v) => [v[0] / k + x.ox * v[2], v[1] / k + x.oy * v[2], v[2]];
+  const rotateBy = (deg) => { const t = deg * Math.PI / 180, c = Math.cos(t), sn = Math.sin(t); return x.pts.map(([a, b]) => [cx + (a - cx) * c - (b - cy) * sn, cy + (a - cx) * sn + (b - cy) * c]); };
+  const wantV = req !== 'level', wantH = req === 'level' || req === 'full';
+  const lines = wantV ? seg.detectLines(img, { orient: 'v' }) : [], u = wantV ? seg.estimateUpright(lines, img.width, img.height) : { mode: 'none', inliers: [] };
+  let hl = [], uh = { mode: 'none', inliers: [] };
+  const horiz = () => {
+    hl = seg.detectLines(img, { orient: 'h' }); uh = seg.estimateUpright(hl, img.width, img.height);
+    // trust the horizontals only with ≥ 3 agreeing lines covering half the width, converging no faster than a vanishing
+    // point 1.5 frame-sizes from the centre (closer ones come from two stray edges, e.g. a roof line and a shadow)
+    if (uh.mode !== 'none') {
+      const len = uh.inliers.reduce((q, i) => q + hl[i].len, 0), S = Math.max(img.width, img.height);
+      const far = !uh.vp || Math.hypot(uh.vp[0] - img.width / 2, uh.vp[1] - img.height / 2) >= 1.5 * S;
+      if (uh.inliers.length < 3 || len < 0.5 * img.width || !far) uh = { ...uh, mode: 'none', weak: true };
+    }
+  };
+  if (wantH || (req === 'auto' && u.mode === 'none')) horiz();
+  let next = null, used = req, msg = '';
+  const level = () => { // rotate so the horizontals are level at the centre of the frame
+    if (uh.mode === 'none') return null;
+    const a = seg.directionAt(toDocH(uh.vh), cx, cy, 'h');
+    if (Math.abs(a) < 0.05 || Math.abs(a) > 15) return null; // > 15° is perspective, not a tilted camera
+    msg = `${uh.inliers.length} horizontal lines levelled by rotating ${Math.round(-a * 10) / 10}°`; return rotateBy(-a);
+  };
+  if (req === 'vertical' || (req === 'auto' && u.mode !== 'none')) {
+    used = 'vertical';
+    if (u.mode === 'keystone') next = uprightFromGuides(x.pts, seg.guidesFromVP(u.vp, img.width, img.height).map((g) => g.map(toDoc)));
+    else if (u.mode === 'rotate') next = rotateBy(u.angle);
+    msg = `${u.inliers.length} vertical lines ${u.mode === 'rotate' ? `straightened by rotating ${(Math.round(u.angle * 10) / 10)}°` : 'made parallel'}`;
+  } else if (req === 'level' || req === 'auto') { used = 'level'; next = level(); }
+  else if (req === 'full') {
+    const vv = u.mode === 'none' ? null : toDocH(u.vh);
+    const area = (P) => Math.abs(P.reduce((s, p, i) => { const n = P[(i + 1) % P.length]; return s + p[0] * n[1] - n[0] * p[1]; }, 0)) / 2;
+    const tryH = (vh) => {
+      const H = (vv || vh) && seg.uprightHomography(vv, vh, cx, cy); if (!H) return null;
+      const ws = x.pts.map(([a, b]) => mesh.applyH(H, a, b)[2]); if (!ws.every((w) => w > 0.2 && w < 5)) return null;
+      let q = x.pts.map(([a, b]) => mesh.applyH(H, a, b));
+      const f = Math.sqrt(area(x.pts) / Math.max(1e-9, area(q))); // same pixel count as before
+      q = q.map(([a, b]) => [cx + (a - cx) * f, cy + (b - cy) * f]);
+      // refuse shapes no lens makes: a corner under 50° or over 130°, or opposite sides more than 2.5× apart
+      const sideL = (i) => Math.hypot(q[(i + 1) % 4][0] - q[i][0], q[(i + 1) % 4][1] - q[i][1]);
+      const ang = (i) => { const p = q[(i + 3) % 4], c = q[i], n = q[(i + 1) % 4], a1 = Math.atan2(p[1] - c[1], p[0] - c[0]), a2 = Math.atan2(n[1] - c[1], n[0] - c[0]); let d = Math.abs(a1 - a2) * 180 / Math.PI; if (d > 180) d = 360 - d; return d; };
+      if (vh && [0, 1, 2, 3].some((i) => ang(i) < 50 || ang(i) > 130)) return null; // (verticals alone: as trusted as Vertical)
+      if (vh && Math.max(sideL(0), sideL(2)) > 2.5 * Math.min(sideL(0), sideL(2)) || Math.max(sideL(1), sideL(3)) > 2.5 * Math.min(sideL(1), sideL(3))) return null;
+      return q;
+    };
+    let hUsed = uh.mode !== 'none';
+    next = hUsed ? tryH(toDocH(uh.vh)) : null;
+    if (!next && vv) { if (hUsed) uh = { ...uh, mode: 'none', weak: true }; hUsed = false; next = tryH(null); }
+    msg = hUsed ? `${vv ? `${u.inliers.length} vertical and ` : ''}${uh.inliers.length} horizontal lines straightened${vv ? '' : ' (no vertical lines found)'}`
+      : `${u.inliers.length} vertical lines straightened (${uh.weak ? 'the horizontal lines were too few or too uncertain to use' : 'no horizontal lines found'})`;
   }
-  lastUpright = { mode: u.mode, vp: u.vp ? toDoc(u.vp) : null, angle: u.angle ?? null, lines: (u.inliers || []).length, found: lines.length, ms: Math.round(performance.now() - t0) };
+  lastUpright = { req, mode: next ? used : 'none', vkind: u.mode, vp: u.vp ? toDoc(u.vp) : null, angle: u.angle ?? null, lines: (u.inliers || []).length, found: lines.length,
+    hkind: uh.mode, hweak: !!uh.weak, hvp: uh.vp ? toDoc(uh.vp) : null, hangle: uh.angle ?? null, hlines: uh.mode === 'none' ? 0 : (uh.inliers || []).length, hfound: hl.length, ms: Math.round(performance.now() - t0) };
+  if (used === 'vertical' && next) lastUpright.mode = u.mode; // 'keystone' | 'rotate' (v1.8 values)
   if (!next || !mesh.perspectiveMesh(x.w, x.h, next) || !mxfBounds(mxfMesh({ ...x, pts: next }))) {
     lastUpright.mode = 'none';
-    status(lines.length < 2 ? 'Auto upright found no long straight vertical lines. Try Guides and draw two edges yourself.' : 'Auto upright: the vertical lines already look upright (or disagree). Try Guides.');
+    const what = req === 'level' ? 'horizontal' : req === 'full' ? 'vertical or horizontal' : 'vertical';
+    const none = req === 'level' ? hl.length < 2 : req === 'full' ? lines.length < 2 && hl.length < 2 : lines.length < 2 && (req !== 'auto' || hl.length < 2);
+    status(none ? `Auto upright found no long straight ${what} lines. Try Guides and draw two edges yourself.` : `Auto upright: the ${what} lines already look straight (or disagree). Try Guides.`);
     buildOptionsBar(); requestRender(); return lastUpright;
   }
   x.pts = next; x.upright = 'auto';
   mxfPreview(); mxfRender().catch((err) => status(`Preview failed: ${err.message}`));
-  status(`Auto upright: ${u.inliers.length} vertical lines ${u.mode === 'rotate' ? `straightened by rotating ${(Math.round(u.angle * 10) / 10)}°` : 'made parallel'} · adjust the corners if needed · Enter applies, Esc cancels.`);
+  status(`Upright (${used}): ${msg} · adjust the corners if needed · Enter applies, Esc cancels.`);
   buildOptionsBar();
   return lastUpright;
 }
@@ -2758,7 +2811,7 @@ function cancelMeshXf() {
 function mxfBarParts() {
   const x = state.mxf, warp = x.mode === 'warp';
   return [`<span class="tool-title">${warp ? 'Warp' : 'Perspective'}</span>`,
-    warp ? '' : `<button data-cmd="autoUpright" title="Find the vertical lines and make them upright">Auto</button>`,
+    warp ? '' : `<span class="seg" title="Upright from the photo's straight lines">${[['autoUpright', 'auto', 'Auto', 'Make the vertical lines upright (levels from the horizontals when there are no verticals)'], ['uprightLevel', 'level', 'Level', 'Rotate so the horizontal lines are level'], ['uprightVertical', 'vertical', 'Vertical', 'Make the vertical lines upright and parallel'], ['uprightFull', 'full', 'Full', 'Straighten the verticals and the horizontals together']].map(([c, m, n, t]) => `<button data-cmd="${c}" class="${x.upright === 'auto' && lastUpright?.req === m ? 'on' : ''}" title="${t}">${n}</button>`).join('')}</span>`,
     warp ? '' : `<button data-cmd="mxfGuides" class="${x.guideMode ? 'on' : ''}" title="Draw two lines along edges that should be vertical (or horizontal)">Guides</button>`,
     warp ? '' : `<span class="seg" title="After an upright correction: crop away the empty corners, fill them from nearby pixels, or leave them transparent">${[['crop', 'Crop edges'], ['fill', 'Fill edges'], ['keep', 'Keep']].map(([k, n]) => `<button data-cmd="uprightEdges_${k}" class="${state.opts.uprightEdges === k ? 'on' : ''}">${n}</button>`).join('')}</span>`,
     warp ? `<span class="seg">${[3, 4, 5].map((n) => `<button data-cmd="mxfGrid${n}" class="${x.n === n ? 'on' : ''}" title="${n}×${n} control points">${n}×${n}</button>`).join('')}</span>` : '',
@@ -3355,7 +3408,7 @@ const cmds = {
   autoEnhance: needDoc(() => autoEnhanceCmd()),
   autoWhiteBalance: needDoc(() => autoWhiteBalanceCmd()),
   autoStraighten: needDoc(() => autoStraightenCmd()),
-  autoUpright: needDoc(() => autoUprightCmd()),
+  autoUpright: needDoc(() => autoUprightCmd('auto')), uprightLevel: needDoc(() => autoUprightCmd('level')), uprightVertical: needDoc(() => autoUprightCmd('vertical')), uprightFull: needDoc(() => autoUprightCmd('full')),
   uprightEdges_crop: () => { state.opts.uprightEdges = 'crop'; buildOptionsBar(); }, uprightEdges_fill: () => { state.opts.uprightEdges = 'fill'; buildOptionsBar(); }, uprightEdges_keep: () => { state.opts.uprightEdges = 'keep'; buildOptionsBar(); },
   cropEmptyEdges: needDoc(() => cropEmptyEdges()), fillEmptyEdges: needDoc(() => fillEmptyEdges()),
   cropFitInside: needDoc(() => { const a = cropAspect(), r0 = innerOpaqueRect({ keepRatio: false }); if (!r0) { status('No area without empty edges.'); return; }
@@ -3505,7 +3558,7 @@ const XF_SAFE = new Set(['xfApply', 'xfCancel', 'undo', 'redo', 'zoomIn', 'zoomO
 /** Commands that need pixels of the active layer: a selected group has none (only a mask). */
 const GROUP_BLOCKED = new Set(['brightnessContrast', 'hueSaturation', 'exposure', 'levels', 'curves', 'autoLevels', 'invert', 'grayscale', 'sepia',
   'gaussianBlur', 'sharpen', 'noise', 'vignette', 'convertSmart', 'rasterizeLayer', 'clear', 'cut', 'copy', 'fillSelection', 'flipLayerH', 'flipLayerV',
-  'freeTransform', 'perspective', 'guidedUpright', 'autoUpright', 'fillEmptyEdges', 'warp', 'applyMask', 'selectLayerPixels', 'editLayer']);
+  'freeTransform', 'perspective', 'guidedUpright', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'fillEmptyEdges', 'warp', 'applyMask', 'selectLayerPixels', 'editLayer']);
 function run(name) {
   closeMenus();
   if (isGroup(activeLayer()) && GROUP_BLOCKED.has(name)) {
@@ -3561,7 +3614,7 @@ const MENUS = [
   ['Image', [['Image size…', 'imageSize'], ['Resize to preset…', 'resizePresets'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], ['Crop with preset', 'cropPresetTool'], '-',
     ['Rotate 90° clockwise', 'rotateCW'], ['Rotate 90° counter-clockwise', 'rotateCCW'], ['Rotate 180°', 'rotate180'],
     ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Auto enhance', 'autoEnhance', 'Ctrl+Shift+L'], ['Auto enhance options…', 'autoEnhanceOptions'], ['Auto white balance', 'autoWhiteBalance'], ['Auto white balance options…', 'autoWBOptions'],
-    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], ['Auto upright', 'autoUpright'], ['Guided upright', 'guidedUpright'], ['Crop away empty edges', 'cropEmptyEdges'], ['Fill empty edges', 'fillEmptyEdges'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
+    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], ['Auto upright', 'autoUpright'], ['Upright: level (horizontals)', 'uprightLevel'], ['Upright: vertical', 'uprightVertical'], ['Upright: full (verticals + horizontals)', 'uprightFull'], ['Guided upright', 'guidedUpright'], ['Crop away empty edges', 'cropEmptyEdges'], ['Fill empty edges', 'fillEmptyEdges'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
   ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
     ['Object select (drag a box)', 'objectSelectTool'], ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
