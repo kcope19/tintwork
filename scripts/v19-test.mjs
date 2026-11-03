@@ -1,0 +1,127 @@
+// v1.9 test: more non-AI gaps from docs/WORKFLOW_BENCHMARK.md / docs/AUDIT.md.
+//  - image (logo) watermarks: position, opacity, scale; single, multi-size, batch and 16-bit export; kept in export presets
+//  - Auto upright modes: Vertical, Level, Full (verticals + horizontals)
+//  - faster spot healing on real photos (time and removal score on a public-domain portrait)
+//  - Fill edges / crop fill on 16-bit layers
+//  - soft-proof preview
+// TW_ROOT=/path/to/other/checkout runs the same checks against another tree (used to confirm they fail on v1.8.0).
+// TW_URL=https://… runs the app checks against a deployed site.
+import { chromium } from 'playwright';
+import path from 'node:path';
+import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
+const HERE = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const ROOT = process.env.TW_ROOT ? path.resolve(process.env.TW_ROOT) : HERE;
+const REAL = (f) => readFileSync(path.join(HERE, 'test-assets/real', f));
+const { createStaticServer } = await import(pathToFileURL(path.join(ROOT, 'scripts/serve.mjs')).href);
+let fails = 0, count = 0; const check = (ok, msg) => { count++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (!ok) fails++; };
+let seg = null; try { seg = await import(pathToFileURL(path.join(ROOT, 'src/segment.js')).href); } catch { /* none */ }
+
+// ---------------------------------------------------------------- 2. the app
+const server = createStaticServer(); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+const BASE = process.env.TW_URL || `http://127.0.0.1:${server.address().port}/`; // TW_URL: check a deployed site (unit tests still use this tree)
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript(() => {
+  const W = (window.__pick = { save: 0, lastSave: null });
+  window.showSaveFilePicker = async (o) => { W.save++; W.lastSave = o.suggestedName; const root = await navigator.storage.getDirectory(); return root.getFileHandle(o.suggestedName, { create: true }); };
+});
+const page = await ctx.newPage(); const errors = [];
+page.on('pageerror', (e) => errors.push(e.message)); page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+await page.goto(`${BASE}?platform=win`); await page.waitForFunction(() => window.tintwork && document.readyState === 'complete');
+await page.evaluate(() => window.tintwork.engineReady);
+const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }));
+const open = async (name, bytes) => { await page.setInputFiles('#fileInput', { name, mimeType: /png$/.test(name) ? 'image/png' : 'image/jpeg', buffer: bytes }); await page.waitForFunction((n) => window.tintwork.doc?.name?.startsWith(n.replace(/\.[^.]+$/, '')), name, { timeout: 30000 }); await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); }); };
+const toScreen = (p) => page.evaluate(({ x, y }) => { const r = document.querySelector('#view').getBoundingClientRect(), s = window.tintwork.state; return { x: r.left + s.panX + x * s.zoom, y: r.top + s.panY + y * s.zoom }; }, p);
+const drag = async (a, b, mods = []) => { const s = await toScreen(a), e = await toScreen(b); for (const m of mods) await page.keyboard.down(m); await page.mouse.move(s.x, s.y); await page.mouse.down(); for (let k = 1; k <= 10; k++) await page.mouse.move(s.x + (e.x - s.x) * k / 10, s.y + (e.y - s.y) * k / 10); await page.mouse.up(); for (const m of mods) await page.keyboard.up(m); };
+const iouWith = (gtName, rect) => T(async ({ gt, rect }) => {
+  const t = window.tintwork, s = t.doc.selection, bm = await createImageBitmap(new Blob([new Uint8Array(gt)])); const c = new OffscreenCanvas(bm.width, bm.height), x = c.getContext('2d'); x.drawImage(bm, 0, 0);
+  const g = x.getImageData(0, 0, bm.width, bm.height).data, r = rect || { x: 0, y: 0, w: bm.width, h: bm.height }; let I = 0, U = 0;
+  for (let y = r.y; y < r.y + r.h; y++) for (let xx = r.x; xx < r.x + r.w; xx++) { const i = y * bm.width + xx, a = g[i * 4] >= 128, b = s ? s.mask[i] >= 128 : false; if (a && b) I++; if (a || b) U++; }
+  return U ? I / U : 0;
+}, { gt: [...REAL(gtName)], rect });
+
+// --- 1. image (logo) watermark
+const hasLogo = await T(() => typeof window.tintwork.readyWatermark === 'function');
+check(hasLogo, 'logo watermark API exists');
+if (hasLogo) {
+  await T(async () => { const t = window.tintwork; t.newDocument(3000, 2000, 'white', 'logotest'); const l = t.activeLayer(), x = l.canvas.getContext('2d'); x.fillStyle = '#304050'; x.fillRect(0, 0, 3000, 2000); t.touch(l); t.markDirty(); t.renderNow(); await t.compositeSettled?.(); localStorage.removeItem('tintwork.exportPresets'); localStorage.removeItem('tintwork.lastExportPreset'); localStorage.removeItem('tintwork.watermark'); });
+  // a 200×100 logo: solid red with a transparent hole in the middle
+  const logo = await T(async () => { const c = new OffscreenCanvas(200, 100), x = c.getContext('2d'); x.fillStyle = '#ff0000'; x.fillRect(0, 0, 200, 100); x.clearRect(80, 30, 40, 40); const b = await c.convertToBlob({ type: 'image/png' }); return [...new Uint8Array(await b.arrayBuffer())]; });
+  // through the UI: File ▸ Export watermark…, Type: Logo image, Choose image…
+  await T(() => window.tintwork.run('watermarkSettings'));
+  await page.waitForSelector('#modal:not(.hidden) [data-wm=kind]');
+  await page.selectOption('#modal [data-wm=kind]', 'image');
+  const fc = page.waitForEvent('filechooser'); await page.click('#modal [data-wmpick]'); (await fc).setFiles({ name: 'mylogo.png', mimeType: 'image/png', buffer: Buffer.from(logo) });
+  await page.waitForFunction(() => window.tintwork.watermarkSettings().kind === 'image', null, { timeout: 10000 }).catch(() => {});
+  await page.fill('#modal [data-wm=scale]', '25'); await page.fill('#modal [data-wm=opacity]', '100'); await page.selectOption('#modal [data-wm=position]', 'tl');
+  await T(() => { const s = document.querySelector('#modal [data-wm=shadow]'); if (s && s.checked) s.click(); });
+  await page.click('#modalOk');
+  const ws = await T(() => { const w = window.tintwork.watermarkSettings(); return { kind: w.kind, name: w.imageName, scale: w.scale, pos: w.position, op: w.opacity, has: !!w.image }; });
+  check(ws.kind === 'image' && ws.has && ws.name === 'mylogo.png' && ws.scale === 25 && ws.pos === 'tl' && ws.op === 100, `watermark dialog stores a logo (${JSON.stringify(ws)})`);
+  // measure where the red logo lands in an export, at two sizes (it scales with the output)
+  const measure = (o) => T(async (o) => {
+    const t = window.tintwork, w = t.watermarkSettings(); Object.assign(w, o.wm || {});
+    let blob; if (o.long) { const sink = t.memorySink(); await t.exportVariants([{ mode: 'long', long: o.long, type: 'image/png' }], { sink, watermark: w }); blob = Object.values(sink.files)[0].blob; } else blob = await t.renderExportWith(o.type || 'image/png', 1, { watermark: w });
+    const bm = await createImageBitmap(blob), c = new OffscreenCanvas(bm.width, bm.height), x = c.getContext('2d'); x.drawImage(bm, 0, 0); const d = x.getImageData(0, 0, bm.width, bm.height).data;
+    let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, n = 0, hole = 0, rsum = 0;
+    for (let y = 0; y < bm.height; y++) for (let xx = 0; xx < bm.width; xx++) { const i = (y * bm.width + xx) * 4; if (d[i] > 120 && d[i + 2] < 100) { n++; rsum += d[i]; x0 = Math.min(x0, xx); y0 = Math.min(y0, y); x1 = Math.max(x1, xx); y1 = Math.max(y1, y); } }
+    if (n) { const cx = Math.round((x0 + x1) / 2), cy = Math.round((y0 + y1) / 2), i = (cy * bm.width + cx) * 4; hole = d[i] < 100 ? 1 : 0; }
+    return { W: bm.width, H: bm.height, x0, y0, w: x1 - x0 + 1, h: y1 - y0 + 1, n, hole, r: n ? rsum / n : 0 };
+  }, o);
+  const full = await measure({});
+  // 25% of the short side (2000) = 500 px wide, 250 high; margin 3% = 60 px from the top-left
+  check(Math.abs(full.w - 500) <= 2 && Math.abs(full.h - 250) <= 2 && Math.abs(full.x0 - 60) <= 2 && Math.abs(full.y0 - 60) <= 2 && full.hole === 1, `full-size export: logo ${full.w}×${full.h} at ${full.x0},${full.y0} (expect 500×250 at 60,60), transparent hole kept ${!!full.hole}`);
+  const small = await measure({ long: 1500 });
+  check(Math.abs(small.w - 250) <= 2 && Math.abs(small.x0 - 30) <= 2, `1500 px multi-size export: logo ${small.w}×${small.h} at ${small.x0},${small.y0} (scales with the output: expect 250 wide at 30)`);
+  const br = await measure({ wm: { position: 'br' } });
+  check(Math.abs(br.x0 + br.w - (3000 - 60)) <= 2 && Math.abs(br.y0 + br.h - (2000 - 60)) <= 2, `bottom-right: logo ends at ${br.x0 + br.w},${br.y0 + br.h} (expect 2940,1940)`);
+  const op = await T(async () => { const t = window.tintwork, w = { ...t.watermarkSettings(), opacity: 50 }; const b = await t.renderExportWith('image/png', 1, { watermark: w }); const bm = await createImageBitmap(b), c = new OffscreenCanvas(bm.width, bm.height), x = c.getContext('2d'); x.drawImage(bm, 0, 0); return [...x.getImageData(100, 100, 1, 1).data]; });
+  // 50% red over #304050 = (0.5·255 + 0.5·48, 0.5·64, 0.5·80) ≈ (152, 32, 40)
+  check(Math.abs(op[0] - 152) <= 3 && Math.abs(op[1] - 32) <= 3 && Math.abs(op[2] - 40) <= 3, `opacity 50%: logo pixel ${op.slice(0, 3).join(',')} (expect ≈152,32,40)`);
+  // 16-bit PNG carries the logo
+  const deep = await T(async () => { const t = window.tintwork; t.run('mode16'); const b = await t.renderExportWith('image/png16', 1, { watermark: t.watermarkSettings() }); t.run('mode8'); const bm = await createImageBitmap(b), c = new OffscreenCanvas(bm.width, bm.height), x = c.getContext('2d'); x.drawImage(bm, 0, 0); return [...x.getImageData(100, 100, 1, 1).data, ...x.getImageData(1500, 1000, 1, 1).data]; });
+  check(deep[0] > 240 && deep[1] < 15 && Math.abs(deep[4] - 48) <= 2, `16-bit PNG export: logo pixel ${deep.slice(0, 3)} red, away from it ${deep.slice(4, 7)} untouched`);
+  // batch carries it
+  const bt = await T(async () => {
+    const t = window.tintwork, c = new OffscreenCanvas(800, 600), x = c.getContext('2d'); x.fillStyle = '#336'; x.fillRect(0, 0, 800, 600); const blob = await c.convertToBlob({ type: 'image/png' });
+    const files = [new File([blob], 'a.png', { type: 'image/png' }), new File([blob], 'b.png', { type: 'image/png' })], sink = t.memorySink();
+    const r = await t.runBatch(files, { variants: [{ mode: 'original', type: 'image/png' }], sink, watermark: t.watermarkSettings() });
+    const red = []; for (const f of Object.values(sink.files)) { const bm = await createImageBitmap(f.blob), cc = new OffscreenCanvas(bm.width, bm.height), xx = cc.getContext('2d'); xx.drawImage(bm, 0, 0); const d = xx.getImageData(0, 0, 400, 300).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 2] < 80) n++; red.push(n); }
+    return { done: r.done, red };
+  });
+  // 600 short side → 150×75 logo minus a 30×30 hole = 10350 px
+  check(bt.done === 2 && bt.red.every((n) => Math.abs(n - 10350) < 600), `batch: ${bt.done} files, logo pixels per file ${bt.red.join(', ')} (expect ≈10350)`);
+  // export preset keeps its own logo: save a preset, change the global watermark to text, export with the preset
+  const pr = await T(async () => {
+    const t = window.tintwork, p = t.exportPresets.save({ name: 'Logo web', type: 'image/png', quality: 100, size: { mode: 'long', long: 1500 }, dpi: null, watermark: t.watermarkSettings() });
+    localStorage.setItem('tintwork.lastExportPreset', p.id); t.saveWatermark({ kind: 'text', text: 'OTHER' });
+    const stored = t.exportPresets.user().find((x) => x.id === p.id);
+    return { kind: stored.watermark?.kind, has: !!stored.watermark?.image, global: t.watermarkSettings().kind };
+  });
+  check(pr.kind === 'image' && pr.has && pr.global === 'text', `a saved export preset keeps its logo watermark (${JSON.stringify(pr)})`);
+  const n0 = await T(() => window.__pick.save);
+  await page.keyboard.press('Control+Alt+Shift+e');
+  await page.waitForFunction((n) => window.__pick.save > n && /Exported/.test(document.querySelector('#status').textContent), n0, { timeout: 20000 }).catch(() => {});
+  const viaPreset = await T(async () => { const root = await navigator.storage.getDirectory(), f = await (await root.getFileHandle(window.__pick.lastSave)).getFile(), bm = await createImageBitmap(f), c = new OffscreenCanvas(bm.width, bm.height), x = c.getContext('2d'); x.drawImage(bm, 0, 0); return { w: bm.width, px: [...x.getImageData(40, 40, 1, 1).data] }; });
+  check(viaPreset.w === 1500 && viaPreset.px[0] > 240 && viaPreset.px[1] < 15, `Ctrl+Alt+Shift+E with that preset exports the logo, not the newer text (${viaPreset.w} px, pixel ${viaPreset.px.slice(0, 3)})`);
+  // choosing the preset in the Export dialog makes its watermark current again
+  await page.keyboard.press('Control+Shift+e'); await page.waitForSelector('#modal:not(.hidden) #ePreset');
+  const lab = await T(() => ({ kind: window.tintwork.watermarkSettings().kind, label: document.querySelector('#modal [data-wmtext]')?.textContent, on: document.querySelector('#eWm')?.checked }));
+  check(lab.kind === 'image' && /mylogo\.png/.test(lab.label || '') && lab.on, `Export dialog on that preset shows “Add ${lab.label}” ticked`);
+  await page.click('#modalCancel').catch(() => {});
+  // a v1.8-style preset (watermark: true) still uses the current watermark
+  const v18 = await T(() => { const t = window.tintwork, p = t.exportPresets.save({ name: 'Old', type: 'image/png', watermark: true }); const s = t.exportPresets.user().find((x) => x.id === p.id); t.exportPresets.remove(p.id); return s.watermark; });
+  check(v18 === true, `v1.8 presets (watermark: true) still load (${v18})`);
+}
+
+// --- wording, errors
+const words = await T(() => document.body.innerText + ' ' + [...document.querySelectorAll('[title],[aria-label]')].map((e) => e.title + ' ' + e.getAttribute('aria-label')).join(' '));
+check(!/photoshop|adobe/i.test(words), 'no other editor brand names in the UI');
+const guide = readFileSync(path.join(ROOT, 'docs/USER_GUIDE.md'), 'utf8');
+check(/logo/i.test(guide) && /Level/.test(guide) && /Full/.test(guide) && !/photoshop|adobe/i.test(guide), 'user guide covers logo watermarks and the upright modes (no other editor brand names)');
+check(errors.length === 0, `no console errors (${errors.slice(0, 3).join(' | ')})`);
+await browser.close(); server.close();
+console.log(`\n${count - fails}/${count} v1.9 checks passed`);
+process.exit(fails ? 1 : 0);

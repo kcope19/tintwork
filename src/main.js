@@ -4339,7 +4339,7 @@ function closeModal() { $('#modal').classList.add('hidden'); const h = modalHand
 $('#modalOk').addEventListener('click', () => { const h = modalHandlers; if (h?.ok?.() === false) return; closeModal(); });
 $('#modalCancel').addEventListener('click', () => { const h = modalHandlers; h?.cancel?.(); closeModal(); });
 function openInfo(title, html) { showModal({ title, body: html, hideCancel: true, okLabel: 'Close' }); }
-const formHTML = (fields) => fields.map((f) => `<label class="field two"><span>${f.label}</span>${f.html}</label>`).join('');
+const formHTML = (fields) => fields.map((f) => `<label class="field two${f.cls ? ` ${f.cls}` : ''}"><span>${f.label}</span>${f.html}</label>`).join('');
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function openNewDialog() {
@@ -4516,9 +4516,11 @@ function openExportDialog() {
     q.value = p.quality ?? 90; body.querySelector('#eQv').textContent = q.value;
     const sz = p.size; sizeSel.value = sz ? sz.mode : 'original'; sizeV.classList.toggle('hidden', !sz);
     if (sz) sizeV.value = sz.mode === 'long' ? sz.long : sz.mode === 'width' ? sz.w : sz.pct;
-    dpiIn.value = p.dpi || doc().dpi || 72; wmBox.checked = !!p.watermark; sizeInfo(); if (canShareFiles) prepare();
+    dpiIn.value = p.dpi || doc().dpi || 72; wmBox.checked = !!p.watermark;
+    if (p.watermark && typeof p.watermark === 'object') { const nw = saveWatermark(watermarkOfPreset(p)); body.querySelectorAll('[data-wmtext]').forEach((el) => { el.textContent = watermarkLabel(nw); }); } // the preset's own watermark becomes the current one
+    sizeInfo(); if (canShareFiles) prepare();
   };
-  const presetFromForm = (name) => { const o = exportOpts(); return { name, type: fmt.value, quality: +q.value, size: o.size, dpi: +dpiIn.value || null, watermark: wmBox.checked }; };
+  const presetFromForm = (name) => { const o = exportOpts(); return { name, type: fmt.value, quality: +q.value, size: o.size, dpi: +dpiIn.value || null, watermark: wmBox.checked ? watermarkSettings() : false }; };
   pSel.addEventListener('change', () => { const p = allExportPresets().find((x) => x.id === pSel.value); if (p) applyPreset(p); fillPresets(pSel.value); });
   body.querySelector('#ePresetSave').addEventListener('click', () => {
     const name = (prompt('Preset name', allExportPresets().find((x) => x.id === pSel.value)?.name || 'My export') || '').trim(); if (!name) return;
@@ -4542,7 +4544,7 @@ function openExportDialog() {
 /** renderExport plus the export dialog's options: an optional resize ({ mode, long | w | pct }) and the ppi written
  * into the file (JPEG JFIF density / PNG pHYs). */
 async function renderExportWith(type, quality, { size = null, dpi = null, watermark = null } = {}) {
-  let blob;
+  let blob; await readyWatermark(watermark);
   if (size && type !== 'image/png16' && type !== PSD_TYPE) { blob = (await renderVariant({ ...size, type, quality: Math.round(quality * 100), watermark })).blob; lastExportNotes = []; }
   else blob = await renderExport(type, quality, { watermark });
   if (dpi && (blob.type === 'image/jpeg' || blob.type === 'image/png')) blob = await withDpi(blob, dpi);
@@ -4577,7 +4579,7 @@ function exportWithLastPreset() {
   if (!p) { status('No export preset used yet: choose one in the Export dialog first.'); openExportDialog(); return null; }
   const name = (doc().name || 'image').replace(/\.[^.]+$/, '');
   status(`Exporting with “${p.name}”…`);
-  return exportImage(p.type, (p.quality ?? 90) / 100, name, { size: p.type === 'image/png16' || p.type === PSD_TYPE ? null : p.size || null, dpi: p.dpi || null, watermark: p.watermark ? watermarkSettings() : null });
+  return exportImage(p.type, (p.quality ?? 90) / 100, name, { size: p.type === 'image/png16' || p.type === PSD_TYPE ? null : p.size || null, dpi: p.dpi || null, watermark: watermarkOfPreset(p) });
 }
 async function exportImage(type, quality, name, opts = {}) {
   if (opts.dpi == null && doc().dpi) opts = { ...opts, dpi: doc().dpi }; // a print crop's ppi goes into the file
@@ -7354,24 +7356,57 @@ function allExportPresets() { return [...BUILTIN_EXPORT_PRESETS.map((p) => ({ ..
 function saveExportPreset(p) {
   const list = userExportPresets(), old = list.find((x) => x.name === p.name);
   const q = { id: old?.id || `u-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, name: String(p.name).slice(0, 80), type: p.type, quality: Math.max(1, Math.min(100, Math.round(p.quality ?? 90))),
-    size: p.size || null, dpi: p.dpi ? Math.max(1, Math.min(2400, Math.round(p.dpi))) : null, watermark: !!p.watermark };
+    size: p.size || null, dpi: p.dpi ? Math.max(1, Math.min(2400, Math.round(p.dpi))) : null, watermark: p.watermark && typeof p.watermark === 'object' ? presetWatermark(p.watermark) : !!p.watermark };
   const next = [...list.filter((x) => x.id !== q.id), q];
   try { localStorage.setItem(EXPORT_PRESETS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   return q;
 }
+/** A preset keeps its own copy of the watermark (v1.9), so a logo preset still has its logo after the global watermark changes. */
+function presetWatermark(w) { const keep = {}; for (const k of Object.keys(WM_DEFAULT)) if (w[k] !== undefined) keep[k] = w[k]; return keep; }
+/** The watermark settings a preset exports with: its own copy, or (v1.8 presets) the current global settings. */
+function watermarkOfPreset(p) {
+  if (!p?.watermark) return null; if (p.watermark === true) return watermarkSettings();
+  const g = { ...WM_DEFAULT, ...p.watermark }; return sanitizeWatermark(g);
+}
 function deleteExportPreset(id) { try { localStorage.setItem(EXPORT_PRESETS_KEY, JSON.stringify(userExportPresets().filter((x) => x.id !== id))); if (localStorage.getItem(LAST_EXPORT_PRESET_KEY) === id) localStorage.removeItem(LAST_EXPORT_PRESET_KEY); } catch { /* ignore */ } }
-const WM_DEFAULT = { text: '© Your name', size: 4, opacity: 60, position: 'br', color: '#ffffff', margin: 3, shadow: true };
+const WM_DEFAULT = { kind: 'text', text: '© Your name', size: 4, opacity: 60, position: 'br', color: '#ffffff', margin: 3, shadow: true, image: null, imageName: '', scale: 20 };
+const WM_IMAGE_MAX = 1024, WM_IMAGE_BYTES = 1.5e6; // a logo is kept as a PNG data URL in this browser's storage
 const WM_POSITIONS = ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br'];
 function watermarkSettings() {
   let w; try { w = { ...WM_DEFAULT, ...JSON.parse(localStorage.getItem(WATERMARK_KEY) || '{}') }; } catch { w = { ...WM_DEFAULT }; }
+  return sanitizeWatermark(w);
+}
+function sanitizeWatermark(w) {
   if (!WM_POSITIONS.includes(w.position)) w.position = 'br';
   w.size = Math.max(0.5, Math.min(40, +w.size || 4)); w.opacity = Math.max(1, Math.min(100, +w.opacity || 60)); w.margin = Math.max(0, Math.min(30, +w.margin || 0));
   if (!/^#[0-9a-f]{6}$/i.test(w.color)) w.color = '#ffffff';
+  if (typeof w.image !== 'string' || !/^data:image\/(png|jpeg|webp);base64,/.test(w.image) || w.image.length > WM_IMAGE_BYTES * 1.4) w.image = null;
+  w.kind = w.kind === 'image' && w.image ? 'image' : 'text';
+  w.scale = Math.max(1, Math.min(100, +w.scale || 20)); w.imageName = String(w.imageName || '').slice(0, 120);
   return w;
+}
+/** Decoded logo images, by data URL (drawing must stay synchronous, so exports call readyWatermark first). */
+const wmLogoCache = new Map();
+async function readyWatermark(wm) {
+  if (!wm || typeof wm !== 'object' || wm.kind !== 'image' || !wm.image || wmLogoCache.has(wm.image)) return wm;
+  try { const bm = await createImageBitmap(await (await fetch(wm.image)).blob()); if (wmLogoCache.size > 8) wmLogoCache.clear(); wmLogoCache.set(wm.image, bm); }
+  catch (err) { status(`The watermark logo could not be read (${err.message}).`); }
+  return wm;
+}
+/** Turn a picked file into a stored logo: decoded, scaled to at most 1024 px, kept as PNG (transparency survives). */
+async function watermarkImageFromFile(file) {
+  const bm = await createImageBitmap(file); let side = WM_IMAGE_MAX, url = '';
+  for (let k = 0; k < 4; k++) {
+    const f = Math.min(1, side / Math.max(bm.width, bm.height)), c = makeCanvas(Math.max(1, Math.round(bm.width * f)), Math.max(1, Math.round(bm.height * f)));
+    const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(bm, 0, 0, c.width, c.height);
+    url = c.toDataURL('image/png'); c.width = 0; if (url.length <= WM_IMAGE_BYTES * 1.37) break; side = Math.round(side * 0.7);
+  }
+  bm.close?.(); return url;
 }
 function saveWatermark(w) { try { localStorage.setItem(WATERMARK_KEY, JSON.stringify({ ...watermarkSettings(), ...w })); } catch { /* ignore */ } return watermarkSettings(); }
 /** Draw the text watermark onto an output canvas. Size and margin are % of the shorter side, so every size matches. */
 function drawWatermark(cv, wm = watermarkSettings()) {
+  if (wm.kind === 'image') return drawLogoWatermark(cv, wm);
   const text = String(wm.text || '').trim(); if (!text) return false;
   const W = cv.width, H = cv.height, c = cv.getContext('2d'), short = Math.min(W, H);
   const px = Math.max(6, Math.round(short * wm.size / 100)), m = Math.round(short * wm.margin / 100), pos = wm.position || 'br';
@@ -7382,6 +7417,19 @@ function drawWatermark(cv, wm = watermarkSettings()) {
   c.globalAlpha = wm.opacity / 100;
   if (wm.shadow) { c.shadowColor = 'rgba(0,0,0,0.5)'; c.shadowBlur = Math.max(1, px * 0.08); c.shadowOffsetY = Math.max(1, px * 0.04); }
   c.fillStyle = wm.color; c.fillText(text, x, y); c.restore();
+  return true;
+}
+/** Image (logo) watermark: width = scale % of the shorter side, aspect kept, same 9 positions and margin as text. */
+function drawLogoWatermark(cv, wm) {
+  const bm = wmLogoCache.get(wm.image); if (!bm) return false;
+  const W = cv.width, H = cv.height, short = Math.min(W, H), m = Math.round(short * wm.margin / 100), pos = wm.position || 'br';
+  let w = Math.max(1, Math.round(short * wm.scale / 100)), h = Math.max(1, Math.round(w * bm.height / bm.width));
+  const maxH = Math.max(1, H - 2 * m); if (h > maxH) { w = Math.max(1, Math.round(w * maxH / h)); h = maxH; }
+  const x = pos[1] === 'l' ? m : pos[1] === 'r' ? W - m - w : Math.round((W - w) / 2);
+  const y = pos[0] === 't' ? m : pos[0] === 'b' ? H - m - h : Math.round((H - h) / 2);
+  const c = cv.getContext('2d'); c.save(); c.globalAlpha = wm.opacity / 100; c.imageSmoothingQuality = 'high';
+  if (wm.shadow) { c.shadowColor = 'rgba(0,0,0,0.45)'; c.shadowBlur = Math.max(1, h * 0.04); c.shadowOffsetY = Math.max(1, h * 0.02); }
+  c.drawImage(bm, x, y, w, h); c.restore();
   return true;
 }
 /** The same watermark on a 16-bit composite: render it 8-bit on a clear canvas and blend it in as a coverage mask. */
@@ -7396,9 +7444,10 @@ function watermarkDeep(deep, wm) {
   }
   cv.width = 0; return true;
 }
+function watermarkLabel(w) { return w.kind === 'image' ? `logo “${w.imageName || 'image'}”` : `“${w.text}”`; }
 function watermarkFieldHTML(id) {
   const w = watermarkSettings();
-  return `<span><label><input type="checkbox" id="${id}" ${localStorage.getItem(`${WATERMARK_KEY}.on`) === '1' ? 'checked' : ''}/> Add “<span data-wmtext>${escapeHtml(w.text)}</span>”</label> <button type="button" data-wmedit="${id}">Watermark…</button></span>`;
+  return `<span><label><input type="checkbox" id="${id}" ${localStorage.getItem(`${WATERMARK_KEY}.on`) === '1' ? 'checked' : ''}/> Add <span data-wmtext>${escapeHtml(watermarkLabel(w))}</span></label> <button type="button" data-wmedit="${id}">Watermark…</button></span>`;
 }
 function wireWatermarkField(root, id, onChange = () => {}) {
   const box = root.querySelector(`#${id}`);
@@ -7410,23 +7459,32 @@ function openWatermarkEditor(root, after = () => {}) {
   let panel = root.querySelector('.wm-panel'); if (panel) { panel.remove(); return; }
   const w = watermarkSettings(); panel = document.createElement('div'); panel.className = 'wm-panel';
   panel.innerHTML = formHTML([
-    { label: 'Text', html: `<input type="text" data-wm="text" value="${escapeHtml(w.text)}" maxlength="120"/>` },
-    { label: 'Size (% of short side)', html: `<input type="number" data-wm="size" min="0.5" max="40" step="0.5" value="${w.size}" style="width:72px"/>` },
+    { label: 'Type', html: `<select data-wm="kind"><option value="text" ${w.kind === 'text' ? 'selected' : ''}>Text</option><option value="image" ${w.kind === 'image' ? 'selected' : ''}>Logo image</option></select>` },
+    { label: 'Text', html: `<input type="text" data-wm="text" value="${escapeHtml(w.text)}" maxlength="120"/>`, cls: 'wm-text' },
+    { label: 'Size (% of short side)', html: `<input type="number" data-wm="size" min="0.5" max="40" step="0.5" value="${w.size}" style="width:72px"/>`, cls: 'wm-text' },
+    { label: 'Logo', html: `<span><button type="button" data-wmpick>Choose image…</button> <span class="muted small" data-wmname>${escapeHtml(w.imageName || (w.image ? 'image' : 'none (PNG with transparency works best)'))}</span></span>`, cls: 'wm-image' },
+    { label: 'Logo width (% of short side)', html: `<input type="number" data-wm="scale" min="1" max="100" step="1" value="${w.scale}" style="width:72px"/>`, cls: 'wm-image' },
     { label: 'Opacity (%)', html: `<input type="number" data-wm="opacity" min="1" max="100" value="${w.opacity}" style="width:72px"/>` },
     { label: 'Position', html: `<select data-wm="position">${WM_POSITIONS.map((p) => `<option value="${p}" ${w.position === p ? 'selected' : ''}>${({ t: 'Top', m: 'Middle', b: 'Bottom' })[p[0]]} ${({ l: 'left', c: 'centre', r: 'right' })[p[1]]}</option>`).join('')}</select>` },
     { label: 'Margin (%)', html: `<input type="number" data-wm="margin" min="0" max="30" step="0.5" value="${w.margin}" style="width:72px"/>` },
     { label: 'Color', html: `<span><input type="color" data-wm="color" value="${w.color}"/> <label><input type="checkbox" data-wm="shadow" ${w.shadow ? 'checked' : ''}/> Soft shadow</label></span>` },
   ]) + '<p class="muted small">Saved for every export, multi-size export and batch. The watermark scales with each output size.</p><button type="button" data-wmdone class="primary">Done</button>';
-  const save = () => { const o = {}; panel.querySelectorAll('[data-wm]').forEach((el) => { const k = el.dataset.wm; o[k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? +el.value : el.value; }); const nw = saveWatermark(o); root.querySelectorAll('[data-wmtext]').forEach((s) => { s.textContent = nw.text; }); };
+  const showKind = () => { const k = panel.querySelector('[data-wm=kind]').value; panel.querySelectorAll('.wm-text').forEach((el) => el.classList.toggle('hidden', k !== 'text')); panel.querySelectorAll('.wm-image').forEach((el) => el.classList.toggle('hidden', k !== 'image')); };
+  const save = () => { const o = {}; panel.querySelectorAll('[data-wm]').forEach((el) => { const k = el.dataset.wm; o[k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? +el.value : el.value; }); const nw = saveWatermark(o); showKind(); root.querySelectorAll('[data-wmtext]').forEach((s) => { s.textContent = watermarkLabel(nw); }); };
+  panel.querySelector('[data-wmpick]').addEventListener('click', () => {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/png,image/jpeg,image/webp,image/svg+xml';
+    inp.onchange = async () => { const f = inp.files?.[0]; if (!f) return; try { const url = await watermarkImageFromFile(f); const nw = saveWatermark({ kind: 'image', image: url, imageName: f.name }); await readyWatermark(nw); panel.querySelector('[data-wm=kind]').value = 'image'; panel.querySelector('[data-wmname]').textContent = f.name; save(); status(`Watermark logo: ${f.name}`); } catch (err) { status(`That image could not be used as a logo (${err.message}).`); } };
+    inp.click();
+  });
   panel.addEventListener('input', save); panel.addEventListener('change', save);
   panel.querySelector('[data-wmdone]').addEventListener('click', () => { save(); panel.remove(); after(); });
-  root.append(panel); panel.querySelector('[data-wm=text]').focus();
+  root.append(panel); showKind(); panel.querySelector(w.kind === 'image' ? '[data-wm=kind]' : '[data-wm=text]').focus();
 }
 function openWatermarkDialog() {
   const body = document.createElement('div');
   body.innerHTML = `<p class="muted">The watermark is added when “Add watermark” is ticked in Export, Export multiple sizes, Batch, or in a saved export preset.</p>`;
   openWatermarkEditor(body); body.querySelector('[data-wmdone]')?.remove();
-  showModal({ title: 'Export watermark', body, okLabel: 'Save', ok: () => { status(`Watermark saved: “${watermarkSettings().text}”.`); } });
+  showModal({ title: 'Export watermark', body, okLabel: 'Save', ok: () => { status(`Watermark saved: ${watermarkLabel(watermarkSettings())}.`); } });
 }
 
 // ---- Multi-size export and batch processing ----------------------------------------------------------------
@@ -7523,6 +7581,7 @@ function progressUI(title) {
 /** Export the active document in several sizes / formats. */
 async function exportVariants(variants, { pattern = '{name}-{preset}', sink, signal, onProgress, tokens = {}, watermark = null } = {}) {
   if (watermark) variants = variants.map((v) => ({ ...v, watermark: watermark === true ? watermarkSettings() : watermark }));
+  for (const v of variants) if (v.watermark && v.watermark !== true) await readyWatermark(v.watermark);
   const d = doc(), name = tokens.name || (d.name || 'Untitled').replace(/\.[^.]+$/, ''), uniq = uniqueNamer(), out = [];
   const needWhite = variants.some((v) => (v.type || 'image/jpeg') === 'image/jpeg'), needAlpha = variants.some((v) => v.type !== 'image/jpeg');
   const white = needWhite ? makeCanvas(d.width, d.height) : null, clear = needAlpha ? makeCanvas(d.width, d.height) : null;
@@ -7560,6 +7619,7 @@ function openExportVariantsDialog() {
  * sources: File[] or { name, getFile() }[]. Resolves { done, failed: [{ name, error }], cancelled, files }.
  */
 async function runBatch(sources, { actionId = null, lookId = null, intensity = 100, rawSettings = null, variants, pattern = '{name}-{preset}', sink, signal, onProgress, watermark = null } = {}) {
+  if (watermark && watermark !== true) await readyWatermark(watermark);
   const home = doc(), files = [], failed = []; let done = 0, n = 0;
   const uniq = uniqueNamer(), wrapSink = { write: (name, blob) => sink.write(uniq(name), blob) };
   for (const s of sources) {
@@ -7672,7 +7732,7 @@ window.tintwork = {
     stroke: async (st) => { const s = state.objSel; if (!s) return null; s.strokes.push({ fg: st.fg !== false, r: st.r || 12, pts: st.pts }); return objSelRun(); }, settled: () => objSelJob, done: objSelDone, cancel: objSelCancel, get state() { return state.objSel; } },
   autoUprightCmd, get lastUpright() { return lastUpright; }, cropEmptyEdges, fillEmptyEdges, innerOpaqueRect, segment: seg,
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
-  watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith,
+  watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
   renderVariant, exportVariants, runBatch, memorySink, zipSink, formatName, variantSize, withDpi, autoOpts, saveAutoOpts, openAutoOptionsDialog,
   // v0.8
   pickLayer: (ids) => { const d = doc(); d.activeId = ids[ids.length - 1]; d.picked = new Set(ids.length > 1 ? ids : []); updateLayersPanel(); },
