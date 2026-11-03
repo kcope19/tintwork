@@ -6,6 +6,24 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.8: object select, Auto upright, empty-edge crop/fill, export presets and watermark (2026-11-03)
+
+Closes the non-AI gaps from the v1.7 audit. Nothing uses machine learning. Measured on real public-domain/CC0 photos
+(`test-assets/real/LICENSES.md`); scorecard and counter-arguments in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+| Feature | Lightroom Classic / Camera Raw | Photoshop | Affinity Photo 2 | Pixelmator Pro | Photopea | Tintwork 1.8 |
+|---|---|---|---|---|---|---|
+| Box-to-object selection | ✅ Objects mask, brush or box (ML) | ✅ Object Selection tool, Rectangle/Lasso, Shift adds, Alt subtracts ([help](https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/select-objects-with-object-selection-tool.html)) (ML) | ✅ Select Subject / Object, 2.6+ (ML) | ✅ Select Subject (ML) | ✅ Select Subject / Object (ML) | 🟡 **Object select**: colour-model graph cut from a box + edge-aware Shift/Alt strokes. Real portrait IoU 0.72 box only, 0.91 + one stroke, 0.95 + two; held-out photo 0.97 box only. ❌ No one-click (no box) subject, no hair-level matting. |
+| Auto upright / verticals | ✅ Upright Auto, Level, Vertical, Full, Guided ([help](https://helpx.adobe.com/lightroom-classic/desktop/help/upright-automatic-perspective-correction.html)) | ✅ via Camera Raw | 🟡 by eye | 🟡 by eye | 🟡 by eye | ✅ **Auto upright** (vertical lines only) + Guided. Real photos: residual ≤ 0.23° (church/towers), −0.50° / 0.10° (high-rise). ❌ No Level / Full modes; can over-correct deliberately tilted shots. |
+| No empty corners after a correction | ✅ Constrain Crop | ✅ Content-aware crop fill | 🟡 manual | 🟡 manual | 🟡 manual | ✅ Crop edges (default) / Fill edges (8-bit, from nearby pixels, not content-aware) / Keep; Fit inside image in Crop. |
+| Saved export presets | ✅ Export With Preset, Export With Previous ([help](https://helpx.adobe.com/lightroom-classic/desktop/export-photos/export-presets-settings-plug-ins.html)) | 🟡 Export As remembers last | ✅ Export presets | — not checked | — not checked | ✅ 4 built-in + your own; Export with last preset (Ctrl+Alt+Shift+E). ❌ No export destination/rename in a preset (batch has its own naming). |
+| Watermark on export | ✅ Watermark Editor, text or image ([help](https://helpx.adobe.com/lightroom-classic/desktop/workspace/using-watermark-editor.html)) | ❌ not in Export As (actions instead) | — not checked | — not checked | — not checked | ✅ Text watermark on Export, multiple sizes and batch, scales per size. ❌ No image/logo watermark; not on PSD. |
+| Exclusion blend accuracy (8-bit) | — | — | — | — | — | ✅ exact (was ≤ 1.76/255 off). |
+
+### Summary
+Scorecard (21 jobs incl. 9 real-photo / new jobs): see WORKFLOW_BENCHMARK.md. The remaining largest gaps are the ML
+features (one-click subject/sky, generative remove, AI denoise), Upright Level/Full modes and image watermarks.
+
 ## v1.7: workflow benchmark, print resolution, guided upright, typed values, keyboard menus (2026-11-02)
 
 Measured, not just listed: 12 everyday jobs scripted against the live site and scored against step counts from each
