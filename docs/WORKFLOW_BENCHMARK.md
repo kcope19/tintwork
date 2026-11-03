@@ -1,4 +1,76 @@
-# Workflow benchmark (v1.6.0 → v1.7.0)
+# Workflow benchmark (v1.7.0 → v1.8.0)
+
+v1.8 adds nine jobs (13–21) that use **real photos** (public domain / CC0, `test-assets/real/LICENSES.md`) and the new
+features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from v1.7 (below, kept for history).
+
+**Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
+v1.8.0, 3 runs after deploy (see the table). Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
+
+## v1.8 scorecard (real photos and new features)
+
+How the new jobs are measured:
+- **Subject selection (14, 21, 15):** IoU (overlap ÷ union) of the selection with the cut-out that Wikimedia Commons
+  publishes for the same photo. Job 14 measures inside the cut-out's frame (its cut-out is cropped); job 21 measures the
+  whole frame. Pass > 0.9 (14), > 0.8 (21). **Disclosure:** stroke weight and reach were tuned on job 14's photo; job 21's
+  photo was used only after tuning (box only, no strokes), as a holdout.
+- **Upright (16–18):** before and after, straight architectural edges are measured by a sub-pixel least-squares edge
+  fit on the photo (independent of the app's line detector, which works on a 640 px copy). Edges are only used where at
+  least half of the rows support the fit; the first seed edges I picked in v1.8 development had 13–33% support (they
+  spanned several structures) and were replaced. Pass: every edge within 0.5° of vertical after the correction.
+- **Blemish (13):** mean colour error inside a spot painted onto a real portrait, against the untouched photo.
+
+| # | Job | Before (v1.7, live) | After (v1.8, live) | Tintwork steps excl. open | Competitors (docs) | Verdict |
+|---|-----|------|------|------|------|------|
+| 13 (3R) | Remove a blemish on a real portrait | pass 3/3: error 25.0 → 5.3 levels (79% removed) | AFTER13 | 2 | 2 in all five | **trails** |
+| 14 (4R) | Select a real subject (box + 2 strokes) | fail 3/3: no object select | AFTER14 | 5 | Photoshop Object Selection 2, Lightroom Select Subject 2, Pixelmator Pro 3, Affinity 4, Photopea 4 | **trails** |
+| 21 (4R) | Holdout subject, box only | fail 3/3: no object select | AFTER21 | 3 | as above | **trails (closer)** |
+| 15 | Baseline: same subject with the magic wand (v1.7 route) | IoU 0.201 (fails by design) | AFTER15 | 10 | — | baseline |
+| 16 (10R) | Auto upright, church among towers | fail 3/3: no Auto | AFTER16 | 3 | Lightroom Upright Auto 2, Camera Raw 4, Affinity 5, Pixelmator Pro 4, Photopea 5 | **trails** |
+| 17 (10R) | Auto upright, high-rise looking up | fail 3/3: no Auto | AFTER17 | 3 | as above | **trails** |
+| 18 (10R) | Guided upright on the church photo | not measurable on v1.7 (no correction record in the test API) | AFTER18 | 5 | Lightroom Guided 5, Camera Raw 7, Affinity 5, Pixelmator Pro 4, Photopea 5 | **matches** |
+| 19 | Export for web with a saved preset + watermark | fail 3/3: no presets | AFTER19 | 7 first time, **1** after | Lightroom 6 first time, 1–2 after | **matches** |
+| 20 | Batch 6 photos to 2048 px with a watermark | fail 3/3: no batch watermark | AFTER20 | 12 | Lightroom 6–7 (export preset with watermark) | **trails** |
+| 10 | Converging verticals, synthetic building | pass 3/3 via Guided, 7 steps | AFTER10 | 3 (Auto) | Lightroom 2 | **trails** |
+
+**Summary (v1.8): 0 beat, 2 match (18, 19), the rest trail; 1 real-photo upright job fails its own 0.5° bar.**
+
+### The case against each verdict
+
+- **13 Blemish (real photo)** — Passes, but removes 79% of the error, not 100%, and took about 76 s per run on this
+  box's software renderer (v1.7 the same). Lightroom's Remove tool (generative) and Photoshop's Spot Healing
+  (content-aware) are documented for real texture; nothing here shows Tintwork matching them. Job 3's "matches"
+  (synthetic flat skin, Δ 0) is withdrawn: **trails**.
+- **14 Object select** — 0.954 needs a box and two strokes (5 steps); the box alone gives 0.72 on this photo (the dark
+  suit against a dark background is the weak spot). Photoshop's Object Selection tool takes a box and selects the object
+  with ML ([help](https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/select-objects-with-object-selection-tool.html)); Lightroom/Pixelmator/Photopea have one-click Select Subject. The strokes were tuned on this
+  photo; untuned stroke placements gave 0.91–0.92. A wrong stroke hurts more than a missing one, and a stroke reach
+  above about 200 px over-grows. **Trails.** (Job 4, synthetic, now takes 11 steps instead of 12 with Object select.)
+- **21 Holdout** — 0.974 with the box alone on a photo not used for tuning is good, but one photo with a clean
+  background is not a sample; ML tools need no box. **Trails (closer).**
+- **16/17 Auto upright** — Church: every measured edge within 0.23°. High-rise: −0.50° / 0.10°, failing the 0.5° bar by
+  rounding; Guided gets 0.02–0.12° on the church. On a diagonal shot (c1, Copley Place) Auto applies a keystone that a
+  person would not want (Esc cancels; Guided is the fix). Lightroom's Upright also has Level, Full and Vertical modes
+  and constrain crop ([help](https://helpx.adobe.com/lightroom-classic/desktop/help/upright-automatic-perspective-correction.html)); Tintwork only corrects verticals. **Trails.**
+- **18 Guided upright** — Same step count as Lightroom Guided, edges within 0.12° and the empty corners cropped by
+  default (Lightroom: Constrain Crop). Counter-argument: Lightroom allows up to four guides (verticals and horizontals
+  together) and shows a loupe while drawing; Tintwork takes two. Kept as **matches** for two-edge vertical fixes only.
+- **19 Export preset + watermark** — First export 7 steps vs Lightroom's 6; repeats are 1 step (Ctrl+Alt+Shift+E), like
+  Lightroom's Export With Previous ([help](https://helpx.adobe.com/lightroom-classic/desktop/export-photos/export-presets-settings-plug-ins.html)).
+  Counter-argument: Lightroom's Watermark Editor also places image (logo) watermarks and exports to a chosen folder with
+  renaming ([help](https://helpx.adobe.com/lightroom-classic/desktop/workspace/using-watermark-editor.html)); Tintwork's is text only. **Matches** for a text watermark only.
+- **20 Batch with watermark** — Works (6 files, watermark in every one), but 12 steps vs Lightroom's preset export of a
+  selection. **Trails.**
+- **10 Verticals (synthetic)** — Auto upright does it in 3 steps, outer windows lean ≤ 0.09° on average (the 7° lean I
+  flagged in v1.7 was the test image: its outer windows were drawn as upright rectangles, not in perspective; with
+  windows drawn in perspective the lean after Auto is −0.09° / 0.00°). Lightroom needs 2. **Trails.**
+
+### Verdict changes from v1.7
+- Job 3: *matches on steps* → **trails** (real photo shows 79% removal, not Δ 0).
+- Job 6 (watermark): *matches for one image, trails for many* → still **matches for one**, and for many now
+  depends on the batch route (job 20: trails).
+
+## v1.7 scorecard (jobs 1–12, history)
+
 
 `npm run bench:workflows` (local working tree) or `node scripts/workflows-bench.mjs <url> --label <name> --runs 3` scripts
 twelve everyday jobs with Playwright in Chromium at 1280×800, the way a mouse-and-keyboard user on Windows does them
