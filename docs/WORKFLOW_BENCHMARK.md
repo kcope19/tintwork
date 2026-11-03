@@ -33,6 +33,13 @@ The runs:
 **Summary (v1.9): 0 beat, 2 match (18, 19), every other job trails (now 24 jobs). Job 17 still fails its own 0.5° bar.**
 The new features turned three jobs from *fail* into *pass*, but none of them reaches a competitor's step count or capability.
 
+### Live verification (v1.9.0)
+
+Pages finished deploying at 8:58 AM America/New_York on 2026-11-03.
+- `TW_URL=https://kcope19.github.io/tintwork/ node scripts/v19-test.mjs` passed 36/36, three times out of three.
+- The live bench (jobs 13, 16–20, 22–24, 3 runs each) matched the local results exactly. Job 17 failed 3/3 as before; everything else passed 3/3.
+- Screenshots: `screenshots/19-live-upright-modes.png` shows the Auto · Level · Vertical · Full bar, and the status line saying Full fell back to the verticals on the church photo. `screenshots/19-live-logo-watermark.png` shows the logo watermark dialog.
+
 ### Healing: speed and quality, honestly
 
 - **Speed:** in the v1.8 bench, job 13 took about 66–76 s per run. Timing the app itself showed this was the benchmark
