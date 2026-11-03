@@ -7,6 +7,18 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.8 (object select, Auto upright, export presets and watermark)
+
+v1.8 closes the non-AI gaps from the v1.7 self-audit. Nothing here uses machine learning; see [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md) for how each one was measured on real public-domain/CC0 photos.
+
+- **Object select** (press W twice, or Select ▸ Object select): drag a box around the subject; a colour-model graph cut finds it and an edge-aware smoothing pass refines the outline. **Shift-paint** adds parts it missed and **Alt-paint** removes background; strokes follow edges (geodesic distance), so a rough stroke stays inside the object. On a real portrait the box alone overlaps the true subject by 72% (IoU), one Shift stroke gives 91% and one more Alt stroke 95%; on a held-out photo the box alone gives 97%.
+- **Auto upright** (Image menu, or **Auto** in Edit ▸ Perspective): finds long straight edges, estimates their vanishing point and corrects converging verticals in one click, or rotates when they are parallel but tilted. Guided upright is still there for photos where Auto guesses wrong.
+- **No empty corners:** after an upright correction choose **Crop edges** (default), **Fill edges** (fills from nearby pixels, 8-bit) or **Keep**. Also Image ▸ Crop away empty edges / Fill empty edges, and **Fit inside image** in the Crop tool.
+- **Export presets:** Web, Email, Print and Lossless PNG built in, plus your own (format, quality, size, ppi, watermark). File ▸ **Export with last preset** (Ctrl+Alt+Shift+E) exports in one step.
+- **Watermark on export:** a saved text watermark (size, opacity, position, margin, colour, shadow) added to exported files only, including Export multiple sizes and Batch process; it scales with each output size.
+- **Exact Exclusion blend in 8-bit** (was up to 1.76/255 off the W3C formula with semi-transparent layers).
+- Real test photos with licences in `test-assets/real/`; `scripts/v18-test.mjs` joins `npm test`; the workflow bench grows to 21 jobs.
+
 ## What's new in v1.7 (workflow benchmark, site audit and fixes)
 
 v1.7 comes from a self-audit: 12 everyday jobs scripted against the live site, plus checks of the site itself, the image math, data safety, privacy and keyboard use. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md) and [docs/AUDIT.md](docs/AUDIT.md).

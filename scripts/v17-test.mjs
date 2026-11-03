@@ -105,7 +105,10 @@ if (menuHas) {
   const mid = await T(() => ({ guides: window.tintwork.mxf?.guides?.length, bar: document.querySelector('#optionsbar').textContent }));
   check(mid.guides === 1 && /second line/i.test(mid.bar), `after one guide the options bar asks for a second (${mid.guides}, "${(mid.bar || '').slice(0, 60)}")`);
   await drag([ex(300)[1], 300], [ex(2200)[1], 2200]);
-  await page.waitForTimeout(400); await page.keyboard.press('Enter');
+  await page.waitForTimeout(400);
+  // v1.8 crops the empty corners by default; this check measures the uncropped geometry, so it picks Keep when offered
+  const keep = page.locator('#optionsbar [data-cmd="uprightEdges_keep"]'); if (await keep.count()) await keep.click();
+  await page.keyboard.press('Enter');
   await page.waitForFunction(() => !window.tintwork.mxf, null, { timeout: 15000 }).catch(() => {});
   const e = await T(async () => { const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), x = c.getContext('2d'); const scan = (y, dir) => { const d = x.getImageData(0, y, c.width, 1).data; for (let k = 0; k < c.width; k++) { const i = dir > 0 ? k : c.width - 1 - k, j = i * 4; if (d[j + 3] > 200 && d[j] < 110 && d[j + 1] < 100) return i; } return -1; }; return [scan(360, 1), scan(2040, 1), scan(360, -1), scan(2040, -1)]; });
   check(e.every((v) => v > 0) && Math.abs(e[0] - e[1]) <= 6 && Math.abs(e[2] - e[3]) <= 6, `guided upright makes both walls vertical (left ${e[0]}→${e[1]}, right ${e[2]}→${e[3]})`);
