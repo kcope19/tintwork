@@ -479,6 +479,55 @@ export function detectLines(img, { orient = 'v', maxDeg = 25, minLenFrac = 0.12,
   return lines;
 }
 /**
+ * v1.10: re-fit detected segments on a sharper copy of the image (`img`, `s` × the size the lines were found at).
+ * Each row (verticals) or column (horizontals) of the segment gets the sub-pixel position of the strongest gradient
+ * across it within ±(1.5·s + 2) px, keeping one edge polarity; a weighted least-squares line through those positions
+ * (two passes, dropping points > 1.5 px off) replaces the segment. Returned in the original (small) coordinates, so
+ * the vanishing-point fit is the same; only the line positions are better. Segments that cannot be re-fit are kept.
+ */
+export function refineLines(lines, img, s, orient = 'v') {
+  if (!lines.length || !(s > 1.05)) return lines;
+  const W = img.width, H = img.height, d = img.data, vert = orient === 'v';
+  const lum = (x, y) => { const i = (y * W + x) * 4; return 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; };
+  const hw = Math.ceil(1.5 * s) + 2;
+  return lines.map((l) => {
+    const x1 = l.x1 * s, y1 = l.y1 * s, x2 = l.x2 * s, y2 = l.y2 * s;
+    const u0 = Math.ceil(Math.min(vert ? y1 : x1, vert ? y2 : x2)) + 1, u1 = Math.floor(Math.max(vert ? y1 : x1, vert ? y2 : x2)) - 1;
+    const N = vert ? H : W, M = vert ? W : H; if (u1 - u0 < 8) return l;
+    const at = (u) => { const t = ((vert ? u - y1 : u - x1)) / ((vert ? y2 - y1 : x2 - x1) || 1); return vert ? x1 + (x2 - x1) * t : y1 + (y2 - y1) * t; };
+    const pts = [];
+    for (let u = u0; u <= u1; u++) {
+      if (u < 1 || u >= N - 1) continue;
+      const c = Math.round(at(u)); let best = 0, bv = 0, bs = 0;
+      const g = (v) => { // gradient across the line at (u, v), averaged over 3 rows along it
+        if (v < 1 || v >= M - 1) return 0; let q = 0;
+        for (let k = -1; k <= 1; k++) { const uu = Math.min(N - 1, Math.max(0, u + k)); q += vert ? lum(v + 1, uu) - lum(v - 1, uu) : lum(uu, v + 1) - lum(uu, v - 1); }
+        return q;
+      };
+      const gs = []; for (let v = c - hw - 1; v <= c + hw + 1; v++) gs.push(g(v));
+      for (let j = 1; j < gs.length - 1; j++) { const a = Math.abs(gs[j]); if (a > best && a >= Math.abs(gs[j - 1]) && a >= Math.abs(gs[j + 1])) { best = a; bv = j; bs = Math.sign(gs[j]); } }
+      if (best < 24) continue;
+      const am = Math.abs(gs[bv - 1]), a0 = best, ap = Math.abs(gs[bv + 1]), den = am - 2 * a0 + ap, off = den < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (am - ap) / den)) : 0;
+      pts.push([u, c - hw - 1 + bv + off, best, bs]);
+    }
+    if (pts.length < 0.5 * (u1 - u0 + 1)) return l;
+    const pol = Math.sign(pts.reduce((q, p) => q + p[3] * p[2], 0)); let P = pts.filter((p) => p[3] === pol);
+    let fit = null;
+    for (let pass = 0; pass < 2; pass++) {
+      let sw = 0, su = 0, sv = 0, suu = 0, suv = 0; for (const [u, v, w] of P) { sw += w; su += w * u; sv += w * v; suu += w * u * u; suv += w * u * v; }
+      const den = sw * suu - su * su; if (!(sw > 0) || Math.abs(den) < 1e-9) return l;
+      const a = (sw * suv - su * sv) / den; fit = [a, (sv - a * su) / sw];
+      if (pass === 0) { const Q = P.filter(([u, v]) => Math.abs(v - (fit[0] * u + fit[1])) <= 1.5); if (Q.length < 0.4 * (u1 - u0 + 1)) return l; P = Q; }
+    }
+    const ua = P[0][0], ub = P[P.length - 1][0], pt = (u) => vert ? [(fit[0] * u + fit[1]) / s, u / s] : [u / s, (fit[0] * u + fit[1]) / s];
+    const [X1, Y1] = pt(ua), [X2, Y2] = pt(ub);
+    // a re-fit that turns the segment by more than 1° found a different edge: keep the original
+    const ang = vert ? Math.atan2(X2 - X1, Y2 - Y1) * 180 / Math.PI : Math.atan2(Y2 - Y1, X2 - X1) * 180 / Math.PI;
+    if (Math.abs(ang - l.angle) > 1) return l;
+    return { ...l, x1: X1, y1: Y1, x2: X2, y2: Y2, len: Math.hypot(X2 - X1, Y2 - Y1), angle: ang, refined: true };
+  });
+}
+/**
  * Fit a vanishing point to near-vertical segments (RANSAC over pairs, weighted by length, then least squares).
  * Returns { mode: 'none' | 'rotate' | 'keystone', angle (deg, for 'rotate'), vp: [x, y] (for 'keystone'), inliers, lines }.
  */

@@ -12,5 +12,8 @@ All files come from Wikimedia Commons and are public domain or CC0. They are use
 | c4.jpg | File:Cross among skyscrapers (Unsplash).jpg | CC0 | Louis Moncouyoux |
 | c6.jpg | File:Apartment High Rise Building (Unsplash).jpg | CC0 | Jimmy Chang |
 | c1.jpg | File:Copley Place, Boston, United States (Unsplash).jpg | CC0 | Tom Skarbek-Wazynski |
+| tower.jpg | File:White office building (Unsplash).jpg (Commons' 1280 px thumbnail) | CC0 | Michael Moloney |
+| library.jpg | File:Trinity College Dublin (Unsplash).jpg (Commons' 1280 px thumbnail) | CC0 | Dmitrij Paskevic |
+| brick.jpg | File:Old brick building (Unsplash).jpg (Commons' 1280 px thumbnail) | CC0 | Michael Browning |
 
-Upright "truth" edges used by the benchmark (jobs 16–18) are straight architectural edges measured by a sub-pixel least-squares edge fit on the original photo; only edges where at least half of the rows support the fit are used (see docs/WORKFLOW_BENCHMARK.md).
+Upright "truth" edges used by the benchmark (jobs 16–18) are straight architectural edges measured by a sub-pixel least-squares edge fit on the original photo; only edges where at least half of the rows support the fit are used (see docs/WORKFLOW_BENCHMARK.md). `tower.jpg`, `library.jpg` and `brick.jpg` (v1.10) were added after the v1.10 upright change was written and were not used to tune it (held out); their edges were measured once with the same fit and checked by eye on an overlay. On `library.jpg` the leaning ladder is not a vertical and is not used.

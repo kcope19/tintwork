@@ -96,6 +96,61 @@ const resetStore = () => T(async () => { for (const k of Object.keys(localStorag
   check(tall[0] === 75 && tall[1] === 300, `a tall logo with Fit stays inside 30 % of the height (${tall.join('×')}, expected 75×300)`);
 }
 
+// --- 3/4. upright on real photos: lines re-fitted on a sharper copy (v1.10). Same edge fit as the benchmark (copied).
+/** JS port of the sub-pixel edge fit used to measure real photos: strongest horizontal gradient within ±win px of a seed line. */
+const edgeAngle = (page, seeds, win = 4) => page.evaluate(async ({ seeds, win }) => {
+  const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), W = c.width, H = c.height, d = c.getContext('2d').getImageData(0, 0, W, H).data;
+  const g = (x, y) => 0.299 * d[(y * W + x) * 4] + 0.587 * d[(y * W + x) * 4 + 1] + 0.114 * d[(y * W + x) * 4 + 2];
+  return seeds.map(([[x1, y1], [x2, y2]]) => {
+    const xs = [], ys = [];
+    if (Math.abs(x2 - x1) > Math.abs(y2 - y1)) { // v1.10: a horizontal edge, the same fit with x and y swapped (strongest vertical gradient per column)
+      for (let x = Math.ceil(Math.min(x1, x2)); x < Math.max(x1, x2); x++) {
+        if (x < 0 || x >= W) continue; const yr = y1 + (y2 - y1) * (x - x1) / (x2 - x1), a = Math.round(yr - win), b = Math.round(yr + win); if (a < 1 || b >= H - 1) continue;
+        let k = -1, best = 12; const col = []; for (let y = a; y <= b; y++) { const v = Math.abs(g(x, y + 1) - g(x, y - 1)); col.push(v); if (v > best) { best = v; k = y - a; } }
+        if (k < 0) continue; let dy = 0; if (k > 0 && k < col.length - 1) { const l = col[k - 1], cc = col[k], r = col[k + 1], den = l - 2 * cc + r; dy = den ? 0.5 * (l - r) / den : 0; }
+        ys.push(a + k + dy); xs.push(x);
+      }
+      let keep = xs.map(() => true), s = 0, c0 = 0;
+      for (let it = 0; it < 5; it++) { const idx = xs.map((_, i) => i).filter((i) => keep[i]); const n = idx.length; if (n < 10) return { deg: null, n, h: true }; const mx = idx.reduce((q, i) => q + xs[i], 0) / n, my = idx.reduce((q, i) => q + ys[i], 0) / n; let sxy = 0, sxx = 0; for (const i of idx) { sxy += (xs[i] - mx) * (ys[i] - my); sxx += (xs[i] - mx) ** 2; } s = sxy / sxx; c0 = my - s * mx; keep = ys.map((y, i) => Math.abs(y - (s * xs[i] + c0)) < 1.5); }
+      return { deg: Math.atan(s) * 180 / Math.PI, n: keep.filter(Boolean).length, of: xs.length, h: true };
+    }
+    for (let y = Math.ceil(Math.min(y1, y2)); y < Math.max(y1, y2); y++) {
+      if (y < 0 || y >= H) continue; const xr = x1 + (x2 - x1) * (y - y1) / (y2 - y1), a = Math.round(xr - win), b = Math.round(xr + win); if (a < 1 || b >= W - 1) continue;
+      let k = -1, best = 12; const row = []; for (let x = a; x <= b; x++) { const v = Math.abs(g(x + 1, y) - g(x - 1, y)); row.push(v); if (v > best) { best = v; k = x - a; } }
+      if (k < 0) continue; let dx = 0; if (k > 0 && k < row.length - 1) { const l = row[k - 1], cc = row[k], r = row[k + 1], den = l - 2 * cc + r; dx = den ? 0.5 * (l - r) / den : 0; }
+      xs.push(a + k + dx); ys.push(y);
+    }
+    let keep = xs.map(() => true), s = 0, c0 = 0, res = [];
+    for (let it = 0; it < 5; it++) { const idx = xs.map((_, i) => i).filter((i) => keep[i]); const n = idx.length; if (n < 10) return { deg: null, n }; const my = idx.reduce((q, i) => q + ys[i], 0) / n, mx = idx.reduce((q, i) => q + xs[i], 0) / n; let sxy = 0, syy = 0; for (const i of idx) { sxy += (ys[i] - my) * (xs[i] - mx); syy += (ys[i] - my) ** 2; } s = sxy / syy; c0 = mx - s * my; res = xs.map((x, i) => Math.abs(x - (s * ys[i] + c0))); keep = res.map((r) => r < 1.5); }
+    return { deg: Math.atan(s) * 180 / Math.PI, n: keep.filter(Boolean).length, of: xs.length };
+  });
+}, { seeds, win });
+/** Map points of the original photo through the last upright correction (homography, then the edge crop). */
+const mapUpright = (page, pts) => page.evaluate((pts) => { const u = window.tintwork.lastUpright, H = u.H, c = u.crop || { x: 0, y: 0 }; return pts.map(([x, y]) => { const w = H[6] * x + H[7] * y + H[8]; return [(H[0] * x + H[1] * y + H[2]) / w - c.x, (H[3] * x + H[4] * y + H[5]) / w - c.y]; }); }, pts);
+const uprightRun = async (file, cmd, seeds) => {
+  await open(file, REAL(file)); const before = await edgeAngle(page, seeds);
+  await T((c) => window.tintwork.run(c), cmd); await page.keyboard.press('Enter');
+  await page.waitForFunction(() => !window.tintwork.mxf, null, { timeout: 20000 }).catch(() => {}); await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
+  const lu = await T(() => window.tintwork.lastUpright); if (!lu?.H) return { before, after: [], lu };
+  const mapped = []; for (const sd of seeds) mapped.push(await mapUpright(page, sd));
+  return { before, after: await edgeAngle(page, mapped), lu };
+};
+const fmt = (es) => es.map((e) => (e.deg == null ? '—' : `${e.deg.toFixed(2)}°`)).join(' / ');
+{
+  await T(() => { window.tintwork.state.opts.uprightEdges = 'crop'; });
+  // job 17's high-rise: both measured edges within 0.5° (v1.9: −0.50° / 0.10°)
+  const c6 = await uprightRun('c6.jpg', 'autoUpright', [[[481, 368], [449, 573]], [[845, 368], [887, 598]]]);
+  check(c6.after.length === 2 && c6.after.every((e) => e.deg != null && Math.abs(e.deg) < 0.5 && e.n >= 0.5 * e.of), `Auto upright on the high-rise: ${fmt(c6.before)} → ${fmt(c6.after)} (bar 0.5°)`);
+  // held-out tower (added after the change, not used to tune it)
+  const tw = await uprightRun('tower.jpg', 'autoUpright', [[[640, 235], [643, 539]], [[801, 235], [813, 501]], [[939, 345], [956, 549]]]);
+  check(tw.after.length === 3 && tw.after.every((e) => e.deg != null && Math.abs(e.deg) < 0.5 && e.n >= 0.5 * e.of), `held-out tower, Auto upright: ${fmt(tw.before)} → ${fmt(tw.after)} (bar 0.5°)`);
+  // Full on the held-out shop front: horizontals are used and their worst tilt drops by at least 2/3.
+  // (Weaker than the 0.5° bar: the photo does NOT reach 0.5° on every edge; see docs/WORKFLOW_BENCHMARK.md.)
+  const br = await uprightRun('brick.jpg', 'uprightFull', [[[1030, 572], [1274, 594]], [[1072, 615], [1189, 623]], [[1035, 817], [1274, 823]]]);
+  const worst = (es) => Math.max(...es.filter((e) => e.deg != null && e.of).map((e) => Math.abs(e.deg)));
+  check(br.lu?.hlines >= 3 && br.after.length === 3 && worst(br.after) < worst(br.before) / 3, `held-out shop front, Full: ${br.lu?.hlines} horizontal lines used, horizontals ${fmt(br.before)} → ${fmt(br.after)}`);
+}
+
 console.log(errors.length ? `page errors: ${errors.slice(0, 3).join(' | ')}` : 'no page errors');
 check(!errors.length, 'no page errors');
 await browser.close(); server.close();

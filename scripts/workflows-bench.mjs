@@ -155,6 +155,17 @@ const edgeAngle = (page, seeds, win = 4) => page.evaluate(async ({ seeds, win })
   const g = (x, y) => 0.299 * d[(y * W + x) * 4] + 0.587 * d[(y * W + x) * 4 + 1] + 0.114 * d[(y * W + x) * 4 + 2];
   return seeds.map(([[x1, y1], [x2, y2]]) => {
     const xs = [], ys = [];
+    if (Math.abs(x2 - x1) > Math.abs(y2 - y1)) { // v1.10: a horizontal edge, the same fit with x and y swapped (strongest vertical gradient per column)
+      for (let x = Math.ceil(Math.min(x1, x2)); x < Math.max(x1, x2); x++) {
+        if (x < 0 || x >= W) continue; const yr = y1 + (y2 - y1) * (x - x1) / (x2 - x1), a = Math.round(yr - win), b = Math.round(yr + win); if (a < 1 || b >= H - 1) continue;
+        let k = -1, best = 12; const col = []; for (let y = a; y <= b; y++) { const v = Math.abs(g(x, y + 1) - g(x, y - 1)); col.push(v); if (v > best) { best = v; k = y - a; } }
+        if (k < 0) continue; let dy = 0; if (k > 0 && k < col.length - 1) { const l = col[k - 1], cc = col[k], r = col[k + 1], den = l - 2 * cc + r; dy = den ? 0.5 * (l - r) / den : 0; }
+        ys.push(a + k + dy); xs.push(x);
+      }
+      let keep = xs.map(() => true), s = 0, c0 = 0;
+      for (let it = 0; it < 5; it++) { const idx = xs.map((_, i) => i).filter((i) => keep[i]); const n = idx.length; if (n < 10) return { deg: null, n, h: true }; const mx = idx.reduce((q, i) => q + xs[i], 0) / n, my = idx.reduce((q, i) => q + ys[i], 0) / n; let sxy = 0, sxx = 0; for (const i of idx) { sxy += (xs[i] - mx) * (ys[i] - my); sxx += (xs[i] - mx) ** 2; } s = sxy / sxx; c0 = my - s * mx; keep = ys.map((y, i) => Math.abs(y - (s * xs[i] + c0)) < 1.5); }
+      return { deg: Math.atan(s) * 180 / Math.PI, n: keep.filter(Boolean).length, of: xs.length, h: true };
+    }
     for (let y = Math.ceil(Math.min(y1, y2)); y < Math.max(y1, y2); y++) {
       if (y < 0 || y >= H) continue; const xr = x1 + (x2 - x1) * (y - y1) / (y2 - y1), a = Math.round(xr - win), b = Math.round(xr + win); if (a < 1 || b >= W - 1) continue;
       let k = -1, best = 12; const row = []; for (let x = a; x <= b; x++) { const v = Math.abs(g(x + 1, y) - g(x - 1, y)); row.push(v); if (v > best) { best = v; k = x - a; } }
@@ -536,6 +547,17 @@ const JOBS = [
     const outs = await page.evaluate(async () => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-out'); const r = []; for await (const [n, h] of dir.entries()) { const f = await h.getFile(); const b = await createImageBitmap(f); const c = new OffscreenCanvas(b.width, b.height), x = c.getContext('2d'); x.drawImage(b, 0, 0); const f0 = x.getImageData(10, 10, 1, 1).data; const red = (rx, ry, rw, rh) => { const d = x.getImageData(rx, ry, rw, rh).data; let k = 0; for (let i = 0; i < d.length; i += 4) if ((d[i] + d[i + 2]) / 2 - d[i + 1] > 110 && Math.abs(d[i] - d[i + 2]) < 60 && Math.abs(d[i] - f0[0]) + Math.abs(d[i + 1] - f0[1]) + Math.abs(d[i + 2] - f0[2]) > 80) k++; return k; }; r.push([n, b.width, b.height, red(Math.round(b.width * 0.6), Math.round(b.height * 0.6), Math.round(b.width * 0.4), Math.round(b.height * 0.4)), red(0, 0, Math.round(b.width * 0.4), Math.round(b.height * 0.4))]); } return r; });
     return { ok: outs.length === 6 && outs.every(([, w, h, br, tl]) => Math.max(w, h) === 2048 && br > 5000 && tl < br * 0.05), detail: `${outs.length} files, ${outs[0]?.[1]}×${outs[0]?.[2]}, magenta logo pixels in the bottom-right ${Math.min(...outs.map((o) => o[3]))}+ per file (top-left ${Math.max(...outs.map((o) => o[4]))})` };
   }, paid: { 'Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)': 4, 'Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)': 6, 'Affinity Photo (Batch Job, saved macro)': 9, 'Pixelmator Pro (run saved Shortcut)': 3, 'Photopea': 'no batch' } },
+
+  { id: 26, name: '10R holdout: Auto upright on a second real tower photo (CC0, not used for tuning)', async run(R, page) {
+    return realUpright(R, page, 'tower.jpg', [[[640, 235], [643, 539]], [[801, 235], [813, 501]], [[939, 345], [956, 549]]], 'auto');
+  }, paid: { 'Lightroom Classic (Upright Auto)': 2, 'Photoshop (Camera Raw filter Upright)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
+
+  { id: 27, name: '10R holdout: Upright Full on a real photo with converging horizontals (library shelves, CC0; verticals and horizontals measured)', async run(R, page) {
+    return realUpright(R, page, 'library.jpg', [[[1144, 301], [1149, 693]], [[554, 90], [553, 529]], [[575, 325], [1101, 287]], [[582, 641], [1133, 685]], [[350, 343], [548, 328]]], 'full');
+  }, paid: { 'Lightroom Classic (Upright Full)': 2, 'Photoshop (Camera Raw filter Upright Full)': 4, 'Affinity Photo (Perspective, both directions)': 6, 'Pixelmator Pro (Perspective)': 5, 'Photopea (Perspective transform)': 6 } },
+  { id: 28, name: '10R holdout: Upright Full on a second real photo with converging horizontals (shop front, CC0; verticals and horizontals measured)', async run(R, page) {
+    return realUpright(R, page, 'brick.jpg', [[[1020, 603], [1020, 799]], [[1067, 625], [1069, 794]], [[1030, 572], [1274, 594]], [[1072, 615], [1189, 623]], [[1035, 817], [1274, 823]]], 'full');
+  }, paid: { 'Lightroom Classic (Upright Full)': 2, 'Photoshop (Camera Raw filter Upright Full)': 4, 'Affinity Photo (Perspective, both directions)': 6, 'Pixelmator Pro (Perspective)': 5, 'Photopea (Perspective transform)': 6 } },
 ];
 /** IoU of the current selection with the published cut-out's alpha, inside the cut-out's frame (it touches 3 sides). */
 const GT_RECT = { x: 300, y: 150, w: 1056, h: 1408 };

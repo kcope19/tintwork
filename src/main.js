@@ -2683,10 +2683,19 @@ function autoUprightCmd(req = 'auto') {
   const toDocH = (v) => [v[0] / k + x.ox * v[2], v[1] / k + x.oy * v[2], v[2]];
   const rotateBy = (deg) => { const t = deg * Math.PI / 180, c = Math.cos(t), sn = Math.sin(t); return x.pts.map(([a, b]) => [cx + (a - cx) * c - (b - cy) * sn, cy + (a - cx) * sn + (b - cy) * c]); };
   const wantV = req !== 'level', wantH = req === 'level' || req === 'full';
-  const lines = wantV ? seg.detectLines(img, { orient: 'v' }) : [], u = wantV ? seg.estimateUpright(lines, img.width, img.height) : { mode: 'none', inliers: [] };
+  // v1.10: lines are found on the small preview copy, then re-fitted on a sharper copy (≤ 1600 px) of the layer
+  let sharp = null;
+  const sharpen = (ls, orient) => {
+    if (!ls.length || !seg.refineLines) return ls;
+    if (!sharp) { const S = Math.min(1, 1600 / Math.max(x.w, x.h)); if (S * x.w < img.width * 1.05) return ls;
+      const sw = Math.round(x.w * S), sh = Math.round(x.h * S), c = makeCanvas(sw, sh), cc = c.getContext('2d', { willReadFrequently: true }); cc.imageSmoothingQuality = 'high';
+      cc.drawImage(putInto(null, x.src), 0, 0, sw, sh); sharp = cc.getImageData(0, 0, sw, sh); }
+    return seg.refineLines(ls, sharp, sharp.width / img.width, orient);
+  };
+  const lines = wantV ? sharpen(seg.detectLines(img, { orient: 'v' }), 'v') : [], u = wantV ? seg.estimateUpright(lines, img.width, img.height) : { mode: 'none', inliers: [] };
   let hl = [], uh = { mode: 'none', inliers: [] };
   const horiz = () => {
-    hl = seg.detectLines(img, { orient: 'h' }); uh = seg.estimateUpright(hl, img.width, img.height);
+    hl = sharpen(seg.detectLines(img, { orient: 'h' }), 'h'); uh = seg.estimateUpright(hl, img.width, img.height);
     // trust the horizontals only with ≥ 3 agreeing lines covering half the width, converging no faster than a vanishing
     // point 1.5 frame-sizes from the centre (closer ones come from two stray edges, e.g. a roof line and a shadow)
     if (uh.mode !== 'none') {
