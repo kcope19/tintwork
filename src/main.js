@@ -23,7 +23,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.7.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -2460,7 +2460,7 @@ async function renderMeshAny(img, outW, outH, m, ox = 0, oy = 0) {
 
 // --- Perspective & warp (Edit menu): drag corner / grid handles; Enter applies, Esc cancels -----------
 function mxfGrid(n) { const x = state.mxf; if (!x || x.mode !== 'warp' || x.n === n) return; x.n = n; mxfResetPoints(x); mxfPreview(); mxfRender(); buildOptionsBar(); }
-const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
+const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
 function startMeshXf(mode) {
   const d = doc(), l = activeLayer();
   if (!l || state.mxf) return;
@@ -2571,8 +2571,9 @@ function cancelMeshXf() {
 function mxfBarParts() {
   const x = state.mxf, warp = x.mode === 'warp';
   return [`<span class="tool-title">${warp ? 'Warp' : 'Perspective'}</span>`,
+    warp ? '' : `<button data-cmd="mxfGuides" class="${x.guideMode ? 'on' : ''}" title="Draw two lines along edges that should be vertical (or horizontal)">Guides</button>`,
     warp ? `<span class="seg">${[3, 4, 5].map((n) => `<button data-cmd="mxfGrid${n}" class="${x.n === n ? 'on' : ''}" title="${n}×${n} control points">${n}×${n}</button>`).join('')}</span>` : '',
-    `<span class="muted">${warp ? 'Drag grid points to bend the layer' : 'Drag the corners'} · Enter applies · Esc cancels</span>`,
+    `<span class="muted">${warp ? 'Drag grid points to bend the layer' : x.guideMode ? ((x.guides || []).length ? 'Draw a second line' : 'Draw two lines along edges that should be vertical') : 'Drag the corners'} · Enter applies · Esc cancels</span>`,
     `<button data-cmd="mxfReset">Reset</button>`, `<button data-cmd="mxfApply" class="primary">Apply</button>`, `<button data-cmd="mxfCancel">Cancel</button>`];
 }
 function drawMeshBox(toS) {
@@ -2585,6 +2586,9 @@ function drawMeshBox(toS) {
     for (let j = 0; j < n; j++) { const t = j / (n - 1), pts = []; for (let i = 0; i <= N; i++) pts.push(mesh.warpEval(x.pts, n, i / N, t)); line(pts); strokeTwice(); }
     for (let i = 0; i < n; i++) { const s = i / (n - 1), pts = []; for (let j = 0; j <= N; j++) pts.push(mesh.warpEval(x.pts, n, s, j / N)); line(pts); strokeTwice(); }
   } else { line([...x.pts, x.pts[0]]); strokeTwice(); }
+  for (const g of [...(x.guides || []), ...(x.guideDraft ? [x.guideDraft] : [])]) { // guided upright lines
+    line(g); vctx.lineWidth = 3; vctx.strokeStyle = '#000a'; vctx.stroke(); vctx.lineWidth = 1.5; vctx.strokeStyle = '#3ad1ff'; vctx.stroke();
+  }
   const hs = IS_TOUCH ? 7 : 4.5;
   for (const [px, py] of x.pts) {
     const [hx, hy] = toS(px, py);
@@ -2592,20 +2596,57 @@ function drawMeshBox(toS) {
   }
   vctx.restore();
 }
+/**
+ * Guided upright: each guide is a line that should end up exactly vertical (or horizontal when drawn flatter than 45°).
+ * Both guides are straightened about their midpoints; the 4 endpoints define a homography that is applied to the
+ * current corner quad, so guides drawn on the preview compose with earlier corner drags.
+ */
+function uprightFromGuides(pts, guides) {
+  if (guides.length < 2) return null;
+  const src = [], dst = [];
+  for (const [[ax, ay], [bx, by]] of guides.slice(-2)) {
+    const mx = (ax + bx) / 2, my = (ay + by) / 2, vert = Math.abs(by - ay) >= Math.abs(bx - ax);
+    src.push([ax, ay], [bx, by]);
+    dst.push(vert ? [mx, ay] : [ax, my], vert ? [mx, by] : [bx, my]);
+  }
+  const H = mesh.homography(src, dst); if (!H) return null;
+  const out = pts.map(([px, py]) => { const [X, Y, w] = mesh.applyH(H, px, py); return w > 0 ? [X, Y] : null; });
+  return out.some((q) => !q || !Number.isFinite(q[0]) || !Number.isFinite(q[1])) ? null : out;
+}
+function addUprightGuide(x, g) {
+  if (Math.hypot(g[1][0] - g[0][0], g[1][1] - g[0][1]) * state.zoom < 12) { status('Drag a longer line along an edge that should be straight.'); return; }
+  x.guides = [...(x.guides || []), g];
+  if (x.guides.length < 2) { status('Guided upright: now draw a second line.'); buildOptionsBar(); requestRender(); return; }
+  const next = uprightFromGuides(x.pts, x.guides), prev = x.pts;
+  x.guides = [];
+  if (!next || !mesh.perspectiveMesh(x.w, x.h, next)) { status('Those two lines cannot both be straightened: draw them on separate edges.'); buildOptionsBar(); requestRender(); return; }
+  x.pts = next;
+  const m = mxfBounds(mxfMesh(x));
+  if (!m) { x.pts = prev; status('That correction is too extreme. Try guides on longer edges.'); buildOptionsBar(); requestRender(); return; }
+  x.guideMode = false;
+  mxfPreview(); mxfRender().catch((err) => status(`Preview failed: ${err.message}`));
+  status('Guided upright: lines straightened. Adjust the corners if needed; Enter applies, Esc cancels.');
+  buildOptionsBar();
+}
 const mxfHandler = {
   down(p, e) {
     const x = state.mxf, tol = (e.pointerType === 'touch' ? 22 : 10) / state.zoom;
+    if (x.guideMode) { x.guideDraft = [[p.x, p.y], [p.x, p.y]]; drag = { guide: true }; requestRender(); return; }
     let best = -1, bd = tol;
     x.pts.forEach(([a, b], i) => { const dd = Math.hypot(p.x - a, p.y - b); if (dd <= bd) { bd = dd; best = i; } });
     if (best < 0) { drag = null; return; }
     drag = { mxf: best, start: [...x.pts[best]], p0: p };
   },
   move(p) {
-    const x = state.mxf; if (!drag || drag.mxf == null || !x) return;
+    const x = state.mxf;
+    if (drag && drag.guide && x && x.guideDraft) { x.guideDraft[1] = [p.x, p.y]; requestRender(); return; }
+    if (!drag || drag.mxf == null || !x) return;
     x.pts[drag.mxf] = [drag.start[0] + p.x - drag.p0.x, drag.start[1] + p.y - drag.p0.y];
     mxfPreview();
   },
   up() {
+    const x = state.mxf;
+    if (drag && drag.guide && x) { const g = x.guideDraft; x.guideDraft = null; drag = null; if (g) addUprightGuide(x, g); return; }
     if (!drag || drag.mxf == null) return;
     mxfRender().catch((err) => status(`Preview failed: ${err.message}`));
   },
@@ -3098,7 +3139,9 @@ const cmds = {
   warp: needDoc(() => startMeshXf('warp')),
   mxfApply: () => applyMeshXf(),
   mxfCancel: () => cancelMeshXf(),
-  mxfReset: () => { const x = state.mxf; if (!x) return; mxfResetPoints(x); mxfPreview(); mxfRender(); },
+  mxfReset: () => { const x = state.mxf; if (!x) return; mxfResetPoints(x); x.guides = []; mxfPreview(); mxfRender(); },
+  mxfGuides: () => { const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.guideMode = !x.guideMode; x.guides = []; buildOptionsBar(); requestRender(); if (x.guideMode) status('Guided upright: drag along two edges that should be vertical.'); },
+  guidedUpright: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.guideMode = true; x.guides = []; buildOptionsBar(); requestRender(); status('Guided upright: drag along two edges that should be vertical (e.g. building sides).'); }),
   mxfGrid3: () => mxfGrid(3), mxfGrid4: () => mxfGrid(4), mxfGrid5: () => mxfGrid(5),
   camera: () => { fileMode = 'open'; $('#cameraInput').click(); },
   closePolygon: () => finishPolygon(),
@@ -3260,7 +3303,7 @@ const XF_SAFE = new Set(['xfApply', 'xfCancel', 'undo', 'redo', 'zoomIn', 'zoomO
 /** Commands that need pixels of the active layer: a selected group has none (only a mask). */
 const GROUP_BLOCKED = new Set(['brightnessContrast', 'hueSaturation', 'exposure', 'levels', 'curves', 'autoLevels', 'invert', 'grayscale', 'sepia',
   'gaussianBlur', 'sharpen', 'noise', 'vignette', 'convertSmart', 'rasterizeLayer', 'clear', 'cut', 'copy', 'fillSelection', 'flipLayerH', 'flipLayerV',
-  'freeTransform', 'perspective', 'warp', 'applyMask', 'selectLayerPixels', 'editLayer']);
+  'freeTransform', 'perspective', 'guidedUpright', 'warp', 'applyMask', 'selectLayerPixels', 'editLayer']);
 function run(name) {
   closeMenus();
   if (isGroup(activeLayer()) && GROUP_BLOCKED.has(name)) {
@@ -3316,7 +3359,7 @@ const MENUS = [
   ['Image', [['Image size…', 'imageSize'], ['Resize to preset…', 'resizePresets'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], ['Crop with preset', 'cropPresetTool'], '-',
     ['Rotate 90° clockwise', 'rotateCW'], ['Rotate 90° counter-clockwise', 'rotateCCW'], ['Rotate 180°', 'rotate180'],
     ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Auto enhance', 'autoEnhance', 'Ctrl+Shift+L'], ['Auto enhance options…', 'autoEnhanceOptions'], ['Auto white balance', 'autoWhiteBalance'], ['Auto white balance options…', 'autoWBOptions'],
-    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
+    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], ['Guided upright', 'guidedUpright'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
   ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
     ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
@@ -3367,6 +3410,9 @@ function addMask(fromSelection) {
   if (fromSelection) m.getContext('2d').drawImage(selectionCanvas(sel), -l.x, -l.y);
   l.mask = { canvas: m, enabled: true, rev: ++globalRev }; l.editMask = true;
   compDirty = true; requestRender(); commit(fromSelection ? 'Add mask from selection' : 'Add layer mask');
+  // masks are painted in greys: switch coloured swatches to black/white (D) so the first stroke does what it looks like
+  const grey = (h) => /^#?([0-9a-f]{2})\1\1$/i.test(String(h || ''));
+  if (!grey(state.fg) || !grey(state.bg)) { setFg('#000000'); setBg('#ffffff'); status('Layer mask added: colours set to black (hide) / white (reveal). X swaps them.'); }
 }
 function addLayer(layer, label) {
   const d = doc(); insertLayer(d, layer); d.activeId = layer.id;
@@ -4051,12 +4097,20 @@ function paramField(p, values, onChange, defaultValue) {
     row.querySelector('input').addEventListener('change', (e) => { values[p.key] = e.target.checked; onChange(); });
     return row;
   }
-  row.innerHTML = `<span>${p.label}</span><input type="range" min="${p.min}" max="${p.max}" step="${p.step || 1}" value="${p.value}" /><output>${p.value}${p.unit || ''}</output>`;
-  const input = row.querySelector('input'), out = row.querySelector('output');
-  input.dataset.key = p.key;
+  // v1.7: the value is a number field as well as a slider, so an exact value can be typed (Tab / arrows work too)
+  row.innerHTML = `<span>${p.label}</span><input type="range" min="${p.min}" max="${p.max}" step="${p.step || 1}" value="${p.value}" /><span class="num-out"><input type="number" class="pf-num" min="${p.min}" max="${p.max}" step="${p.step || 1}" value="${p.value}" />${p.unit ? `<span class="unit">${p.unit}</span>` : ''}</span>`;
+  const input = row.querySelector('input[type=range]'), num = row.querySelector('input.pf-num');
+  input.dataset.key = p.key; num.dataset.numKey = p.key; num.setAttribute('aria-label', `${p.label}${p.unit ? ` (${p.unit})` : ''}`);
   input.title = 'Double-click to reset';
-  input.addEventListener('input', () => { values[p.key] = +input.value; out.textContent = input.value + (p.unit || ''); onChange(); });
+  input.addEventListener('input', () => { values[p.key] = +input.value; num.value = input.value; onChange(); });
   input.addEventListener('dblclick', () => { input.value = defaultValue; input.dispatchEvent(new Event('input')); });
+  const fromNum = (final) => {
+    if (num.value === '' || !Number.isFinite(+num.value)) { if (final) num.value = input.value; return; }
+    const v = Math.min(+p.max, Math.max(+p.min, +num.value)); input.value = v; if (final) num.value = input.value;
+    if (+input.value !== values[p.key]) { values[p.key] = +input.value; onChange(); }
+  };
+  num.addEventListener('input', () => fromNum(false));
+  num.addEventListener('change', () => fromNum(true));
   return row;
 }
 
@@ -4203,17 +4257,19 @@ function openExportDialog() {
     { label: 'File name', html: `<input type="text" id="eName" value="${escapeHtml(base)}" />` },
     { label: 'Format', html: `<select id="eFmt"><option value="image/png">PNG (lossless)</option><option value="image/png16">PNG 16-bit</option><option value="image/jpeg">JPEG</option><option value="image/webp">WebP</option><option value="${PSD_TYPE}">PSD (layers)</option></select>` },
     { label: 'Quality', html: `<span><input type="range" id="eQ" min="1" max="100" value="90" disabled /> <output id="eQv">90</output></span>` },
-    { label: 'Size', html: `<span class="muted">${doc().width} × ${doc().height} px</span>` },
+    { label: 'Size', html: `<span class="ex-size"><select id="eSize" title="Export at the document size or resized"><option value="original">Original (${doc().width} × ${doc().height} px)</option><option value="long">Long edge (px)</option><option value="width">Width (px)</option><option value="scale">Scale (%)</option></select> <input type="number" id="eSizeV" min="1" max="30000" value="${Math.max(doc().width, doc().height)}" class="hidden" aria-label="New size" style="width:84px"/> <span id="eSizeOut" class="muted"></span></span>` },
+    { label: 'Resolution', html: `<span><input type="number" id="eDpi" min="1" max="2400" value="${doc().dpi || 72}" style="width:72px" aria-label="Resolution in pixels per inch"/> ppi <span class="muted" id="eDpiInfo"></span></span>` },
   ]);
   const fmt = body.querySelector('#eFmt'), q = body.querySelector('#eQ');
   // navigator.share needs a fresh user gesture, so the file is rendered ahead of time and the
   // Share button hands it over synchronously (iOS Safari is strict about this).
   let ready = null, prepTimer = 0;
-  const key = () => `${fmt.value}|${q.value}|${body.querySelector('#eName').value}`;
+  let exportOpts = () => ({});
+  const key = () => `${fmt.value}|${q.value}|${body.querySelector('#eName').value}|${JSON.stringify(exportOpts())}`;
   const prepare = () => {
     clearTimeout(prepTimer);
     prepTimer = setTimeout(async () => {
-      const k = key(); const blob = await renderExport(fmt.value, q.value / 100);
+      const k = key(); const blob = await renderExportWith(fmt.value, q.value / 100, exportOpts());
       const name = `${body.querySelector('#eName').value || 'image'}.${EXPORT_EXT[fmt.value]}`;
       ready = { k, file: new File([blob], name, { type: blob.type || 'image/png' }) };
       const sb = body.querySelector('#eShare'); if (sb) { sb.disabled = false; sb.textContent = 'Share…'; }
@@ -4232,12 +4288,40 @@ function openExportDialog() {
     });
     prepare();
   }
-  fmt.addEventListener('change', () => { q.disabled = fmt.value.startsWith('image/png') || fmt.value === PSD_TYPE; if (canShareFiles) prepare(); });
+  // v1.7: resize and print resolution right in the export (no separate Image size step)
+  const sizeSel = body.querySelector('#eSize'), sizeV = body.querySelector('#eSizeV'), dpiIn = body.querySelector('#eDpi');
+  const sizeOpts = () => { const m = sizeSel.value; if (m === 'original') return null; const n = Math.max(1, +sizeV.value || 1); return m === 'long' ? { mode: 'long', long: n } : m === 'width' ? { mode: 'width', w: n } : { mode: 'scale', pct: n }; };
+  const sizeInfo = () => {
+    const v = sizeOpts(), { w, h } = v ? variantSize(doc().width, doc().height, v) : { w: doc().width, h: doc().height }, dpi = +dpiIn.value || 72;
+    body.querySelector('#eSizeOut').textContent = v ? `→ ${w} × ${h} px` : '';
+    body.querySelector('#eDpiInfo').textContent = `prints at ${(w / dpi).toFixed(2)} × ${(h / dpi).toFixed(2)} in`;
+  };
+  sizeSel.addEventListener('change', () => {
+    const m = sizeSel.value; sizeV.classList.toggle('hidden', m === 'original');
+    sizeV.value = m === 'long' ? Math.max(doc().width, doc().height) : m === 'width' ? doc().width : 100; sizeInfo(); if (canShareFiles) prepare();
+  });
+  sizeV.addEventListener('input', () => { sizeInfo(); if (canShareFiles) prepare(); });
+  dpiIn.addEventListener('input', sizeInfo); sizeInfo();
+  exportOpts = () => { const dpi = Math.max(1, Math.min(2400, Math.round(+dpiIn.value || 0))) || null; return { size: sizeOpts(), dpi: dpi === 72 && !doc().dpi ? null : dpi }; };
+  fmt.addEventListener('change', () => {
+    q.disabled = fmt.value.startsWith('image/png') || fmt.value === PSD_TYPE;
+    const noSize = fmt.value === 'image/png16' || fmt.value === PSD_TYPE; sizeSel.disabled = noSize; if (noSize && sizeSel.value !== 'original') { sizeSel.value = 'original'; sizeSel.dispatchEvent(new Event('change')); }
+    dpiIn.disabled = fmt.value === 'image/webp' || fmt.value === PSD_TYPE; if (canShareFiles) prepare();
+  });
   q.addEventListener('input', () => { body.querySelector('#eQv').textContent = q.value; if (canShareFiles) prepare(); });
   body.querySelector('#eName').addEventListener('input', () => { if (canShareFiles) prepare(); });
   showModal({ title: 'Export image', body, okLabel: canShareFiles ? 'Download' : 'Export', ok: () => {
-    exportImage(fmt.value, q.value / 100, body.querySelector('#eName').value || 'image');
+    exportImage(fmt.value, q.value / 100, body.querySelector('#eName').value || 'image', exportOpts());
   } });
+}
+/** renderExport plus the export dialog's options: an optional resize ({ mode, long | w | pct }) and the ppi written
+ * into the file (JPEG JFIF density / PNG pHYs). */
+async function renderExportWith(type, quality, { size = null, dpi = null } = {}) {
+  let blob;
+  if (size && type !== 'image/png16' && type !== PSD_TYPE) blob = (await renderVariant({ ...size, type, quality: Math.round(quality * 100) })).blob;
+  else blob = await renderExport(type, quality);
+  if (dpi && (blob.type === 'image/jpeg' || blob.type === 'image/png')) blob = await withDpi(blob, dpi);
+  return blob;
 }
 const EXPORT_EXT = { 'image/png': 'png', 'image/png16': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', [PSD_TYPE]: 'psd' };
 let lastExportNotes = [];
@@ -4260,7 +4344,8 @@ async function renderExport(type, quality) {
   composite(out, { background: type === 'image/jpeg' ? '#ffffff' : null, sync: true });
   return new Promise((res) => out.toBlob((b) => { out.width = out.height = 0; res(b); }, type, quality));
 }
-async function exportImage(type, quality, name) {
+async function exportImage(type, quality, name, opts = {}) {
+  if (opts.dpi == null && doc().dpi) opts = { ...opts, dpi: doc().dpi }; // a print crop's ppi goes into the file
   const ext = EXPORT_EXT[type];
   let handle = null;
   if (fsaSupported && EXPORT_TYPES[type]) {
@@ -4268,7 +4353,7 @@ async function exportImage(type, quality, name) {
     if (!handle) { status('Export cancelled.'); return; }
   }
   let blob;
-  try { blob = await renderExport(type, quality); } catch (err) { reportError('Export failed', err); return; }
+  try { blob = await renderExportWith(type, quality, opts); } catch (err) { reportError('Export failed', err); return; }
   if (lastExportNotes.length) toast(lastExportNotes.join(' '), 8000);
   if (handle) {
     try { await writeFile(handle, blob); addRecent(handle, 'image'); status(`Exported ${handle.name} (${(blob.size / 1024).toFixed(0)} KB)`); return; }
@@ -6023,13 +6108,13 @@ $('#resetColors').addEventListener('click', () => run('resetColors'));
 function buildMenus() {
   const nav = $('#menus');
   for (const [title, items] of MENUS) {
-    const m = document.createElement('div'); m.className = 'menu';
-    const b = document.createElement('button'); b.textContent = title; m.append(b);
-    const list = document.createElement('div'); list.className = 'menu-items';
+    const m = document.createElement('div'); m.className = 'menu'; m.setAttribute('role', 'none');
+    const b = document.createElement('button'); b.textContent = title; b.setAttribute('role', 'menuitem'); b.setAttribute('aria-haspopup', 'true'); m.append(b);
+    const list = document.createElement('div'); list.className = 'menu-items'; list.setAttribute('role', 'menu'); list.setAttribute('aria-label', title);
     for (const it of items) {
       if (it === '-') { list.append(document.createElement('hr')); continue; }
       const [label, cmd, key] = it;
-      const ib = document.createElement('button'); ib.dataset.cmd = cmd;
+      const ib = document.createElement('button'); ib.dataset.cmd = cmd; ib.setAttribute('role', 'menuitem');
       const kl = shortcutLabel(cmd, key); if (kl) ib.title = `${label} (${kl})`;
       ib.innerHTML = `<span>${label}</span>${kl ? `<kbd>${kl}</kbd>` : ''}`;
       list.append(ib);
@@ -6040,6 +6125,53 @@ function buildMenus() {
   }
 }
 function closeMenus() { document.querySelectorAll('.menu.open').forEach((m) => m.classList.remove('open')); }
+// v1.7 keyboard access to the menu bar (the Windows convention): Alt on its own or F10 focuses the first menu;
+// ←/→ move between menus, ↓/Enter opens one, ↑/↓ move through its items, Esc steps back out.
+{
+  const nav = $('#menus');
+  nav.setAttribute('role', 'menubar');
+  const tops = () => [...nav.querySelectorAll('.menu > button')];
+  const items = (m) => [...m.querySelectorAll('.menu-items button:not(:disabled)')];
+  const openAt = (m, focusFirst) => { closeMenus(); m.classList.add('open'); if (focusFirst) items(m)[0]?.focus(); };
+  let altAlone = false;
+  const focusBar = () => { const b = tops()[0]; if (b) { b.focus(); status('Menu bar: ←/→ choose a menu, ↓ or Enter opens it, Esc returns to the image.'); } };
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Alt' && !e.ctrlKey && !e.shiftKey && !e.metaKey) { altAlone = !e.repeat; if (!IS_MAC) e.preventDefault(); return; }
+    altAlone = false;
+    if (e.key === 'F10' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && $('#modal').classList.contains('hidden')) {
+      e.preventDefault(); if (nav.contains(document.activeElement)) { closeMenus(); document.activeElement.blur(); } else focusBar();
+    }
+  }, true);
+  window.addEventListener('pointerdown', () => { altAlone = false; }, true);
+  window.addEventListener('keyup', (e) => {
+    if (e.key !== 'Alt' || !altAlone || IS_MAC) return; altAlone = false;
+    if (!$('#modal').classList.contains('hidden') || !nav.offsetParent) return;
+    e.preventDefault();
+    if (nav.contains(document.activeElement)) { closeMenus(); document.activeElement.blur(); } else focusBar();
+  }, true);
+  nav.addEventListener('keydown', (e) => {
+    const t = tops(), a = document.activeElement, m = a && a.closest('.menu'); if (!m) return;
+    const ti = t.indexOf(m.querySelector(':scope > button')), inItems = a.closest('.menu-items');
+    const go = (d) => { const nb = t[(ti + d + t.length) % t.length]; if (m.classList.contains('open')) openAt(nb.parentElement, true); else nb.focus(); };
+    if (e.key === 'ArrowRight') { e.preventDefault(); go(1); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1); }
+    else if (!inItems && (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openAt(m, true); }
+    else if (inItems && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { e.preventDefault(); const it = items(m), i = it.indexOf(a); it[(i + (e.key === 'ArrowDown' ? 1 : -1) + it.length) % it.length]?.focus(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (m.classList.contains('open')) { closeMenus(); t[ti].focus(); } else a.blur(); }
+    else if (e.key === 'Tab') { closeMenus(); }
+  });
+}
+// v1.7: keep Tab inside an open dialog (focus trap), like a desktop dialog box
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) return;
+  const modal = $('#modal'); if (!modal || modal.classList.contains('hidden')) return;
+  const f = [...modal.querySelectorAll('button, input, select, textarea, [tabindex]:not([tabindex="-1"]), a[href]')].filter((el) => !el.disabled && el.offsetParent !== null && el.tabIndex >= 0);
+  if (!f.length) return;
+  const i = f.indexOf(document.activeElement);
+  if (i < 0) { e.preventDefault(); f[0].focus(); return; }
+  if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); }
+  else if (e.shiftKey && i === 0) { e.preventDefault(); f[f.length - 1].focus(); }
+}, true);
 function openSheet(name) {
   const cur = document.body.dataset.sheet || '';
   document.body.dataset.sheet = cur === name ? '' : name;
@@ -6469,7 +6601,33 @@ $('#toolsToggle').addEventListener('click', () => { document.body.classList.togg
 $('#toolsToggle').classList.add('on');
 // Installable/offline: register the service worker on secure origins (https or localhost).
 if ('serviceWorker' in navigator && (window.isSecureContext || location.hostname === 'localhost')) {
-  addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('Service worker not registered:', err)));
+  addEventListener('load', () => navigator.serviceWorker.register('./sw.js').then((reg) => {
+    // long sessions: look for a deploy every hour and when the tab comes back after 10+ minutes
+    let last = Date.now();
+    const check = () => { last = Date.now(); reg.update().catch(() => {}); };
+    setInterval(check, 60 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - last > 10 * 60 * 1000) check(); });
+  }).catch((err) => console.warn('Service worker not registered:', err)));
+  // A new worker took over this page: a new version was deployed. Offer a reload (the page keeps running the old code).
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) { hadController = true; return; } // first install, not an update
+    showUpdateBar();
+  });
+}
+async function swVersion() {
+  const c = navigator.serviceWorker && navigator.serviceWorker.controller; if (!c) return null;
+  return new Promise((res) => { const ch = new MessageChannel(); ch.port1.onmessage = (e) => res(e.data); c.postMessage({ type: 'VERSION' }, [ch.port2]); setTimeout(() => res(null), 2000); });
+}
+async function showUpdateBar() {
+  if ($('#updateBar')) return;
+  const v = await swVersion();
+  if (v && v === APP_VERSION) return; // same version (e.g. a re-deploy of identical code)
+  const bar = document.createElement('div'); bar.id = 'updateBar'; bar.setAttribute('role', 'status');
+  bar.innerHTML = `<span></span><button class="primary" data-act="reload">Reload</button><button data-act="later">Later</button>`;
+  bar.firstChild.textContent = `A new version of Tintwork${v ? ` (${String(v).slice(0, 20)})` : ''} is ready; you are on ${APP_VERSION}. Save your work, then reload.`;
+  bar.addEventListener('click', (e) => { const a = e.target.closest('button'); if (!a) return; if (a.dataset.act === 'reload') location.reload(); else bar.remove(); });
+  document.body.append(bar);
 }
 document.querySelectorAll('.panel-actions [data-cmd]').forEach((b) => { b.innerHTML = ICONS[b.dataset.cmd] || b.innerHTML; }); setTool('brush'); setFg(state.fg);
 $('#welcome').classList.remove('hidden');
@@ -7186,7 +7344,7 @@ window.tintwork = {
   convertToSmart, setSmartFilters, updateSmart, openSmartFilterDialog, openLiveFilterPanel, composeSmart, filteredSync, addFilterMask,
   openColorRangeDialog, openRefineDialog, colorRangeMask, bakeAdjustment, BUNDLED_FONTS, fontReady, loadFont, AUTOSAVE_STEPS, MAX_SLOTS, newAdjustmentLayer, editLayer, adjCache, rasterize, renderTextLayer, textLayerAt, undo, redo, closeModal, mergeDown,
   isGroup, childrenOf, descendantsOf, placeLayer, normalizeTree, resolveItems, insertLayer, openStylesDialog, defaultEffect, mergeGroup, layerById, mesh,
-  startMeshXf, applyMeshXf, cancelMeshXf, mxfRender, renderMeshAny, get mxf() { return state.mxf; }, runBenchmarkInApp, benchText, openBenchmarkDialog, benchTableHTML, redEyeAt,
+  startMeshXf, applyMeshXf, cancelMeshXf, uprightFromGuides, mxfRender, renderMeshAny, get mxf() { return state.mxf; }, runBenchmarkInApp, benchText, openBenchmarkDialog, benchTableHTML, redEyeAt,
   /** Liquify stroke through the real tool code; resolves after the final (GPU or CPU) render. */
   async liquifyStroke(points) { const h = liquifyTool; h.down(points[0]); for (let i = 1; i < points.length; i++) h.move(points[i]); await h.up(); return gfx.lastWarpPath; },
   createLayer, defaultAdjParams, gfx, initEngine, setEnginePref, setDepth, deepOf, setDeep, compositeDeepDoc, encodePNG, decodePNG, pngInfo, deepToImageData, deepFromImageData, createDeep, loadProject, openEngineDialog, exportImage, gpuLayerList, platform: { IS_MAC, PLATFORM, keyLabel, platformText, shortcutFor, comboOf, RESERVED },

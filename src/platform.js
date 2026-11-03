@@ -62,5 +62,5 @@ export function comboOf(e) {
 
 /** Shortcuts the browser or OS keeps for itself (the page never sees them, or cannot cancel them). Each has an alternate. */
 export const RESERVED = IS_MAC
-  ? new Set(['mod+n', 'mod+t', 'mod+w', 'mod+q', 'mod+m', 'mod+h', 'mod+shift+n', 'mod+shift+t', 'mod+shift+w', 'mod+`', 'mod+,', 'mod+alt+i', 'mod+alt+c'])
-  : new Set(['mod+n', 'mod+t', 'mod+w', 'mod+shift+n', 'mod+shift+t', 'mod+shift+w', 'mod+shift+i', 'mod+shift+j', 'mod+shift+c', 'mod+tab', 'alt+f4']);
+  ? new Set(['mod+n', 'mod+t', 'mod+w', 'mod+q', 'mod+m', 'mod+h', 'mod+shift+n', 'mod+shift+t', 'mod+shift+w', 'mod+shift+tab', 'mod+`', 'mod+,', 'mod+alt+i', 'mod+alt+c'])
+  : new Set(['mod+n', 'mod+t', 'mod+w', 'mod+shift+n', 'mod+shift+t', 'mod+shift+w', 'mod+shift+i', 'mod+shift+j', 'mod+shift+c', 'mod+tab', 'mod+shift+tab', 'alt+f4']);
