@@ -21,6 +21,7 @@ export const ICONS = {
   zoom: svg('<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M10.5 7.5v6M7.5 10.5h6"/>'),
   lasso: svg('<path d="M12 4c5 0 8.5 2.3 8.5 5.2S17 14.5 12 14.5 3.5 12.2 3.5 9.2 7 4 12 4z" stroke-dasharray="3 2.2"/><path d="M6.5 13c-1.6 1.2-1.4 3.4.3 3.8 1.3.3 1.7 1.4 1 3.2"/>'),
   polylasso: svg('<path d="M4 9l6-5 10 4-3 8-9 1z" stroke-dasharray="3 2.2"/><circle cx="4" cy="9" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="20" cy="8" r="1.2"/><circle cx="17" cy="16" r="1.2"/>'),
+  objsel: svg('<path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4"/><circle cx="12" cy="9" r="2.6"/><path d="M7.5 18c.6-3 2.4-4.6 4.5-4.6s3.9 1.6 4.5 4.6"/>'),
   wand: svg('<path d="M4 20L15 9M13.5 7.5l3 3"/><path d="M18 3v3M16.5 4.5h3M20.5 9v2M19.5 10h2M10 3v2M9 4h2"/>'),
   clone: svg('<path d="M9 4h6v5l3 3H6l3-3z"/><path d="M5 15h14v3H5zM8 21h8"/>'),
   heal: svg('<rect x="3.5" y="8" width="17" height="8" rx="4" transform="rotate(-40 12 12)"/><path d="M10.2 10.2h.01M13.8 13.8h.01M13.8 10.2h.01M10.2 13.8h.01" stroke-width="2.4"/>'),

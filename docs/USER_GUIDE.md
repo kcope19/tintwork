@@ -25,6 +25,7 @@ Tintwork is a layered photo editor that runs entirely in your browser. Nothing i
 | Rectangle / Ellipse select | M / O | Drag a selection |
 | Lasso / Polygonal lasso | L / P | Freehand or point-by-point outline |
 | Magic wand | W | Select by color with a tolerance |
+| Object select | W again | Drag a box around the subject; Shift-paint parts it missed, Alt-paint background it took, Enter keeps |
 | Crop | C | Drag, choose a preset ratio or size, Enter applies |
 | Straighten | | Draw along the horizon |
 | Brush / Eraser | B / E | Size, hardness, opacity; Shift+click draws a straight line |
@@ -40,6 +41,7 @@ Tintwork is a layered photo editor that runs entirely in your browser. Nothing i
 - Hold **Shift** to add, **Alt** to subtract, **Shift+Alt** to intersect, or use the buttons in the options bar.
 - Select ▸ All (Ctrl+A), Deselect (Ctrl+D), Invert (Ctrl+Shift+I), Feather (Shift+F6), Color range, Refine edge (Ctrl+Alt+R).
 - A selection limits painting, fills, adjustments and filters. Feathered selections blend softly.
+- **Object select** (press W twice, or Select ▸ Object select): drag a box around the subject. Tintwork learns the colours inside and outside the box and cuts along the strongest edges between them, then smooths the outline (hair and fur edges get partial selection). If it misses part of the subject, hold **Shift** and paint over the missing part; if it took some background, hold **Alt** and paint over it. Each stroke refines the result in about a second. **Undo stroke** in the options bar takes the last stroke back, **Enter** (or **Done**) keeps the selection and **Esc** cancels. It works on colour and edges only (no machine learning), so it does best when the subject differs in colour from its surroundings; a dark suit against a dark background may need a stroke or two.
 
 ## Layers
 
@@ -62,13 +64,17 @@ Tintwork is a layered photo editor that runs entirely in your browser. Nothing i
 - Filter menu: Gaussian blur, Sharpen, Add noise, Vignette.
 - **Free transform** (Ctrl+Alt+T; the browser keeps Ctrl+T for a new tab): scale, rotate, skew, perspective and warp grids. Enter applies, Esc cancels.
 - **Guided upright** (Image menu): drag a line along each of two edges that should be vertical, such as the sides of a building (or horizontal, if you draw them flatter than 45°). The photo is corrected as soon as the second line is drawn; drag the corners to fine-tune, then Enter. Crop afterwards to remove the empty corners. The **Guides** button in the Perspective options bar does the same during Edit ▸ Perspective.
-- Image menu: rotate, flip, Image size, Canvas size, Resize to preset, Auto straighten, Guided upright.
+- **Auto upright** (Image menu, or the **Auto** button in Edit ▸ Perspective): finds long straight edges that should be vertical and corrects them in one click, either with a small rotation (if they are all parallel but tilted) or a perspective correction (if they converge, as when you look up at a building). Drag the corners to fine-tune, then Enter; Esc cancels. If the edges in your photo are not meant to be vertical (a diagonal or artistic shot), use Guided upright instead.
+- After Auto or Guided upright, the options bar chooses what happens to the empty corners: **Crop edges** (the default) crops to the largest rectangle with no empty area, **Fill edges** fills them from nearby pixels (good for sky and plain walls; 8-bit layers only), or **Keep** leaves them transparent. Image ▸ **Crop away empty edges** and **Fill empty edges** do the same at any time, and the Crop tool's **Fit inside image** button picks the largest crop at the chosen ratio with no empty corners.
+- Image menu: rotate, flip, Image size, Canvas size, Resize to preset, Auto straighten, Auto upright, Guided upright.
 - **Typed values**: every slider in a dialog has a number box next to it. Click it (or Tab to it), type a value and press Enter to apply the dialog.
 
 ## Saving, exporting and recovery
 
 - **Save** (Ctrl+S) writes a `.tintwork` project that keeps layers, masks, styles, adjustment layers and 16-bit data. **Save as** is Ctrl+Shift+S.
 - **Export** (Ctrl+Shift+E): PNG, JPEG or WebP with a quality setting. **Size** exports at the original size, a long edge, a width or a percentage, without changing the document. **Resolution** (ppi) is written into JPEG and PNG files so print shops and layout apps see the print size; it starts at the document's resolution (crop presets such as 8×10 in at 300 ppi set it). **Export multiple sizes** writes several sizes at once into a folder or a ZIP.
+- **Export presets**: in the Export dialog, choose a preset (Web, Email, Print, Lossless PNG, or your own) under **Preset**; **Delete** removes one of your own; click **Save…** and type a name to keep the current format, quality, size, resolution and watermark choice. File ▸ **Export with last preset** (Ctrl+Alt+Shift+E) skips the dialog and exports with the last preset or settings you used.
+- **Watermark on export**: tick **Add “…”** in the Export, Export multiple sizes or Batch process dialog, and click **Watermark…** (or File ▸ Export watermark…) to set the text, size, opacity, position, margin, colour and soft shadow. The watermark is drawn on the exported file only, never on your document, and scales with each output size. It is not added to layered PSD files.
 - **Autosave**: every open document is saved in the browser a few seconds after each change. If the browser or the tab closes unexpectedly, the next start offers to **Restore** it.
 - **Actions and batch**: record steps in the Actions menu and replay them on a folder of images with File ▸ Batch process.
 

@@ -11,6 +11,7 @@ import { createEngine } from './gpu.js';
 import { createWebGPUEngine, webgpuAvailable } from './webgpu.js';
 import { runBenchmark, benchText, benchKinds, probeEngines, stackId, BENCH_SIZES, BENCH_OPS } from './bench.js';
 import * as mesh from './mesh.js';
+import * as seg from './segment.js';
 import { FX_TYPES, FX_ORDER, defaultEffect, hasActiveStyles, normalizeStyles, renderStyled, effectStack, BODY_BLENDS } from './layerfx.js';
 import { fsaSupported, pickOpen, pickSave, writeFile, ensurePermission, listRecent, addRecent, removeRecent, clearRecent, EXPORT_TYPES, putLink, getLink, newLinkId, pickRaw } from './files.js';
 import { blendIndex, createDeep, cloneDeep, deepFromImageData, deepToImageData, reconcileDeep, compositeDeep, accToDeep, runDeep, DEEP_OPS } from './deep.js';
@@ -46,7 +47,7 @@ const state = {
     fillTolerance: 32, fillContiguous: true,
     textFont: 'system-ui', textSize: 64, textBold: true, textItalic: false, textAlign: 'left',
     sampleAll: true,
-    selMode: 'new', wandTolerance: 32, wandContiguous: true, wandSampleAll: false, featherRadius: 8,
+    selMode: 'new', objBrush: 24, objPaint: 'box', objRefine: true, uprightEdges: 'crop', wandTolerance: 32, wandContiguous: true, wandSampleAll: false, featherRadius: 8,
     cloneSize: 40, cloneHardness: 60, cloneOpacity: 100, cloneAligned: true,
     healSize: 40, healHardness: 80, healOpacity: 100, spotSize: 30, spotHardness: 80, spotOpacity: 100,
     xfKeepAspect: false, xfSkew: false,
@@ -598,7 +599,8 @@ function drawItems(c, items, below, opts) {
       } else src = it.src;
       c.globalAlpha = it.opacity; c.globalCompositeOperation = it.blend;
       const b = !opts.rect && src === it.l.canvas ? drawBounds(it.l) : undefined;
-      if (b === null) { /* fully transparent: nothing to draw */ } else if (b && SOURCE_ONLY_BLENDS.has(it.blend)) c.drawImage(src, b.x, b.y, b.w, b.h, it.x + b.x, it.y + b.y, b.w, b.h);
+      if (b === null) { /* fully transparent: nothing to draw */ } else if (it.blend === 'exclusion' && exactBlendOK(c)) exclusionExact(c, src, Math.round(it.x), Math.round(it.y), it.opacity, opts.rect);
+      else if (b && SOURCE_ONLY_BLENDS.has(it.blend)) c.drawImage(src, b.x, b.y, b.w, b.h, it.x + b.x, it.y + b.y, b.w, b.h);
       else c.drawImage(src, it.x, it.y);
       c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
     }
@@ -606,6 +608,29 @@ function drawItems(c, items, below, opts) {
   }
 }
 
+// v1.8: the browser's 8-bit 'exclusion' rounds its intermediates (up to 1.76/255 off the W3C formula), so it is
+// blended in software: B(b, s) = b + s − 2bs, composited with source-over alpha (W3C Compositing Level 1, §5.8).
+const exactBlendOK = (c) => { const m = c.getTransform?.(); return !m || (m.a === 1 && m.b === 0 && m.c === 0 && m.d === 1 && m.e === 0 && m.f === 0); };
+function exclusionExact(c, src, x, y, opacity, rect) {
+  const W = c.canvas.width, H = c.canvas.height;
+  let x0 = Math.max(0, x), y0 = Math.max(0, y), x1 = Math.min(W, x + src.width), y1 = Math.min(H, y + src.height);
+  if (rect) { x0 = Math.max(x0, Math.floor(rect.x)); y0 = Math.max(y0, Math.floor(rect.y)); x1 = Math.min(x1, Math.ceil(rect.x + rect.w)); y1 = Math.min(y1, Math.ceil(rect.y + rect.h)); }
+  const w = x1 - x0, h = y1 - y0; if (w <= 0 || h <= 0) return;
+  let sc = src.getContext ? src : null;
+  if (!sc) { sc = makeCanvas(w, h); sc.getContext('2d').drawImage(src, x - x0, y - y0); }
+  const s = (sc === src ? ctxOf(src).getImageData(x0 - x, y0 - y, w, h) : sc.getContext('2d').getImageData(0, 0, w, h)).data;
+  const img = c.getImageData(x0, y0, w, h), d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const as = (s[i + 3] / 255) * opacity; if (as <= 0) continue;
+    const ab = d[i + 3] / 255, ao = as + ab * (1 - as);
+    for (let k = 0; k < 3; k++) {
+      const cs = s[i + k] / 255, cb = d[i + k] / 255, B = cb + cs - 2 * cb * cs;
+      d[i + k] = Math.round(((as * (1 - ab) * cs + as * ab * B + (1 - as) * ab * cb) / ao) * 255);
+    }
+    d[i + 3] = Math.round(ao * 255);
+  }
+  c.putImageData(img, x0, y0);
+}
 /** out = backdrop·(1−k) + result·k with k = opacity × mask (exact lerp; 'lighter' adds the two parts). */
 function mixPassThrough(c, backdrop, it) {
   const W = c.canvas.width, H = c.canvas.height, K = makeCanvas(W, H), kx = K.getContext('2d');
@@ -1383,6 +1408,16 @@ function render() {
     else if (sp.pts?.length) { path.moveTo(sp.pts[0].x, sp.pts[0].y); for (const q of sp.pts) path.lineTo(q.x, q.y); path.closePath(); }
     ants(path);
   }
+  if (state.objSel && state.objSel.doc === d && state.tool === 'objsel') { // object select: box and refine strokes
+    const s = state.objSel;
+    vctx.save(); vctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * px, dpr * py); vctx.lineCap = vctx.lineJoin = 'round';
+    for (const st of [...s.strokes, ...(s.draft ? [s.draft] : [])]) {
+      vctx.beginPath(); st.pts.forEach(([a, b], i) => (i ? vctx.lineTo(a, b) : vctx.moveTo(a, b))); if (st.pts.length === 1) vctx.lineTo(st.pts[0][0] + 0.01, st.pts[0][1]);
+      vctx.lineWidth = st.r * 2; vctx.strokeStyle = st.fg ? 'rgba(60,220,110,0.45)' : 'rgba(255,70,70,0.45)'; vctx.stroke();
+    }
+    vctx.setLineDash([4 / z, 4 / z]); vctx.lineWidth = 1 / z; vctx.strokeStyle = '#3ad1ff'; vctx.strokeRect(s.rect.x, s.rect.y, s.rect.w, s.rect.h);
+    vctx.restore();
+  }
   if (state.strLine) {
     const { a, b } = state.strLine;
     vctx.save(); vctx.setTransform(dpr, 0, 0, dpr, 0, 0); vctx.beginPath();
@@ -1489,6 +1524,7 @@ const TOOLS = [
   { id: 'lasso', name: 'Lasso', key: 'L' },
   { id: 'polylasso', name: 'Polygonal lasso', key: 'P' },
   { id: 'wand', name: 'Magic wand', key: 'W' },
+  { id: 'objsel', name: 'Object select (W again): drag a box around the subject', key: 'W' },
   { id: 'crop', name: 'Crop', key: 'C' },
   { id: 'straighten', name: 'Straighten (draw along the horizon)', key: 'C' },
   { sep: true },
@@ -1516,9 +1552,10 @@ function setTool(id) {
   if (state.mxf && id !== state.tool) applyMeshXf();
   if (state.tool === 'crop' && id !== 'crop') state.crop = null;
   if (state.tool === 'polylasso' && id !== 'polylasso') state.poly = null;
+  if (state.tool === 'objsel' && id !== 'objsel') state.objSel = null;
   state.tool = id;
   for (const b of document.querySelectorAll('#toolbar button')) b.classList.toggle('active', b.dataset.tool === id);
-  const cursors = { move: 'move', select: 'crosshair', lasso: 'crosshair', polylasso: 'crosshair', wand: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', clone: 'none', heal: 'none', spot: 'none', tone: 'none', redeye: 'none', liquify: 'none', gradient: 'crosshair', shape: 'crosshair', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
+  const cursors = { move: 'move', select: 'crosshair', lasso: 'crosshair', polylasso: 'crosshair', wand: 'crosshair', objsel: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', clone: 'none', heal: 'none', spot: 'none', tone: 'none', redeye: 'none', liquify: 'none', gradient: 'crosshair', shape: 'crosshair', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
   view.style.cursor = cursors[id] || 'default';
   buildOptionsBar();
   requestRender();
@@ -1574,6 +1611,48 @@ function finishPolygon() {
   if (!poly || poly.pts.length < 3) { requestRender(); return; }
   applyShape(polygonMask(poly.pts), poly.mode, 'Polygonal lasso');
 }
+/**
+ * Object select (v1.8, no machine learning): the box seeds colour models of subject and background and a graph
+ * cut finds the boundary between them (segment.js). Refine strokes (Shift = part of the subject, Alt = background)
+ * become hard constraints and the cut is solved again; an edge-aware filter then softens the outline.
+ */
+let objSelJob = Promise.resolve(null);
+function objSelRun() {
+  const s = state.objSel; if (!s) return objSelJob;
+  setBusy(1); status(s.strokes.length ? 'Object select: refining…' : 'Object select: finding the subject…');
+  objSelJob = new Promise((res) => setTimeout(() => {
+    try { res(objSelCompute(s)); } catch (err) { reportError('Object select failed', err); res(null); } finally { setBusy(-1); }
+  }, 16));
+  return objSelJob;
+}
+function objSelCompute(s) {
+  const d = doc(); if (!d || s.doc !== d || state.objSel !== s) return null;
+  freshComp();
+  const W = d.width, H = d.height, r = s.rect, mx = Math.max(8, r.w * 0.08), my = Math.max(8, r.h * 0.08);
+  const x0 = Math.max(0, Math.floor(r.x - mx)), y0 = Math.max(0, Math.floor(r.y - my));
+  const x1 = Math.min(W, Math.ceil(r.x + r.w + mx)), y1 = Math.min(H, Math.ceil(r.y + r.h + my)), iw = x1 - x0;
+  const img = compCtx.getImageData(x0, y0, iw, y1 - y0), t0 = performance.now();
+  const res = seg.objectSelect(img, { x: r.x - x0, y: r.y - y0, w: r.w, h: r.h }, {
+    refine: state.opts.objRefine !== false,
+    strokes: s.strokes.map((st) => ({ fg: st.fg, r: st.r, pts: st.pts.map(([a, b]) => [a - x0, b - y0]) })),
+  });
+  const m = new Uint8Array(W * H);
+  for (let y = y0; y < y1; y++) m.set(res.alpha.subarray((y - y0) * iw, (y - y0 + 1) * iw), y * W + x0);
+  s.ms = Math.round(performance.now() - t0);
+  const sel = combine(s.base, W, H, m, s.mode), n = s.strokes.length;
+  setSelection(sel, sel ? `Object select${n ? ` (refined ×${n})` : ''}${MODE_LABEL[s.mode]}` : 'Deselect');
+  status(sel ? `Object select: ${sel.w} × ${sel.h} px in ${s.ms} ms · Shift-paint missed parts, Alt-paint extra background · Enter keeps`
+    : 'Object select found nothing: draw a larger box, or Shift-paint over the subject.');
+  buildOptionsBar(); requestRender();
+  return { sel, ms: s.ms };
+}
+function objSelDone() { if (!state.objSel) return; state.objSel = null; status('Object select kept.'); buildOptionsBar(); requestRender(); }
+function objSelCancel() {
+  const s = state.objSel; if (!s) return; state.objSel = null;
+  if (doc() === s.doc && doc().selection !== s.prev) setSelection(s.prev, 'Cancel object select');
+  status('Object select cancelled.'); buildOptionsBar(); requestRender();
+}
+function objSelUndoStroke() { const s = state.objSel; if (!s || !s.strokes.length) return; s.strokes.pop(); objSelRun(); }
 function magicWand(p, mode) {
   const d = doc(), x = Math.floor(p.x), y = Math.floor(p.y);
   if (x < 0 || y < 0 || x >= d.width || y >= d.height) return;
@@ -1665,6 +1744,30 @@ const toolHandlers = {
     },
   },
   wand: { down(p, e) { magicWand(p, selModeFor(e)); } },
+  objsel: {
+    down(p, e) {
+      const s = state.objSel, paint = state.opts.objPaint;
+      if (s && s.doc === doc() && (e.shiftKey || e.altKey || paint !== 'box')) { // refine strokes on the current object
+        const fg = e.altKey ? false : e.shiftKey ? true : paint === 'fg';
+        drag = { objStroke: { fg, r: Math.max(1, state.opts.objBrush / 2), pts: [[p.x, p.y]] } }; s.draft = drag.objStroke; requestRender(); return;
+      }
+      drag = { start: clampPt(p), moved: false, objBox: true, mode: s ? state.opts.selMode : selModeFor(e) };
+    },
+    move(p) {
+      if (drag?.objStroke) { const a = drag.objStroke.pts, l = a[a.length - 1]; if (Math.hypot(p.x - l[0], p.y - l[1]) * state.zoom >= 2) { a.push([p.x, p.y]); requestRender(); } return; }
+      if (!drag?.objBox) return;
+      const r = rectFromPoints(drag.start, clampPt(p), false);
+      state.selPreview = r.w >= 1 && r.h >= 1 ? { rect: r } : null; drag.moved = true; requestRender();
+    },
+    up() {
+      if (drag?.objStroke) { const s = state.objSel; if (s) { s.draft = null; s.strokes.push(drag.objStroke); objSelRun(); } return; }
+      const r = state.selPreview?.rect; state.selPreview = null;
+      if (!drag?.moved || !r || r.w * state.zoom < 6 || r.h * state.zoom < 6) { requestRender(); status('Object select: drag a box around the subject.'); return; }
+      const d = doc();
+      state.objSel = { doc: d, rect: r, strokes: [], base: drag.mode === 'new' ? null : d.selection, prev: d.selection, mode: drag.mode };
+      objSelRun();
+    },
+  },
   crop: {
     down(p) { drag = { start: clampPt(p) }; },
     move(p, e) { const a = cropAspect(), d = doc(); state.crop = a ? constrainRect(drag.start, clampPt(p), a.w, a.h, { w: d.width, h: d.height }) : rectFromPoints(drag.start, clampPt(p), e.shiftKey); buildOptionsBar(); requestRender(); },
@@ -2460,7 +2563,7 @@ async function renderMeshAny(img, outW, outH, m, ox = 0, oy = 0) {
 
 // --- Perspective & warp (Edit menu): drag corner / grid handles; Enter applies, Esc cancels -----------
 function mxfGrid(n) { const x = state.mxf; if (!x || x.mode !== 'warp' || x.n === n) return; x.n = n; mxfResetPoints(x); mxfPreview(); mxfRender(); buildOptionsBar(); }
-const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
+const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'autoUpright', 'uprightEdges_crop', 'uprightEdges_fill', 'uprightEdges_keep', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
 function startMeshXf(mode) {
   const d = doc(), l = activeLayer();
   if (!l || state.mxf) return;
@@ -2548,9 +2651,93 @@ async function applyMeshXf() {
     const m = mxfMesh(x), b = m && mxfBounds(m);
     if (b && b.w === l.canvas.width && b.h === l.canvas.height) { l.deep = deepMesh(x.dsrc, b.w, b.h, m, b.x, b.y); l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0; }
   }
-  commit(x.mode === 'warp' ? 'Warp' : 'Perspective');
-  status(`${x.mode === 'warp' ? 'Warp' : 'Perspective'} applied (${gfx.lastWarpPath === 'cpu' ? 'CPU' : gfx.lastWarpPath === 'webgpu' ? 'WebGPU' : 'WebGL2'})`);
+  commit(x.upright ? 'Upright' : x.mode === 'warp' ? 'Warp' : 'Perspective');
+  status(`${x.upright ? 'Upright' : x.mode === 'warp' ? 'Warp' : 'Perspective'} applied (${gfx.lastWarpPath === 'cpu' ? 'CPU' : gfx.lastWarpPath === 'webgpu' ? 'WebGPU' : 'WebGL2'})`);
+  if (x.upright) {
+    lastUpright = { ...(lastUpright || {}), H: mesh.homography([[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]], x.pts), kind: x.upright, crop: null, filled: false };
+    const how = state.opts.uprightEdges;
+    if (how === 'crop') { const r = cropEmptyEdges({ label: 'Crop empty edges (upright)', quiet: true }); if (r) { lastUpright.crop = r; status(`Upright applied and cropped to ${r.w} × ${r.h} px so no empty corners show.`); } }
+    else if (how === 'fill') { if (fillEmptyEdges({ quiet: true })) { lastUpright.filled = true; status('Upright applied; empty corners filled from nearby pixels.'); } }
+  }
   buildOptionsBar(); updateLayersPanel(); requestRender();
+}
+/**
+ * Auto upright (v1.8): detect near-vertical straight lines (gradient Hough on the ≤ 640 px preview copy), find where
+ * they converge (RANSAC vanishing point) and hand two lines through that point to the same solver Guided upright uses.
+ * Lines that are parallel but tilted give a plain rotation instead.
+ */
+let lastUpright = null;
+function autoUprightCmd() {
+  if (!doc()) return null;
+  if (state.mxf && state.mxf.mode !== 'perspective') { status('Finish the warp first (Enter applies).'); return null; }
+  if (!state.mxf) startMeshXf('perspective');
+  const x = state.mxf; if (!x || x.mode !== 'perspective') return null;
+  mxfResetPoints(x); x.guides = []; x.guideMode = false;
+  const img = x.small, k = x.k, t0 = performance.now();
+  const lines = seg.detectLines(img, { orient: 'v' }), u = seg.estimateUpright(lines, img.width, img.height);
+  const toDoc = ([a, b]) => [x.ox + a / k, x.oy + b / k];
+  let next = null;
+  if (u.mode === 'keystone') next = uprightFromGuides(x.pts, seg.guidesFromVP(u.vp, img.width, img.height).map((g) => g.map(toDoc)));
+  else if (u.mode === 'rotate') {
+    const t = u.angle * Math.PI / 180, c = Math.cos(t), sn = Math.sin(t), cx = x.ox + x.w / 2, cy = x.oy + x.h / 2;
+    next = x.pts.map(([a, b]) => [cx + (a - cx) * c - (b - cy) * sn, cy + (a - cx) * sn + (b - cy) * c]);
+  }
+  lastUpright = { mode: u.mode, vp: u.vp ? toDoc(u.vp) : null, angle: u.angle ?? null, lines: (u.inliers || []).length, found: lines.length, ms: Math.round(performance.now() - t0) };
+  if (!next || !mesh.perspectiveMesh(x.w, x.h, next) || !mxfBounds(mxfMesh({ ...x, pts: next }))) {
+    lastUpright.mode = 'none';
+    status(lines.length < 2 ? 'Auto upright found no long straight vertical lines. Try Guides and draw two edges yourself.' : 'Auto upright: the vertical lines already look upright (or disagree). Try Guides.');
+    buildOptionsBar(); requestRender(); return lastUpright;
+  }
+  x.pts = next; x.upright = 'auto';
+  mxfPreview(); mxfRender().catch((err) => status(`Preview failed: ${err.message}`));
+  status(`Auto upright: ${u.inliers.length} vertical lines ${u.mode === 'rotate' ? `straightened by rotating ${(Math.round(u.angle * 10) / 10)}°` : 'made parallel'} · adjust the corners if needed · Enter applies, Esc cancels.`);
+  buildOptionsBar();
+  return lastUpright;
+}
+/** Downscaled alpha of the composite (≤ 800 px) for finding the empty corners. */
+function compositeAlpha(maxSide = 800) {
+  const d = doc(); freshComp();
+  const k = Math.min(1, maxSide / Math.max(d.width, d.height)), w = Math.max(1, Math.round(d.width * k)), h = Math.max(1, Math.round(d.height * k));
+  const c = makeCanvas(w, h), cx = c.getContext('2d', { willReadFrequently: true }); cx.drawImage(comp, 0, 0, w, h);
+  const px = cx.getImageData(0, 0, w, h).data, a = new Uint8Array(w * h); for (let i = 0; i < a.length; i++) a[i] = px[i * 4 + 3];
+  return { a, w, h, k };
+}
+/** The largest rectangle (at the document's aspect ratio unless `ratio` is false) with no transparent pixels. */
+function innerOpaqueRect({ keepRatio = true } = {}) {
+  const d = doc(), { a, w, h, k } = compositeAlpha();
+  if (a.every((v) => v >= 250)) return { x: 0, y: 0, w: d.width, h: d.height, full: true };
+  const r = seg.largestInnerRect(a, w, h, { ratio: keepRatio ? d.width / d.height : 0 }); if (!r) return null;
+  // back to full resolution, pulled in by one preview pixel on every side so no soft edge survives
+  const pad = 1 / k + 1;
+  let x0 = r.x / k + pad, y0 = r.y / k + pad, rw = r.w / k - 2 * pad, rh = r.h / k - 2 * pad;
+  if (keepRatio) { const t = d.width / d.height; if (rw / rh > t) { const nw = rh * t; x0 += (rw - nw) / 2; rw = nw; } else { const nh = rw / t; y0 += (rh - nh) / 2; rh = nh; } }
+  const out = { x: Math.ceil(x0), y: Math.ceil(y0), w: Math.floor(rw), h: Math.floor(rh) };
+  return out.w >= 8 && out.h >= 8 ? out : null;
+}
+function cropEmptyEdges({ label = 'Crop empty edges', quiet = false, keepRatio = true } = {}) {
+  const r = innerOpaqueRect({ keepRatio });
+  if (!r) { if (!quiet) status('No large enough area without empty edges.'); return null; }
+  if (r.full) { if (!quiet) status('There are no empty edges to crop.'); return null; }
+  cropTo(r, label); if (!quiet) status(`Cropped to ${r.w} × ${r.h} px: no empty corners.`);
+  return r;
+}
+/** Fill the transparent parts of the active layer (inside the canvas) with a smooth extension of nearby pixels. */
+function fillEmptyEdges({ quiet = false } = {}) {
+  const d = doc(), l = activeLayer();
+  if (!l || l.kind === 'adjust' || l.kind === 'text' || l.kind === 'smart' || isGroup(l)) { if (!quiet) status('Fill empty edges needs a pixel layer.'); return false; }
+  if (useDeep(l)) { status('Fill empty edges works on 8-bit layers; this one is 16-bit (Image ▸ Mode: 8 bits/channel first).'); return false; }
+  const W = d.width, H = d.height, full = makeCanvas(W, H), fx = full.getContext('2d', { willReadFrequently: true });
+  fx.drawImage(l.canvas, l.x, l.y);
+  const k = Math.min(1, 1024 / Math.max(W, H)), sw = Math.max(1, Math.round(W * k)), sh = Math.max(1, Math.round(H * k));
+  const sm = makeCanvas(sw, sh), sx = sm.getContext('2d', { willReadFrequently: true }); sx.imageSmoothingQuality = 'high'; sx.drawImage(full, 0, 0, sw, sh);
+  const img = sx.getImageData(0, 0, sw, sh); let empty = 0; for (let i = 3; i < img.data.length; i += 4) if (img.data[i] < 255) empty++;
+  if (!empty) { if (!quiet) status('There are no empty edges to fill.'); return false; }
+  sx.putImageData(seg.pushPullFill(img), 0, 0);
+  const out = makeCanvas(W, H), ox = out.getContext('2d'); ox.imageSmoothingQuality = 'high';
+  ox.drawImage(sm, 0, 0, W, H); ox.drawImage(full, 0, 0); // the original pixels stay on top; only the gaps take the fill
+  l.canvas = out; l.x = 0; l.y = 0; touch(l); compDirty = true;
+  commit('Fill empty edges'); if (!quiet) status('Empty edges filled from nearby pixels (best for sky, walls and other plain areas).');
+  updateLayersPanel(); requestRender(); return true;
 }
 /** renderMeshCPU on a 16-bit DImage (same triangles and sampling as the 8-bit path). */
 function deepMesh(src, w, h, m, ox, oy, region = null, into = null) {
@@ -2571,7 +2758,9 @@ function cancelMeshXf() {
 function mxfBarParts() {
   const x = state.mxf, warp = x.mode === 'warp';
   return [`<span class="tool-title">${warp ? 'Warp' : 'Perspective'}</span>`,
+    warp ? '' : `<button data-cmd="autoUpright" title="Find the vertical lines and make them upright">Auto</button>`,
     warp ? '' : `<button data-cmd="mxfGuides" class="${x.guideMode ? 'on' : ''}" title="Draw two lines along edges that should be vertical (or horizontal)">Guides</button>`,
+    warp ? '' : `<span class="seg" title="After an upright correction: crop away the empty corners, fill them from nearby pixels, or leave them transparent">${[['crop', 'Crop edges'], ['fill', 'Fill edges'], ['keep', 'Keep']].map(([k, n]) => `<button data-cmd="uprightEdges_${k}" class="${state.opts.uprightEdges === k ? 'on' : ''}">${n}</button>`).join('')}</span>`,
     warp ? `<span class="seg">${[3, 4, 5].map((n) => `<button data-cmd="mxfGrid${n}" class="${x.n === n ? 'on' : ''}" title="${n}×${n} control points">${n}×${n}</button>`).join('')}</span>` : '',
     `<span class="muted">${warp ? 'Drag grid points to bend the layer' : x.guideMode ? ((x.guides || []).length ? 'Draw a second line' : 'Draw two lines along edges that should be vertical') : 'Drag the corners'} · Enter applies · Esc cancels</span>`,
     `<button data-cmd="mxfReset">Reset</button>`, `<button data-cmd="mxfApply" class="primary">Apply</button>`, `<button data-cmd="mxfCancel">Cancel</button>`];
@@ -2623,7 +2812,7 @@ function addUprightGuide(x, g) {
   x.pts = next;
   const m = mxfBounds(mxfMesh(x));
   if (!m) { x.pts = prev; status('That correction is too extreme. Try guides on longer edges.'); buildOptionsBar(); requestRender(); return; }
-  x.guideMode = false;
+  x.guideMode = false; x.upright = 'guided';
   mxfPreview(); mxfRender().catch((err) => status(`Preview failed: ${err.message}`));
   status('Guided upright: lines straightened. Adjust the corners if needed; Enter applies, Esc cancels.');
   buildOptionsBar();
@@ -3057,6 +3246,10 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); state.poly = null; requestRender(); return; }
     if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); state.poly.pts.pop(); if (!state.poly.pts.length) state.poly = null; requestRender(); return; }
   }
+  if (state.objSel && state.tool === 'objsel') {
+    if (e.key === 'Enter') { e.preventDefault(); objSelDone(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); objSelCancel(); return; }
+  }
   if (state.mxf) {
     if (e.key === 'Enter') { e.preventDefault(); run('mxfApply'); return; }
     if (e.key === 'Escape') { e.preventDefault(); run('mxfCancel'); return; }
@@ -3162,6 +3355,14 @@ const cmds = {
   autoEnhance: needDoc(() => autoEnhanceCmd()),
   autoWhiteBalance: needDoc(() => autoWhiteBalanceCmd()),
   autoStraighten: needDoc(() => autoStraightenCmd()),
+  autoUpright: needDoc(() => autoUprightCmd()),
+  uprightEdges_crop: () => { state.opts.uprightEdges = 'crop'; buildOptionsBar(); }, uprightEdges_fill: () => { state.opts.uprightEdges = 'fill'; buildOptionsBar(); }, uprightEdges_keep: () => { state.opts.uprightEdges = 'keep'; buildOptionsBar(); },
+  cropEmptyEdges: needDoc(() => cropEmptyEdges()), fillEmptyEdges: needDoc(() => fillEmptyEdges()),
+  cropFitInside: needDoc(() => { const a = cropAspect(), r0 = innerOpaqueRect({ keepRatio: false }); if (!r0) { status('No area without empty edges.'); return; }
+    let r = r0; if (a) { const t = a.w / a.h; r = r0.w / r0.h > t ? { x: Math.round(r0.x + (r0.w - r0.h * t) / 2), y: r0.y, w: Math.floor(r0.h * t), h: r0.h } : { x: r0.x, y: Math.round(r0.y + (r0.h - r0.w / t) / 2), w: r0.w, h: Math.floor(r0.w / t) }; }
+    if (state.tool !== 'crop') setTool('crop'); state.crop = { x: r.x, y: r.y, w: r.w, h: r.h }; buildOptionsBar(); requestRender(); status(`Crop fitted inside the image: ${r.w} × ${r.h} px · Enter applies.`); }),
+  objectSelectTool: needDoc(() => { setTool('objsel'); status('Object select: drag a box around the subject.'); }),
+  objSelDone: () => objSelDone(), objSelUndo: () => objSelUndoStroke(),
   straightenTool: needDoc(() => setTool('straighten')),
   wbPicker: needDoc(() => setTool('wbpick')),
   whiteBalance: needDoc(() => openAdjust(ADJ.whiteBalance)),
@@ -3272,6 +3473,7 @@ const cmds = {
   resizePresets: needDoc(() => openResizePresetDialog()),
   cropPresetTool: needDoc(() => { setTool('crop'); if (!state.opts.cropPreset) setCropPreset('sq'); else setCropPreset(state.opts.cropPreset); }),
   exportMulti: needDoc(() => openExportVariantsDialog()),
+  exportLastPreset: needDoc(() => exportWithLastPreset()), watermarkSettings: () => openWatermarkDialog(),
   batch: () => openBatchDialog(),
   actions: () => openActionsDialog(),
   actionRecord: () => startRecording(),
@@ -3303,7 +3505,7 @@ const XF_SAFE = new Set(['xfApply', 'xfCancel', 'undo', 'redo', 'zoomIn', 'zoomO
 /** Commands that need pixels of the active layer: a selected group has none (only a mask). */
 const GROUP_BLOCKED = new Set(['brightnessContrast', 'hueSaturation', 'exposure', 'levels', 'curves', 'autoLevels', 'invert', 'grayscale', 'sepia',
   'gaussianBlur', 'sharpen', 'noise', 'vignette', 'convertSmart', 'rasterizeLayer', 'clear', 'cut', 'copy', 'fillSelection', 'flipLayerH', 'flipLayerV',
-  'freeTransform', 'perspective', 'guidedUpright', 'warp', 'applyMask', 'selectLayerPixels', 'editLayer']);
+  'freeTransform', 'perspective', 'guidedUpright', 'autoUpright', 'fillEmptyEdges', 'warp', 'applyMask', 'selectLayerPixels', 'editLayer']);
 function run(name) {
   closeMenus();
   if (isGroup(activeLayer()) && GROUP_BLOCKED.has(name)) {
@@ -3318,7 +3520,7 @@ function run(name) {
 
 // Ctrl+V is handled by the paste event (so system-clipboard images work too).
 const SHORTCUTS = {
-  'mod+n': 'new', 'mod+o': 'open', 'mod+shift+o': 'place', 'mod+s': 'saveProject', 'mod+shift+s': 'saveAs', 'mod+shift+e': 'export',
+  'mod+n': 'new', 'mod+o': 'open', 'mod+shift+o': 'place', 'mod+s': 'saveProject', 'mod+shift+s': 'saveAs', 'mod+shift+e': 'export', 'mod+shift+alt+e': 'exportLastPreset',
   'mod+z': 'undo', 'mod+shift+z': 'redo', 'mod+y': 'redo',
   'mod+a': 'selectAll', 'mod+d': 'deselect', 'mod+shift+i': 'invertSelection', 'mod+alt+d': 'feather', 'shift+f6': 'feather', '\\': 'editMaskToggle', 'delete': 'clear', 'backspace': 'clear', 'alt+backspace': 'fillSelection',
   'mod+c': 'copy', 'mod+shift+c': 'copyMerged', 'mod+x': 'cut',
@@ -3351,7 +3553,7 @@ const shortcutLabel = (cmd, spec) => keyLabel(shortcutFor(cmd, spec));
 
 const MENUS = [
   ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Take photo (camera)…', 'camera'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
-    ['Open recent…', 'openRecent'], '-', ['Save', 'saveProject', 'Ctrl+S'], ['Save as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E'], ['Export layered PSD…', 'exportPSD'], ['Export multiple sizes…', 'exportMulti'], ['Batch process…', 'batch'], '-',
+    ['Open recent…', 'openRecent'], '-', ['Save', 'saveProject', 'Ctrl+S'], ['Save as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E'], ['Export with last preset', 'exportLastPreset', 'Ctrl+Alt+Shift+E'], ['Export watermark…', 'watermarkSettings'], ['Export layered PSD…', 'exportPSD'], ['Export multiple sizes…', 'exportMulti'], ['Batch process…', 'batch'], '-',
     ['Next document', 'docNext', 'Ctrl+Tab'], ['Previous document', 'docPrev', 'Ctrl+Shift+Tab'], ['Close document', 'docClose', 'Ctrl+Alt+W']]],
   ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
     ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-',
@@ -3359,9 +3561,9 @@ const MENUS = [
   ['Image', [['Image size…', 'imageSize'], ['Resize to preset…', 'resizePresets'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], ['Crop with preset', 'cropPresetTool'], '-',
     ['Rotate 90° clockwise', 'rotateCW'], ['Rotate 90° counter-clockwise', 'rotateCCW'], ['Rotate 180°', 'rotate180'],
     ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Auto enhance', 'autoEnhance', 'Ctrl+Shift+L'], ['Auto enhance options…', 'autoEnhanceOptions'], ['Auto white balance', 'autoWhiteBalance'], ['Auto white balance options…', 'autoWBOptions'],
-    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], ['Guided upright', 'guidedUpright'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
+    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], ['Auto upright', 'autoUpright'], ['Guided upright', 'guidedUpright'], ['Crop away empty edges', 'cropEmptyEdges'], ['Fill empty edges', 'fillEmptyEdges'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
   ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
-    ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
+    ['Object select (drag a box)', 'objectSelectTool'], ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
     ['New adjustment layer: Brightness / contrast…', 'adjLayer_brightnessContrast'], ['New adjustment layer: Hue / saturation…', 'adjLayer_hueSaturation'],
     ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: White balance…', 'adjLayer_whiteBalance'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
@@ -4254,11 +4456,13 @@ function openExportDialog() {
   const body = document.createElement('div');
   const base = (doc().name || 'image').replace(/\.[^.]+$/, '');
   body.innerHTML = formHTML([
+    { label: 'Preset', html: `<span><select id="ePreset" title="Saved export settings"></select> <button type="button" id="ePresetSave" title="Save the current settings as a preset">Save…</button> <button type="button" id="ePresetDel" title="Delete this preset">Delete</button></span>` },
     { label: 'File name', html: `<input type="text" id="eName" value="${escapeHtml(base)}" />` },
     { label: 'Format', html: `<select id="eFmt"><option value="image/png">PNG (lossless)</option><option value="image/png16">PNG 16-bit</option><option value="image/jpeg">JPEG</option><option value="image/webp">WebP</option><option value="${PSD_TYPE}">PSD (layers)</option></select>` },
     { label: 'Quality', html: `<span><input type="range" id="eQ" min="1" max="100" value="90" disabled /> <output id="eQv">90</output></span>` },
     { label: 'Size', html: `<span class="ex-size"><select id="eSize" title="Export at the document size or resized"><option value="original">Original (${doc().width} × ${doc().height} px)</option><option value="long">Long edge (px)</option><option value="width">Width (px)</option><option value="scale">Scale (%)</option></select> <input type="number" id="eSizeV" min="1" max="30000" value="${Math.max(doc().width, doc().height)}" class="hidden" aria-label="New size" style="width:84px"/> <span id="eSizeOut" class="muted"></span></span>` },
     { label: 'Resolution', html: `<span><input type="number" id="eDpi" min="1" max="2400" value="${doc().dpi || 72}" style="width:72px" aria-label="Resolution in pixels per inch"/> ppi <span class="muted" id="eDpiInfo"></span></span>` },
+    { label: 'Watermark', html: watermarkFieldHTML('eWm') },
   ]);
   const fmt = body.querySelector('#eFmt'), q = body.querySelector('#eQ');
   // navigator.share needs a fresh user gesture, so the file is rendered ahead of time and the
@@ -4302,7 +4506,27 @@ function openExportDialog() {
   });
   sizeV.addEventListener('input', () => { sizeInfo(); if (canShareFiles) prepare(); });
   dpiIn.addEventListener('input', sizeInfo); sizeInfo();
-  exportOpts = () => { const dpi = Math.max(1, Math.min(2400, Math.round(+dpiIn.value || 0))) || null; return { size: sizeOpts(), dpi: dpi === 72 && !doc().dpi ? null : dpi }; };
+  const wmBox = body.querySelector('#eWm'); wireWatermarkField(body, 'eWm', () => { if (canShareFiles) prepare(); });
+  exportOpts = () => { const dpi = Math.max(1, Math.min(2400, Math.round(+dpiIn.value || 0))) || null; return { size: sizeOpts(), dpi: dpi === 72 && !doc().dpi ? null : dpi, watermark: wmBox.checked ? watermarkSettings() : null }; };
+  // v1.8: saved presets (format, quality, size, ppi, watermark); the last one used is selected next time
+  const pSel = body.querySelector('#ePreset');
+  const fillPresets = (sel) => { pSel.innerHTML = `<option value="">(current settings)</option>${allExportPresets().map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('')}`; pSel.value = sel || ''; body.querySelector('#ePresetDel').disabled = !pSel.value || !!BUILTIN_EXPORT_PRESETS.find((b) => b.id === pSel.value); };
+  const applyPreset = (p) => {
+    fmt.value = p.type; fmt.dispatchEvent(new Event('change'));
+    q.value = p.quality ?? 90; body.querySelector('#eQv').textContent = q.value;
+    const sz = p.size; sizeSel.value = sz ? sz.mode : 'original'; sizeV.classList.toggle('hidden', !sz);
+    if (sz) sizeV.value = sz.mode === 'long' ? sz.long : sz.mode === 'width' ? sz.w : sz.pct;
+    dpiIn.value = p.dpi || doc().dpi || 72; wmBox.checked = !!p.watermark; sizeInfo(); if (canShareFiles) prepare();
+  };
+  const presetFromForm = (name) => { const o = exportOpts(); return { name, type: fmt.value, quality: +q.value, size: o.size, dpi: +dpiIn.value || null, watermark: wmBox.checked }; };
+  pSel.addEventListener('change', () => { const p = allExportPresets().find((x) => x.id === pSel.value); if (p) applyPreset(p); fillPresets(pSel.value); });
+  body.querySelector('#ePresetSave').addEventListener('click', () => {
+    const name = (prompt('Preset name', allExportPresets().find((x) => x.id === pSel.value)?.name || 'My export') || '').trim(); if (!name) return;
+    const p = saveExportPreset(presetFromForm(name)); fillPresets(p.id); status(`Saved export preset “${name}”.`);
+  });
+  body.querySelector('#ePresetDel').addEventListener('click', () => { const id = pSel.value; if (!id) return; deleteExportPreset(id); fillPresets(''); status('Export preset deleted.'); });
+  const last = allExportPresets().find((x) => x.id === localStorage.getItem(LAST_EXPORT_PRESET_KEY));
+  fillPresets(last ? last.id : ''); if (last) applyPreset(last);
   fmt.addEventListener('change', () => {
     q.disabled = fmt.value.startsWith('image/png') || fmt.value === PSD_TYPE;
     const noSize = fmt.value === 'image/png16' || fmt.value === PSD_TYPE; sizeSel.disabled = noSize; if (noSize && sizeSel.value !== 'original') { sizeSel.value = 'original'; sizeSel.dispatchEvent(new Event('change')); }
@@ -4311,15 +4535,16 @@ function openExportDialog() {
   q.addEventListener('input', () => { body.querySelector('#eQv').textContent = q.value; if (canShareFiles) prepare(); });
   body.querySelector('#eName').addEventListener('input', () => { if (canShareFiles) prepare(); });
   showModal({ title: 'Export image', body, okLabel: canShareFiles ? 'Download' : 'Export', ok: () => {
+    try { localStorage.setItem(LAST_EXPORT_PRESET_KEY, pSel.value || ''); } catch { /* ignore */ }
     exportImage(fmt.value, q.value / 100, body.querySelector('#eName').value || 'image', exportOpts());
   } });
 }
 /** renderExport plus the export dialog's options: an optional resize ({ mode, long | w | pct }) and the ppi written
  * into the file (JPEG JFIF density / PNG pHYs). */
-async function renderExportWith(type, quality, { size = null, dpi = null } = {}) {
+async function renderExportWith(type, quality, { size = null, dpi = null, watermark = null } = {}) {
   let blob;
-  if (size && type !== 'image/png16' && type !== PSD_TYPE) blob = (await renderVariant({ ...size, type, quality: Math.round(quality * 100) })).blob;
-  else blob = await renderExport(type, quality);
+  if (size && type !== 'image/png16' && type !== PSD_TYPE) { blob = (await renderVariant({ ...size, type, quality: Math.round(quality * 100), watermark })).blob; lastExportNotes = []; }
+  else blob = await renderExport(type, quality, { watermark });
   if (dpi && (blob.type === 'image/jpeg' || blob.type === 'image/png')) blob = await withDpi(blob, dpi);
   return blob;
 }
@@ -4329,12 +4554,13 @@ let lastExportNotes = [];
  * 'image/png16' writes a 16-bit PNG (png.js). 16-bit documents are composited in float (deep.js) and
  * dithered down for 8-bit formats so smooth gradients don't band.
  */
-async function renderExport(type, quality) {
+async function renderExport(type, quality, { watermark = null } = {}) {
   const d = doc(), bg = type === 'image/jpeg' ? '#ffffff' : null;
-  if (type === PSD_TYPE) { const r = await documentToPSD(d); lastExportNotes = r.notes; return r.blob; }
+  if (type === PSD_TYPE) { const r = await documentToPSD(d); lastExportNotes = r.notes; if (watermark) lastExportNotes = [...lastExportNotes, 'The watermark is not added to layered PSD files.']; return r.blob; }
   lastExportNotes = [];
   if (type === 'image/png16' || is16()) {
     const deep = compositeDeepDoc({ background: bg });
+    if (watermark) watermarkDeep(deep, watermark);
     if (type === 'image/png16') return new Blob([encodePNG({ width: deep.width, height: deep.height, data: deep.data, depth: 16 })], { type: 'image/png' });
     const out = makeCanvas(d.width, d.height); ctxOf(out).putImageData(deepToImageData(deep, { dither: true }), 0, 0);
     return new Promise((res) => out.toBlob((b) => { out.width = out.height = 0; res(b); }, type, quality));
@@ -4342,7 +4568,16 @@ async function renderExport(type, quality) {
   const out = makeCanvas(doc().width, doc().height);
   // JPEG has no alpha channel: flatten onto white so transparent areas don't turn black
   composite(out, { background: type === 'image/jpeg' ? '#ffffff' : null, sync: true });
+  if (watermark) drawWatermark(out, watermark);
   return new Promise((res) => out.toBlob((b) => { out.width = out.height = 0; res(b); }, type, quality));
+}
+/** File ▸ Export with last preset: one step, straight to the save dialog. */
+function exportWithLastPreset() {
+  const p = allExportPresets().find((x) => x.id === localStorage.getItem(LAST_EXPORT_PRESET_KEY));
+  if (!p) { status('No export preset used yet: choose one in the Export dialog first.'); openExportDialog(); return null; }
+  const name = (doc().name || 'image').replace(/\.[^.]+$/, '');
+  status(`Exporting with “${p.name}”…`);
+  return exportImage(p.type, (p.quality ?? 90) / 100, name, { size: p.type === 'image/png16' || p.type === PSD_TYPE ? null : p.size || null, dpi: p.dpi || null, watermark: p.watermark ? watermarkSettings() : null });
 }
 async function exportImage(type, quality, name, opts = {}) {
   if (opts.dpi == null && doc().dpi) opts = { ...opts, dpi: doc().dpi }; // a print crop's ppi goes into the file
@@ -4370,7 +4605,7 @@ function download(blob, filename) {
 function openShortcutsDialog() {
   const K = (cmd, spec) => keyLabel(shortcutFor(cmd, spec));
   const rows = [
-    ['V / M / C', 'Move / Rectangle select / Crop'], ['L / P / W', 'Lasso / Polygonal lasso / Magic wand'], ['B / E / S', 'Brush / Eraser / Clone stamp'], ['G (again: Fill) / U', 'Gradient / Shapes'], ['O again / J again', 'Dodge-burn / Red eye'], ['T / I', 'Text / Color picker'],
+    ['V / M / C', 'Move / Rectangle select / Crop'], ['L / P / W', 'Lasso / Polygonal lasso / Magic wand'], ['W again', 'Object select (drag a box; Shift-paint adds, Alt-paint removes)'], ['B / E / S', 'Brush / Eraser / Clone stamp'], ['G (again: Fill) / U', 'Gradient / Shapes'], ['O again / J again', 'Dodge-burn / Red eye'], ['T / I', 'Text / Color picker'],
     [platformText('Shift / Alt / Shift+Alt (selecting)'), 'Add / subtract / intersect'], [`${K('invertSelection', 'Ctrl+Shift+I')}, ${keyLabel('Shift+F6')}`, 'Invert selection / feather'], ['Enter, double-click / Esc', 'Close / cancel polygon'],
     ['R / J', 'Healing brush / Spot healing'], [platformText('Alt+click (clone, healing)'), 'Set source point'], ['\\', 'Toggle editing mask / pixels'],
     ['H, hold Space', 'Pan'], ['Z, mouse wheel', platformText('Zoom (Shift+wheel pans)')], ['[ and ]', 'Brush size'], [platformText('Shift+click'), 'Straight brush line'], [platformText('Alt+click (brush)'), 'Pick color'],
@@ -4379,7 +4614,7 @@ function openShortcutsDialog() {
     [`${K('new', 'Ctrl+N')} / ${K('layerNew', 'Ctrl+Shift+N')}`, 'New canvas / new layer'], [K('freeTransform', 'Ctrl+T'), 'Free transform'],
     [`${K('brightnessContrast', 'Ctrl+B')} / ${K('hueSaturation', 'Ctrl+U')} / ${K('levels', 'Ctrl+L')} / ${K('curves', 'Ctrl+M')} / ${K('invert', 'Ctrl+I')}`, 'Brightness-contrast / Hue-sat / Levels / Curves / Invert'],
     [`${K('zoomFit', 'Ctrl+0')} / ${K('zoom100', 'Ctrl+1')}`, 'Fit / 100%'], ['Enter / Esc', 'Apply / cancel crop'],
-    ['Arrows (Move tool)', platformText('Nudge layer (Shift = 10px)')], [`${K('saveProject', 'Ctrl+S')} / ${K('saveAs', 'Ctrl+Shift+S')} / ${K('export', 'Ctrl+Shift+E')}`, 'Save / save as / export'],
+    ['Arrows (Move tool)', platformText('Nudge layer (Shift = 10px)')], [`${K('saveProject', 'Ctrl+S')} / ${K('saveAs', 'Ctrl+Shift+S')} / ${K('export', 'Ctrl+Shift+E')}`, 'Save / save as / export'], [K('exportLastPreset', 'Ctrl+Alt+Shift+E'), 'Export with last preset'],
   ];
   const note = `<p class="muted" id="kbNote">${IS_MAC ? 'Mac keyboard: ⌘ Command · ⌥ Option · ⇧ Shift.' : 'Ctrl / Alt / Shift keyboard (Windows, Linux, ChromeOS).'} ` +
     `Some combinations are kept by the browser or system (${(IS_MAC ? ['Ctrl+N', 'Ctrl+T', 'Ctrl+W', 'Ctrl+Q', 'Ctrl+M', 'Ctrl+Shift+N'] : ['Ctrl+N', 'Ctrl+T', 'Ctrl+W', 'Ctrl+Shift+N', 'Ctrl+Shift+I', 'Ctrl+Shift+C']).map(keyLabel).join(', ')}), so Tintwork shows an alternate for those. ` +
@@ -6220,6 +6455,17 @@ function buildOptionsBar() {
       `<span class="muted">${state.cloneSrc ? `Source ${Math.round(state.cloneSrc.x)}, ${Math.round(state.cloneSrc.y)} · texture is color-matched when you release` : 'Alt+click to set the source'}</span>`); break;
     case 'spot': parts.push(range('spotSize', 'Size', 1, 300, 'px'), range('spotHardness', 'Hardness', 0, 100, '%'),
       `<span class="muted">Paint over a blemish; a matching patch nearby is picked automatically</span>`); break;
+    case 'objsel': {
+      const s = state.objSel, sl = d?.selection;
+      parts.push(`<span class="seg">${['new', 'add', 'subtract', 'intersect'].map((m) => `<button data-selmode="${m}" class="${o.selMode === m ? 'on' : ''}" title="How a new box combines with the current selection">${m[0].toUpperCase() + m.slice(1)}</button>`).join('')}</span>`,
+        `<span class="seg" title="What dragging does once there is an object">${[['box', 'Box'], ['fg', '+ Subject'], ['bg', '− Background']].map(([k, n]) => `<button data-objpaint="${k}" class="${o.objPaint === k ? 'on' : ''}">${n}</button>`).join('')}</span>`,
+        range('objBrush', 'Brush', 2, 400, 'px'),
+        `<label title="Soften the outline along fine edges such as hair"><input type="checkbox" data-opt="objRefine" ${o.objRefine !== false ? 'checked' : ''}/> Refine edges</label>`,
+        `<span class="muted">${s ? platformText(`${s.strokes.length} stroke${s.strokes.length === 1 ? '' : 's'} · Shift-paint missed parts · Alt-paint extra background · Enter keeps · Esc cancels`) : 'Drag a box around the subject'}${sl ? ` · ${sl.w} × ${sl.h} px` : ''}</span>`);
+      if (s) parts.push(`<button data-cmd="objSelUndo" ${s.strokes.length ? '' : 'disabled'}>Undo stroke</button>`, `<button data-cmd="objSelDone" class="primary">Done</button>`);
+      parts.push(`<button data-cmd="invertSelection">Invert</button>`, `<button data-cmd="deselect">Deselect</button>`);
+      break;
+    }
     case 'lasso': case 'polylasso': case 'wand': case 'select': case 'ellipse': {
       const s = d?.selection;
       parts.push(`<span class="seg">${['new', 'add', 'subtract', 'intersect'].map((m) => `<button data-selmode="${m}" class="${o.selMode === m ? 'on' : ''}" title="${m === 'new' ? 'New selection' : m === 'add' ? 'Add (Shift)' : m === 'subtract' ? 'Subtract (Alt)' : 'Intersect (Shift+Alt)'}">${m[0].toUpperCase() + m.slice(1)}</button>`).join('')}</span>`);
@@ -6258,6 +6504,7 @@ function buildOptionsBar() {
       if (cp && cp.inW != null) parts.push(`<label>DPI <input type="number" data-opt="cropDpi" min="72" max="1200" value="${o.cropDpi}" style="width:60px"/></label>`);
       if (cp && cp.rw == null) parts.push(`<label title="After cropping, resize to the preset's pixel size"><input type="checkbox" data-opt="cropResize" ${o.cropResize ? 'checked' : ''}/> Resize to ${cp.inW != null ? `${Math.round((o.cropOrient === 'landscape' ? cp.inH : cp.inW) * o.cropDpi)}×${Math.round((o.cropOrient === 'landscape' ? cp.inW : cp.inH) * o.cropDpi)}` : `${cp.w}×${cp.h}`}</label>`);
       parts.push(`<span class="muted">${c ? `${c.w} × ${c.h} px` : cropAspect() ? 'Drag a crop rectangle (ratio locked)' : 'Drag a crop rectangle · Shift = square'}</span>`);
+      parts.push(`<button data-cmd="cropFitInside" title="Largest crop (at the chosen ratio) with no empty or transparent corners">Fit inside image</button>`);
       if (c) parts.push(`<button data-cmd="cropApply" class="primary">Apply (Enter)</button>`, `<button data-cmd="cropCancel">Cancel (Esc)</button>`);
       break;
     }
@@ -6268,12 +6515,13 @@ function buildOptionsBar() {
   }
   const al = activeLayer();
   if (al && editingMask(al) && ['brush', 'eraser', 'fill', 'gradient'].includes(state.tool) && !state.xf) parts.push(`<span class="mask-badge">${editingFMask(al) ? 'Editing filter mask' : 'Editing mask'}</span>`);
-  if (!state.xf && !state.mxf && d && ['select', 'lasso', 'polylasso', 'wand', 'ellipse'].includes(state.tool)) parts.push(`<button data-cmd="colorRange">Color range…</button>`, `<button data-cmd="refineEdge" ${d.selection ? '' : 'disabled'}>Refine edge…</button>`);
+  if (!state.xf && !state.mxf && d && ['select', 'lasso', 'polylasso', 'wand', 'ellipse', 'objsel'].includes(state.tool)) parts.push(`<button data-cmd="colorRange">Color range…</button>`, `<button data-cmd="refineEdge" ${d.selection ? '' : 'disabled'}>Refine edge…</button>`);
   if (!state.xf && !state.mxf && d && state.tool === 'move') parts.push(`<button data-cmd="freeTransform">Transform</button>`);
   bar.classList.toggle('xf', !!state.xf);
   bar.innerHTML = platformText(parts.join(''));
   bar.querySelectorAll('[data-xf]').forEach((inp) => inp.addEventListener('change', () => setXfField(inp.dataset.xf, +inp.value)));
   bar.querySelectorAll('[data-selmode]').forEach((b) => b.addEventListener('click', () => { o.selMode = b.dataset.selmode; buildOptionsBar(); }));
+  bar.querySelectorAll('[data-objpaint]').forEach((b) => b.addEventListener('click', () => { o.objPaint = b.dataset.objpaint; buildOptionsBar(); }));
   bar.querySelectorAll('[data-seg]').forEach((b) => b.addEventListener('click', () => { o[b.dataset.seg] = b.dataset.val; buildOptionsBar(); }));
   bar.querySelector('[data-croppreset]')?.addEventListener('change', (e) => setCropPreset(e.target.value));
   bar.querySelector('[data-cropswap]')?.addEventListener('click', () => {
@@ -7091,6 +7339,96 @@ function openAutoOptionsDialog(kind = 'enhance') {
   } });
 }
 
+// ---- Export presets and watermark (v1.8) ---------------------------------------------------------------------
+const EXPORT_PRESETS_KEY = 'tintwork.exportPresets', LAST_EXPORT_PRESET_KEY = 'tintwork.lastExportPreset', WATERMARK_KEY = 'tintwork.watermark';
+const BUILTIN_EXPORT_PRESETS = [
+  { id: 'web', name: 'Web: JPEG 85, 2048 px long edge', type: 'image/jpeg', quality: 85, size: { mode: 'long', long: 2048 }, dpi: 72, watermark: false },
+  { id: 'email', name: 'Email: JPEG 80, 1200 px long edge', type: 'image/jpeg', quality: 80, size: { mode: 'long', long: 1200 }, dpi: 72, watermark: false },
+  { id: 'print', name: 'Print: JPEG 95, full size, 300 ppi', type: 'image/jpeg', quality: 95, size: null, dpi: 300, watermark: false },
+  { id: 'png', name: 'Lossless PNG, full size', type: 'image/png', quality: 100, size: null, dpi: null, watermark: false },
+];
+function userExportPresets() {
+  try { const v = JSON.parse(localStorage.getItem(EXPORT_PRESETS_KEY) || '[]'); return Array.isArray(v) ? v.filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string' && EXPORT_EXT[p.type]) : []; } catch { return []; }
+}
+function allExportPresets() { return [...BUILTIN_EXPORT_PRESETS.map((p) => ({ ...p, builtin: true })), ...userExportPresets()]; }
+function saveExportPreset(p) {
+  const list = userExportPresets(), old = list.find((x) => x.name === p.name);
+  const q = { id: old?.id || `u-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, name: String(p.name).slice(0, 80), type: p.type, quality: Math.max(1, Math.min(100, Math.round(p.quality ?? 90))),
+    size: p.size || null, dpi: p.dpi ? Math.max(1, Math.min(2400, Math.round(p.dpi))) : null, watermark: !!p.watermark };
+  const next = [...list.filter((x) => x.id !== q.id), q];
+  try { localStorage.setItem(EXPORT_PRESETS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  return q;
+}
+function deleteExportPreset(id) { try { localStorage.setItem(EXPORT_PRESETS_KEY, JSON.stringify(userExportPresets().filter((x) => x.id !== id))); if (localStorage.getItem(LAST_EXPORT_PRESET_KEY) === id) localStorage.removeItem(LAST_EXPORT_PRESET_KEY); } catch { /* ignore */ } }
+const WM_DEFAULT = { text: '© Your name', size: 4, opacity: 60, position: 'br', color: '#ffffff', margin: 3, shadow: true };
+const WM_POSITIONS = ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br'];
+function watermarkSettings() {
+  let w; try { w = { ...WM_DEFAULT, ...JSON.parse(localStorage.getItem(WATERMARK_KEY) || '{}') }; } catch { w = { ...WM_DEFAULT }; }
+  if (!WM_POSITIONS.includes(w.position)) w.position = 'br';
+  w.size = Math.max(0.5, Math.min(40, +w.size || 4)); w.opacity = Math.max(1, Math.min(100, +w.opacity || 60)); w.margin = Math.max(0, Math.min(30, +w.margin || 0));
+  if (!/^#[0-9a-f]{6}$/i.test(w.color)) w.color = '#ffffff';
+  return w;
+}
+function saveWatermark(w) { try { localStorage.setItem(WATERMARK_KEY, JSON.stringify({ ...watermarkSettings(), ...w })); } catch { /* ignore */ } return watermarkSettings(); }
+/** Draw the text watermark onto an output canvas. Size and margin are % of the shorter side, so every size matches. */
+function drawWatermark(cv, wm = watermarkSettings()) {
+  const text = String(wm.text || '').trim(); if (!text) return false;
+  const W = cv.width, H = cv.height, c = cv.getContext('2d'), short = Math.min(W, H);
+  const px = Math.max(6, Math.round(short * wm.size / 100)), m = Math.round(short * wm.margin / 100), pos = wm.position || 'br';
+  c.save(); c.font = `600 ${px}px "Segoe UI", system-ui, sans-serif`; c.textBaseline = 'alphabetic';
+  const met = c.measureText(text), tw = met.width;
+  const x = pos[1] === 'l' ? m : pos[1] === 'r' ? W - m - tw : (W - tw) / 2;
+  const y = pos[0] === 't' ? m + px * 0.8 : pos[0] === 'b' ? H - m - px * 0.22 : H / 2 + px * 0.3;
+  c.globalAlpha = wm.opacity / 100;
+  if (wm.shadow) { c.shadowColor = 'rgba(0,0,0,0.5)'; c.shadowBlur = Math.max(1, px * 0.08); c.shadowOffsetY = Math.max(1, px * 0.04); }
+  c.fillStyle = wm.color; c.fillText(text, x, y); c.restore();
+  return true;
+}
+/** The same watermark on a 16-bit composite: render it 8-bit on a clear canvas and blend it in as a coverage mask. */
+function watermarkDeep(deep, wm) {
+  const W = deep.width, H = deep.height, cv = makeCanvas(W, H); if (!drawWatermark(cv, wm)) return false;
+  const px = cv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data, a = deep.data, scale = 65535 / 255;
+  for (let i = 0, j = 0; i < px.length; i += 4, j += 4) {
+    const t = px[i + 3]; if (!t) continue;
+    const f = t / 255, oa = a[j + 3] / 65535, na = f + oa * (1 - f);
+    for (let ch = 0; ch < 3; ch++) a[j + ch] = Math.round(na > 0 ? (px[i + ch] * scale * f + a[j + ch] * oa * (1 - f)) / na : 0);
+    a[j + 3] = Math.round(na * 65535);
+  }
+  cv.width = 0; return true;
+}
+function watermarkFieldHTML(id) {
+  const w = watermarkSettings();
+  return `<span><label><input type="checkbox" id="${id}" ${localStorage.getItem(`${WATERMARK_KEY}.on`) === '1' ? 'checked' : ''}/> Add “<span data-wmtext>${escapeHtml(w.text)}</span>”</label> <button type="button" data-wmedit="${id}">Watermark…</button></span>`;
+}
+function wireWatermarkField(root, id, onChange = () => {}) {
+  const box = root.querySelector(`#${id}`);
+  box.addEventListener('change', () => { try { localStorage.setItem(`${WATERMARK_KEY}.on`, box.checked ? '1' : '0'); } catch { /* ignore */ } onChange(); });
+  root.querySelector(`[data-wmedit="${id}"]`).addEventListener('click', () => openWatermarkEditor(root, () => { box.checked = true; box.dispatchEvent(new Event('change')); }));
+}
+/** Watermark settings as an inline panel (the export dialogs are already modal, so it opens in place). */
+function openWatermarkEditor(root, after = () => {}) {
+  let panel = root.querySelector('.wm-panel'); if (panel) { panel.remove(); return; }
+  const w = watermarkSettings(); panel = document.createElement('div'); panel.className = 'wm-panel';
+  panel.innerHTML = formHTML([
+    { label: 'Text', html: `<input type="text" data-wm="text" value="${escapeHtml(w.text)}" maxlength="120"/>` },
+    { label: 'Size (% of short side)', html: `<input type="number" data-wm="size" min="0.5" max="40" step="0.5" value="${w.size}" style="width:72px"/>` },
+    { label: 'Opacity (%)', html: `<input type="number" data-wm="opacity" min="1" max="100" value="${w.opacity}" style="width:72px"/>` },
+    { label: 'Position', html: `<select data-wm="position">${WM_POSITIONS.map((p) => `<option value="${p}" ${w.position === p ? 'selected' : ''}>${({ t: 'Top', m: 'Middle', b: 'Bottom' })[p[0]]} ${({ l: 'left', c: 'centre', r: 'right' })[p[1]]}</option>`).join('')}</select>` },
+    { label: 'Margin (%)', html: `<input type="number" data-wm="margin" min="0" max="30" step="0.5" value="${w.margin}" style="width:72px"/>` },
+    { label: 'Color', html: `<span><input type="color" data-wm="color" value="${w.color}"/> <label><input type="checkbox" data-wm="shadow" ${w.shadow ? 'checked' : ''}/> Soft shadow</label></span>` },
+  ]) + '<p class="muted small">Saved for every export, multi-size export and batch. The watermark scales with each output size.</p><button type="button" data-wmdone class="primary">Done</button>';
+  const save = () => { const o = {}; panel.querySelectorAll('[data-wm]').forEach((el) => { const k = el.dataset.wm; o[k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? +el.value : el.value; }); const nw = saveWatermark(o); root.querySelectorAll('[data-wmtext]').forEach((s) => { s.textContent = nw.text; }); };
+  panel.addEventListener('input', save); panel.addEventListener('change', save);
+  panel.querySelector('[data-wmdone]').addEventListener('click', () => { save(); panel.remove(); after(); });
+  root.append(panel); panel.querySelector('[data-wm=text]').focus();
+}
+function openWatermarkDialog() {
+  const body = document.createElement('div');
+  body.innerHTML = `<p class="muted">The watermark is added when “Add watermark” is ticked in Export, Export multiple sizes, Batch, or in a saved export preset.</p>`;
+  openWatermarkEditor(body); body.querySelector('[data-wmdone]')?.remove();
+  showModal({ title: 'Export watermark', body, okLabel: 'Save', ok: () => { status(`Watermark saved: “${watermarkSettings().text}”.`); } });
+}
+
 // ---- Multi-size export and batch processing ----------------------------------------------------------------
 const EXPORT_SETS_KEY = 'tintwork.exportVariants';
 const DEFAULT_VARIANTS = [
@@ -7148,6 +7486,7 @@ async function renderVariant(v, base = null) {
   const out = makeCanvas(w, h), x = out.getContext('2d'); x.imageSmoothingQuality = 'high';
   if (type === 'image/jpeg') { x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); }
   x.drawImage(cur, cx, cy, cw, chh, 0, 0, w, h); if (cur !== src) cur.width = 0;
+  if (v.watermark) drawWatermark(out, v.watermark === true ? watermarkSettings() : v.watermark);
   if (type === PSD_TYPE) { const b = await flatPSD(out); out.width = 0; return { blob: b, w, h, ext: 'psd' }; }
   let blob = await new Promise((res) => out.toBlob(res, type, q)); out.width = 0;
   if (!blob) throw new Error(`${type} encoding is not supported in this browser`);
@@ -7182,7 +7521,8 @@ function progressUI(title) {
   return { signal: ctl.signal, update(i, n, text) { const p = el.querySelector('progress'); p.max = n; p.value = i; el.querySelector('#bpText').textContent = text; status(`${title}: ${text}`); }, done() { el.remove(); } };
 }
 /** Export the active document in several sizes / formats. */
-async function exportVariants(variants, { pattern = '{name}-{preset}', sink, signal, onProgress, tokens = {} } = {}) {
+async function exportVariants(variants, { pattern = '{name}-{preset}', sink, signal, onProgress, tokens = {}, watermark = null } = {}) {
+  if (watermark) variants = variants.map((v) => ({ ...v, watermark: watermark === true ? watermarkSettings() : watermark }));
   const d = doc(), name = tokens.name || (d.name || 'Untitled').replace(/\.[^.]+$/, ''), uniq = uniqueNamer(), out = [];
   const needWhite = variants.some((v) => (v.type || 'image/jpeg') === 'image/jpeg'), needAlpha = variants.some((v) => v.type !== 'image/jpeg');
   const white = needWhite ? makeCanvas(d.width, d.height) : null, clear = needAlpha ? makeCanvas(d.width, d.height) : null;
@@ -7202,15 +7542,15 @@ function openExportVariantsDialog() {
   body.innerHTML = `<p class="muted">Export “${escapeHtml(d.name || 'Untitled')}” in several sizes and formats at once. Saved to a folder you choose${'showDirectoryPicker' in window ? '' : ' (this browser downloads a .zip)'}.</p>`;
   body.append(variantEditor(list));
   const pat = document.createElement('div'); pat.innerHTML = formHTML([{ label: 'File names', html: `<input type="text" id="vxPattern" value="${escapeHtml(localStorage.getItem('tintwork.exportPattern') || '{name}-{preset}')}" />` }]) +
-    '<p class="muted small">Tokens: {name} {preset} {w} {h} {n} {n:3} {date}</p>';
-  body.append(pat);
+    '<p class="muted small">Tokens: {name} {preset} {w} {h} {n} {n:3} {date}</p>' + formHTML([{ label: 'Watermark', html: watermarkFieldHTML('vxWm') }]);
+  body.append(pat); wireWatermarkField(body, 'vxWm');
   showModal({ title: 'Export multiple sizes', body, okLabel: 'Export', ok: () => {
     const pattern = body.querySelector('#vxPattern').value || '{name}-{preset}';
     try { localStorage.setItem(EXPORT_SETS_KEY, JSON.stringify(list)); localStorage.setItem('tintwork.exportPattern', pattern); } catch { /* ignore */ }
     (async () => {
       const sink = await chooseSink(`${(d.name || 'Untitled').replace(/\.[^.]+$/, '')}-export.zip`); if (!sink) { status('Export cancelled.'); return; }
       const ui = progressUI('Export sizes');
-      try { const out = await exportVariants(list, { pattern, sink, signal: ui.signal, onProgress: (i, n, f) => ui.update(i, n, `${i}/${n} · ${f}`) }); await sink.finish(ui.signal.aborted); status(`Exported ${out.length} file${out.length === 1 ? '' : 's'} to ${sink.label}.`); }
+      try { const out = await exportVariants(list, { pattern, sink, watermark: body.querySelector('#vxWm').checked ? watermarkSettings() : null, signal: ui.signal, onProgress: (i, n, f) => ui.update(i, n, `${i}/${n} · ${f}`) }); await sink.finish(ui.signal.aborted); status(`Exported ${out.length} file${out.length === 1 ? '' : 's'} to ${sink.label}.`); }
       catch (err) { toast(`Export failed: ${err.message}`, 5000); } finally { ui.done(); }
     })();
   } });
@@ -7219,7 +7559,7 @@ function openExportVariantsDialog() {
  * Batch: open each file in a temporary tab, apply an action and / or a look, export every variant, close the tab.
  * sources: File[] or { name, getFile() }[]. Resolves { done, failed: [{ name, error }], cancelled, files }.
  */
-async function runBatch(sources, { actionId = null, lookId = null, intensity = 100, rawSettings = null, variants, pattern = '{name}-{preset}', sink, signal, onProgress } = {}) {
+async function runBatch(sources, { actionId = null, lookId = null, intensity = 100, rawSettings = null, variants, pattern = '{name}-{preset}', sink, signal, onProgress, watermark = null } = {}) {
   const home = doc(), files = [], failed = []; let done = 0, n = 0;
   const uniq = uniqueNamer(), wrapSink = { write: (name, blob) => sink.write(uniq(name), blob) };
   for (const s of sources) {
@@ -7236,7 +7576,7 @@ async function runBatch(sources, { actionId = null, lookId = null, intensity = 1
       if (actionId) { const r = await playAction(actionId, opened); if (!r.ok) throw new Error(r.errors[0] || 'action failed'); }
       if (lookId && !applyLook(lookId, intensity)) throw new Error('look not found');
       const base = label.replace(/\.[^.]+$/, '');
-      const out = await exportVariants(variants, { pattern: variants.length > 1 && !/\{(preset|w|h|n)/.test(pattern) ? `${pattern}-{preset}` : pattern, sink: wrapSink, tokens: { name: base, N: n } });
+      const out = await exportVariants(variants, { pattern: variants.length > 1 && !/\{(preset|w|h|n)/.test(pattern) ? `${pattern}-{preset}` : pattern, sink: wrapSink, tokens: { name: base, N: n }, watermark });
       files.push(...out);
       done++;
     } catch (err) { failed.push({ name: label, error: err.message || String(err) }); }
@@ -7263,14 +7603,16 @@ function openBatchDialog() {
       { label: 'Look intensity (%)', html: `<input type="number" id="bInt" min="0" max="100" value="100" style="width:72px"/>` },
       { label: 'RAW files develop with', html: `<select id="bRaw" title="Develop settings for camera RAW files in the batch">${rawPresetOptions(false)}</select>` },
       { label: 'File names', html: `<input type="text" id="bPattern" value="{name}-edited" />` },
+      { label: 'Watermark', html: watermarkFieldHTML('bWm') },
     ]) + '<p class="muted small">Tokens: {name} {preset} {w} {h} {N} (file number, {N:3} padded) {date}. Output goes to a folder you choose (or a .zip download).</p><b>Outputs</b>';
   body.append(variantEditor(list));
+  wireWatermarkField(body, 'bWm');
   const info = () => { body.querySelector('#bSrcInfo').textContent = sources.length ? `${sources.length} image${sources.length === 1 ? '' : 's'}` : 'No images chosen'; };
   body.querySelector('#bSrcDir').onclick = async () => { try { const dir = await window.showDirectoryPicker({ id: 'tintwork-batch-in', mode: 'read' }); sources = await collectFolderImages(dir); info(); } catch (err) { if (err?.name !== 'AbortError') toast(err.message, 4000); } };
   body.querySelector('#bSrcFiles').onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = OPEN_ACCEPT; inp.onchange = () => { sources = [...inp.files]; info(); }; inp.click(); };
   showModal({ title: 'Batch process', body, okLabel: 'Run batch', ok: () => {
     if (!sources.length) { toast('Choose a folder or some images first.'); return false; }
-    const opts = { actionId: body.querySelector('#bAct').value || null, lookId: body.querySelector('#bLook').value || null, intensity: +body.querySelector('#bInt').value || 100, rawSettings: rawSettingsFor(body.querySelector('#bRaw').value), variants: list, pattern: body.querySelector('#bPattern').value || '{name}-edited' };
+    const opts = { actionId: body.querySelector('#bAct').value || null, lookId: body.querySelector('#bLook').value || null, intensity: +body.querySelector('#bInt').value || 100, rawSettings: rawSettingsFor(body.querySelector('#bRaw').value), variants: list, pattern: body.querySelector('#bPattern').value || '{name}-edited', watermark: body.querySelector('#bWm').checked ? watermarkSettings() : null };
     (async () => {
       const sink = await chooseSink('tintwork-batch.zip'); if (!sink) { status('Batch cancelled.'); return; }
       const ui = progressUI('Batch'); const src = sources;
@@ -7325,6 +7667,12 @@ window.tintwork = {
   tabs, switchTab, closeTab, cycleTab, copyLayerToDoc, tabDirty, stashTab,
   presets: { allPresets, presetById, presetPixels, centredRatioRect, constrainRect, saveCustomPreset, deleteCustomPreset, customPresets }, setCropPreset, applyCropTool, resizeToPreset, cropAspect,
   recorder, startRecording, stopRecording, playAction, allActions, userActions, importActionsJSON, applyAdjustDirect, describeStep,
+  // v1.8
+  objSel: { run: async (rect, { strokes = [], mode = 'new', refine } = {}) => { const d = doc(); if (refine != null) state.opts.objRefine = refine; state.objSel = { doc: d, rect, strokes: strokes.map((s) => ({ fg: s.fg !== false, r: s.r || 12, pts: s.pts })), base: mode === 'new' ? null : d.selection, prev: d.selection, mode }; return objSelRun(); },
+    stroke: async (st) => { const s = state.objSel; if (!s) return null; s.strokes.push({ fg: st.fg !== false, r: st.r || 12, pts: st.pts }); return objSelRun(); }, settled: () => objSelJob, done: objSelDone, cancel: objSelCancel, get state() { return state.objSel; } },
+  autoUprightCmd, get lastUpright() { return lastUpright; }, cropEmptyEdges, fillEmptyEdges, innerOpaqueRect, segment: seg,
+  exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
+  watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith,
   renderVariant, exportVariants, runBatch, memorySink, zipSink, formatName, variantSize, withDpi, autoOpts, saveAutoOpts, openAutoOptionsDialog,
   // v0.8
   pickLayer: (ids) => { const d = doc(); d.activeId = ids[ids.length - 1]; d.picked = new Set(ids.length > 1 ? ids : []); updateLayersPanel(); },
