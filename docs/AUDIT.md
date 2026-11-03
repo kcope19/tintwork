@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated for v1.8.0, v1.9.0 and v1.10.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated for v1.8.0, v1.9.0, v1.10.0 and v1.11.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,21 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.11.0 update (2026-11-03, America/New_York)
+
+v1.11 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v111-test.mjs` has 15 checks and passed 15/15 three times. On a v1.10.0 checkout it fails (1 of 7 checks passes before it stops). The full `npm test` passed all 987 checks (972 in v1.10 + 15).
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F23 | Batch asked for the source and output folders every time (job 25: 7 steps against Lightroom's 4). | gap | AUDIT v1.10 ranked gap 6 | Source and **Output folder** handles kept in IndexedDB; permission asked again in a new session, inside the OK click | v1.11.0 |
+| F24 | No one-step repeat of the last batch. | gap | job 29 fails on v1.10 3/3 | **File ▸ Batch again** (`Ctrl+Alt+Shift+B`) repeats folders, preset/action, look and naming; opens the dialog and says why when there is nothing to repeat or its preset/action/look was deleted | v1.11.0 (4 steps in a new session; Lightroom 4, Pixelmator Pro 3) |
+| F25 | Found while attacking F23: a remembered output folder that was deleted or renamed would make every file fail. | bug (pre-release) | v111-test "deleted output folder" | The folder is checked first; if gone, Tintwork says so, forgets it and asks for a new one | v1.11.0 |
+| F26 | Found while attacking F23: with the same folder as source and output, a repeat batch would process its own outputs ("-edited-edited"). | bug (pre-release) | v111-test "same folder" | The names the last batch wrote are skipped | v1.11.0 |
+| F27 | Files could not be dropped onto Batch process (a drop opened them as documents). | gap | v111-test on v1.10 | Dropped images or a folder become the batch source; other files are ignored | v1.11.0 |
+| F28 | Upright: one long leaning object (the library ladder, 2 lines of 848 px) outvoted ~20 building edges, leaving a vertical at 2.24°. | accuracy | job 27 | Each line's vote capped at 0.4 of the frame (RANSAC score and least-squares refit) | v1.11.0 (2.24° → 0.75°; still fails 0.5°; other photos unchanged) |
+
+**Not done in v1.11:** Full upright within 0.5° on real photos (jobs 27, 28 and the new held-out job 31 fail; on job 31 Full makes 3 of 5 edges worse than doing nothing, in v1.10 too). Lens-distortion-aware upright. Batch on a selection of photos rather than a whole folder.
 
 ## v1.10.0 update (2026-11-03, America/New_York)
 
@@ -119,20 +134,23 @@ and other RAW files from Explorer through `file_handlers`. Alt/F10 menu access i
 
 ## What is still missing, ranked (biggest gap first)
 
-Updated for v1.10. Batch with export presets (v1.9 item 6) is done; soft proofing is partly done.
+Updated for v1.11. Batch now remembers its folders and has Batch again (old item 6 is replaced by the narrower gap below).
 
 1. **One-click subject / background / sky selection (ML).** Not planned until the user wants AI.
 2. **Content-aware / generative fill and remove** for real texture. Healing removes 79% on the real portrait, and the empty-edge fill smears.
-3. **Upright Full on real photos:** on two held-out real photos it uses 4 and 9 horizontals and cuts their tilt by 75–95%, but leaves up to 1° (brick) and 2.2° on a vertical misled by a leaning ladder (library). It needs robust rejection of non-architectural lines.
+3. **Upright Full on real photos:** the leaning ladder no longer steers it (library 2.24° → 0.75°), but it still misses 0.5° on all three photos with strong horizontals. It has no lens-distortion model (the library's shelf edge bends by about 1°), and photos dominated by slanted design elements (job 31's diagonal fins) defeat it: there Full makes the horizontals worse. A "do no harm" check and a distortion-aware fit are the next steps.
 4. **AI denoise and camera-matching profiles for RAW.**
 5. **Print workflow:** ICC printer profiles, a printer gamut warning, output sharpening, CMYK export. v1.10 has only an approximate paper-white / ink-black proof.
-6. **Batch still asks for both folders every time** (7 steps against Lightroom's 4).
+6. **Batch works on whole folders only.** Batch again repeats the last batch in 4 steps in a new session (Lightroom 4, Pixelmator Pro 3), but there is no "export the selected photos with this preset", because Tintwork has no library of photos to select from.
 7. Edge-aware local adjustment brushes (Lightroom-style masks with auto-mask).
 
 ## What I might be wrong about
 
 - **Three held-out photos are not many.** The v1.10 line re-fit helped the photo it was diagnosed on and was roughly neutral on the held-out ones (the tower's worst edge got worse, 0.07° → 0.23°). It may be overfitted to job 17; more held-out photos would settle that.
 - **Held-out reference edges were picked by me.** On the brick shop front, the window-frame "vertical" may not be truly vertical itself.
+- **The permission prompts are simulated.** Job 29 counts 2 browser prompts in a new session. Chrome's persistent-permission prompt can cover all remembered folders at once and offers "Allow on every visit", so real Windows Chrome/Edge may need 3 or 2 steps. Equally, a browser could also ask on the first write. Not verified on a real Windows machine.
+- **The upright cap was tuned on the two photos it fixes.** On the one new held-out photo it changed nothing (neither better nor worse), which is weak evidence either way.
+- **"Trails" for Full assumes Lightroom does better** on these photos. That was not measured.
 
 - **Competitor step counts come from their documentation, not from using the apps.** A practised user may need fewer steps (shortcuts, presets) or more (dialogs the docs skip). Treat them as ±2.
 - **The test images are synthetic** (flat backgrounds, ideal edges). Jobs 3 and 4 pass partly because of that; on real photos the wand and the healing brush would do worse, and the paid editors' ML tools much better.

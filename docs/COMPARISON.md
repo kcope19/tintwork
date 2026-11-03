@@ -6,6 +6,20 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.11: batch remembers folders, Batch again, steadier Full upright (2026-11-03)
+
+Non-AI only. Competitor cells come from their public documentation.
+
+| Feature | Lightroom Classic / Camera Raw | Photoshop | Affinity Photo 2 | Pixelmator Pro | Photopea | Tintwork 1.11 |
+|---|---|---|---|---|---|---|
+| Repeat last batch in a new session | ✅ select photos, File ▸ Export with Preset ▸ preset (4 steps; [help](https://helpx.adobe.com/lightroom-classic/desktop/export-photos/export-presets-settings-plug-ins.html)) | ✅ Image Processor remembers its settings (6) | ✅ saved Batch Job macro (9) | ✅ run a saved Shortcut (3) | ❌ no batch | ✅ **File ▸ Batch again**: 4 steps, 2 of them the browser's permission prompts (2 steps when the user chose "Allow on every visit"). Folders and preset remembered. ❌ Always the whole folder: no "selected photos only". |
+| Batch output folder remembered | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ in Chrome/Edge (folder handles kept in IndexedDB; the browser asks again per session). ❌ Firefox/Safari: zip download. |
+| Drop files onto batch | ✅ (import) | ✅ droplets | 🟡 not checked | 🟡 not checked | ❌ | ✅ files or a folder dropped onto the Batch dialog. |
+| Upright Full on real photos | ✅ | ✅ via Camera Raw | 🟡 by eye | 🟡 by eye | 🟡 by eye | 🟡 A long leaning object no longer steers it (library worst vertical 2.24° → 0.75°), but 0.5° is still missed on 3 real photos and Full makes a new held-out facade's horizontals worse (0.4° → 0.9°). |
+
+### Summary
+v1.11 removes the "choose both folders every time" step from repeat batches and makes Upright less sensitive to one long leaning object. Still missing: the ML features, ICC soft proofing, content-aware fill, batch on a selection of photos, lens-distortion-aware Upright, and Full upright within 0.5° on real photos.
+
 ## v1.10: batch with export presets, logo sizing, sharper upright, soft proof (2026-11-03)
 
 Non-AI only. Each cell is checked against the competitor's public documentation.

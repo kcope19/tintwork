@@ -1,10 +1,64 @@
-# Workflow benchmark (v1.7.0 → v1.8.0 → v1.9.0 → v1.10.0)
+# Workflow benchmark (v1.7.0 → v1.8.0 → v1.9.0 → v1.10.0 → v1.11.0)
 
 v1.8 adds nine jobs (13–21) that use **real photos** (public domain / CC0, `test-assets/real/LICENSES.md`) and the new
 features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from v1.7 (below, kept for history).
 
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
+
+## v1.11 scorecard (non-AI polish: batch remembers folders, Batch again, steadier Full upright)
+
+v1.11 adds three jobs:
+- **29:** repeat the job 25 batch (6 photos, saved preset with logo) **in a new browser session** with File ▸ Batch again. A setup batch runs first and is not counted; the page is then reloaded with folder permission reset to "ask" (simulating a new session), and each browser permission prompt counts as one step.
+- **30:** the same, through the Batch process dialog (folders and preset already filled in).
+- **31:** Upright Full on a **new held-out** real photo (office facade with diagonal fins, CC0, `geneva.jpg`).
+
+**Held-out method.** `geneva.jpg` was downloaded after the v1.11 upright change was written and tuned. Its five reference edges (three verticals, two horizontals) were fixed with the same sub-pixel edge fit *before* Tintwork was first run on it, and were not changed afterwards. It was measured, and nothing was tuned on it. **Jobs 27 and 28 are no longer held out:** the library and brick photos were used to diagnose and tune the v1.11 change.
+
+The runs:
+- **Before:** the v1.10.0 tag served locally, 3 runs (`docs/audit/workflows-v111-before.json`). The live site was not used as the baseline because it was already serving a pushed v1.11 work-in-progress commit.
+- **After (local):** the v1.11 commit served locally, 3 runs of jobs 13 and 16–31 (`workflows-v111-local.json`): 42 of 51 runs pass, and every job gave the same result 3/3.
+- **After (live):** see *Live verification* below.
+
+| # | Job | Before (v1.10) | After (v1.11) | Tintwork steps excl. open | Competitors (docs) | Verdict |
+|---|-----|------|------|------|------|------|
+| 29 | Next session: repeat the batch with File ▸ Batch again | fail 3/3: no Batch again; the repeat is job 25's 7 steps | pass 3/3: 6 files, 2048 px, logo bottom-right; 0 folder dialogs | **4** (2 are permission prompts; 2 in the same session or after "Allow on every visit") | Lightroom Export with Preset 4, Photoshop Image Processor 6, Affinity batch job 9, Pixelmator Pro saved Shortcut 3, Photopea no batch | **trails** |
+| 30 | Next session: repeat through the Batch process dialog | fail 3/3 (folders not remembered) | pass 3/3 | **5** (3 in the same session) | as job 29 | **trails** |
+| 25 | Repeat job 24 with a saved preset (first session) | pass 3/3, 7 steps | pass 3/3, 7 steps (unchanged) | 7 | as job 29 | trails |
+| 27 (tuning photo) | Upright Full, library shelves | fail 3/3: verticals **2.24°** / −0.54°, horizontals 0.89° / 0.81° / 0.90° | fail 3/3: verticals **0.75°** / −0.08°, horizontals 0.85° / 0.68° / 0.50° | 3 | Lightroom Upright Full 2, Camera Raw 4, Affinity 6, Pixelmator Pro 5, Photopea 6 | **trails** |
+| 28 (tuning photo) | Upright Full, brick shop front | fail 3/3: 0.23° / 1.15° / −0.33° / −0.97° / −0.06° | fail 3/3: identical | 3 | as job 27 | **trails** |
+| 31 (held out) | Upright Full, office facade with diagonal fins | fail 3/3: −0.66° / 0.00° / 0.11° / 0.86° / 0.92° (from −0.21° / 0.50° / 0.60° / 0.38° / 0.43°) | fail 3/3: identical | 3 | as job 27 | **trails** |
+| 16 / 17 / 22 / 26 | Auto / Full upright regression set | pass | pass, identical to v1.10 (0.00° / −0.20° / −0.18°; −0.34° / 0.01°; −0.00° / 0.06° / 0.23°) | 3 | as before | trails |
+| 13, 18–21, 23, 24 | unchanged jobs | pass | pass (same results) | as in v1.10 | as in v1.10 | as in v1.10 |
+
+**Summary (v1.11): 0 beat, 2 match (18, 19), every other job trails (now 31 jobs). Job 29 equals Lightroom's 4 steps but is rated trails (see below). Full upright still fails the 0.5° bar on all three photos with strong horizontals.**
+
+What the upright numbers say, plainly:
+- **The change:** each line's vote in the vanishing-point fit is capped at 0.4 of the frame's long side (in both the RANSAC score and the least-squares refit). The library's two ladder rails were the longest lines in the photo (848 px each, 3.5° off vertical); they outvoted about 20 book and shelf edges of ~210 px. With the cap the ladder is rejected as an outlier and the verticals are treated as parallel. Caps of 0.15, 0.25 and 0.4 were tried; all gave the library about 0.75–0.78° on its worst vertical. 0.4 was kept because it leaves every other photo's measured result identical to v1.10.
+- **It did not reach 0.5° on jobs 27/28.** The causes are in the photos, not only the fit:
+  - *Library:* the bottom shelf edge bends: a sub-pixel fit gives 3.69° on its left half and 4.76° on its right half (lens distortion). No single perspective transform can straighten both halves, and the detector finds the left half as a separate line. Using the five reference edges alone, the best possible transform would leave ≤ 0.2° on the horizontals, so a lens-distortion-aware fit would be the next step.
+  - *Brick:* the measured window-frame edge (0.89°) and the pilaster edge 8 px from it (−0.06°) disagree by about 1° in the photo itself. Any correction leaves about 1° between them; v1.11 leaves 0.23° / 1.15°.
+- **The new held-out photo fails, and v1.11 neither helps nor hurts it** (identical to v1.10). Its many diagonal fins are nearly vertical (0.4–0.8°) and outnumber the true building edges. Full finds no horizontal lines at all (probably because the fins' strong edges take up the detector's top-12% gradient threshold), so it rotates by 0.5° to fix the verticals, and that doubles the horizontals' tilt (0.4° → 0.9°) and leaves the left silhouette at −0.66°. Here Full makes the photo **worse** than doing nothing on 3 of 5 edges. An orientation-specific edge threshold that would find those horizontals was tried *before* this photo was added and was rejected, because it made the library worse (horizontals up to 1.6°) and changed jobs 16/17.
+- Also tried and rejected on the tuning photos: more lines per photo (60 instead of 30; job 26 regressed to −0.82°), iterated line re-fitting (library better, brick horizontals lost), and robust (Cauchy-weighted) vanishing-point refits (no change).
+
+### The case against each v1.11 verdict
+
+- **29 Batch again (trails, although it ties Lightroom's 4 steps):** Lightroom exports the *selected* photos with a preset ([help](https://helpx.adobe.com/lightroom-classic/desktop/export-photos/export-presets-settings-plug-ins.html)); Batch again always processes the whole remembered folder, so it cannot redo just three photos. Pixelmator Pro needs 3. The 4 steps include 2 browser permission prompts. Chrome's persistent-permission prompt lists every remembered handle at once and offers "Allow on every visit" ([Chrome blog](https://developer.chrome.com/blog/persistent-permissions-for-the-file-system-access-api)), so on real Windows Chrome it may be 3 steps, or 2 after "Allow on every visit". That is not verified on a real Windows machine: the bench simulates the prompts. Against a "match": the tie is on step count only, and the step counts for competitors come from docs (±2). Default kept: **trails**.
+- **30 dialog (trails):** 5 steps, worse than job 29 by one click, for the same reasons.
+- **27 / 28 / 31 Full (trails):** all fail the 0.5° bar. Lightroom documents Full as a "combination of full Level, Vertical, and Auto perspective corrections" and says enabling lens profile corrections "is highly recommended, before processing the photo with the Upright modes" ([help](https://helpx.adobe.com/lightroom-classic/desktop/help/upright-automatic-perspective-correction.html)), which matters for the library's bent shelf. Its accuracy on these photos was not measured, so "trails" is an assumption about Lightroom, not a measurement.
+
+### Live verification (v1.11.0)
+
+@@LIVE@@
+
+### Test-change disclosure
+
+- `scripts/v111-test.mjs` (15 checks, new). It simulates the folder pickers with private browser storage (OPFS) and a new session by making the stored folders answer "prompt" until permission is requested again.
+- Its library Full check uses a bar of **1.0°, weaker than the bench's 0.5°**, because v1.11 does not reach 0.5° there. The held-out office facade is **printed, not checked**, because v1.11 fails it. Both are stated in the test file.
+- On a v1.10.0 worktree (`TW_ROOT`) the test fails: 1 of 7 checks passes before it stops (the first batch, which v1.10 already did).
+- Bench: jobs 29–31 are new; job 25 is unchanged. The bench's start-up script now also simulates the permission prompts (jobs 1–28 never request permission, so they are unaffected).
+- `lastUpright.debug` (the detected lines, in document pixels) was added to the test API for diagnosis.
+- No existing test or bench bar was loosened.
 
 ## v1.10 scorecard (non-AI polish: batch with presets, logo sizing, sharper upright lines, soft proof)
 

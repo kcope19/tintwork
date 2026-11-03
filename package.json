@@ -1,6 +1,6 @@
 {
   "name": "tintwork",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Tintwork: an original browser-based layered image editor (Canvas 2D)",
   "scripts": {
     "start": "serve -l 5173 .",

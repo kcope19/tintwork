@@ -7,6 +7,16 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.11 (batch remembers folders, Batch again, steadier Full upright)
+
+v1.11 keeps to non-AI tools. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md) for how each change was measured, including a new held-out photo that Full upright still makes worse.
+
+- **Batch remembers its folders:** Batch process remembers the source folder and a new **Output folder** between sessions (Chrome/Edge folder access). In a new session the browser asks once to allow reading and saving there. A deleted or renamed output folder is detected and you are asked for a new one. If the output folder is the source folder, the files the last batch wrote are skipped.
+- **File ▸ Batch again** (`Ctrl+Alt+Shift+B`): repeats the last batch (folders, preset or action, look, naming) without the dialog. Repeating the job 25 batch in a new session takes 4 steps (2 of them the browser's permission prompts), down from 7. It always processes the whole folder.
+- **Drop onto Batch process:** drop image files or a folder onto the open dialog to make them the source.
+- **Steadier Full / Vertical upright:** each detected line's vote is capped at 0.4 of the frame, so one or two long edges of a single leaning object (the library ladder) no longer steer the correction. The library photo's worst vertical goes from 2.24° to 0.75°. It still misses the 0.5° goal there and on the brick front, and on a new held-out office facade Full makes the horizontals worse (0.4° → 0.9°); see the benchmark.
+- `scripts/v111-test.mjs` joins `npm test`. The workflow bench grows to 31 jobs.
+
 ## What's new in v1.10 (batch with export presets, logo sizing, soft proof)
 
 v1.10 keeps to non-AI tools. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md) for how each change was measured, including the three held-out photos and what still trails.

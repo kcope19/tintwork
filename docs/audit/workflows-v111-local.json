@@ -1,0 +1,1399 @@
+{
+  "url": "http://127.0.0.1:37193/",
+  "label": "v111-local",
+  "date": "2026-11-03T15:29:35.943Z",
+  "results": [
+    {
+      "id": 13,
+      "name": "3R: remove a blemish on a real portrait (USDA, public domain)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "mean error vs the untouched photo in the spot: 25.0 → 5.3 levels (79% removed); grain 1.39× the photo's; skin above the spot changed 0.00; stroke + heal 408 ms",
+      "steps": 4,
+      "ms": 6053,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait-usda.png",
+        "click: tool spot",
+        "drag: paint over the blemish"
+      ],
+      "paid": {
+        "Photoshop": 2,
+        "Lightroom Classic": 2,
+        "Affinity Photo": 2,
+        "Pixelmator Pro": 2,
+        "Photopea": 2
+      }
+    },
+    {
+      "id": 13,
+      "name": "3R: remove a blemish on a real portrait (USDA, public domain)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "mean error vs the untouched photo in the spot: 25.0 → 5.3 levels (79% removed); grain 1.39× the photo's; skin above the spot changed 0.00; stroke + heal 305 ms",
+      "steps": 4,
+      "ms": 5854,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait-usda.png",
+        "click: tool spot",
+        "drag: paint over the blemish"
+      ],
+      "paid": {
+        "Photoshop": 2,
+        "Lightroom Classic": 2,
+        "Affinity Photo": 2,
+        "Pixelmator Pro": 2,
+        "Photopea": 2
+      }
+    },
+    {
+      "id": 13,
+      "name": "3R: remove a blemish on a real portrait (USDA, public domain)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "mean error vs the untouched photo in the spot: 25.0 → 5.3 levels (79% removed); grain 1.39× the photo's; skin above the spot changed 0.00; stroke + heal 335 ms",
+      "steps": 4,
+      "ms": 5897,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait-usda.png",
+        "click: tool spot",
+        "drag: paint over the blemish"
+      ],
+      "paid": {
+        "Photoshop": 2,
+        "Lightroom Classic": 2,
+        "Affinity Photo": 2,
+        "Pixelmator Pro": 2,
+        "Photopea": 2
+      }
+    },
+    {
+      "id": 21,
+      "name": "4R holdout: a second real subject (CC0 cut-out, not used for tuning) — box only",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "IoU 0.974 against the published cut-out (whole frame)",
+      "steps": 5,
+      "ms": 7045,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file macaque.jpg",
+        "click: tool objsel",
+        "drag: box around the subject",
+        "key: Enter"
+      ],
+      "paid": {
+        "Photoshop (Object Selection, ML)": 2,
+        "Lightroom Classic (Select Subject, ML)": 2,
+        "Affinity Photo (Selection Brush)": 4,
+        "Pixelmator Pro (Quick Selection ML)": 3,
+        "Photopea (Magic Cut)": 4
+      }
+    },
+    {
+      "id": 21,
+      "name": "4R holdout: a second real subject (CC0 cut-out, not used for tuning) — box only",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "IoU 0.974 against the published cut-out (whole frame)",
+      "steps": 5,
+      "ms": 7266,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file macaque.jpg",
+        "click: tool objsel",
+        "drag: box around the subject",
+        "key: Enter"
+      ],
+      "paid": {
+        "Photoshop (Object Selection, ML)": 2,
+        "Lightroom Classic (Select Subject, ML)": 2,
+        "Affinity Photo (Selection Brush)": 4,
+        "Pixelmator Pro (Quick Selection ML)": 3,
+        "Photopea (Magic Cut)": 4
+      }
+    },
+    {
+      "id": 21,
+      "name": "4R holdout: a second real subject (CC0 cut-out, not used for tuning) — box only",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "IoU 0.974 against the published cut-out (whole frame)",
+      "steps": 5,
+      "ms": 7283,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file macaque.jpg",
+        "click: tool objsel",
+        "drag: box around the subject",
+        "key: Enter"
+      ],
+      "paid": {
+        "Photoshop (Object Selection, ML)": 2,
+        "Lightroom Classic (Select Subject, ML)": 2,
+        "Affinity Photo (Selection Brush)": 4,
+        "Pixelmator Pro (Quick Selection ML)": 3,
+        "Photopea (Magic Cut)": 4
+      }
+    },
+    {
+      "id": 16,
+      "name": "10R: Auto upright on a real photo (church among towers, CC0)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.00° / -0.20° / -0.18° (edge support 1105/1105, 314/317, 525/525) (18 lines, cropped to 1132×1571)",
+      "steps": 5,
+      "ms": 6351,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 16,
+      "name": "10R: Auto upright on a real photo (church among towers, CC0)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.00° / -0.20° / -0.18° (edge support 1105/1105, 314/317, 525/525) (18 lines, cropped to 1132×1571)",
+      "steps": 5,
+      "ms": 6263,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 16,
+      "name": "10R: Auto upright on a real photo (church among towers, CC0)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.00° / -0.20° / -0.18° (edge support 1105/1105, 314/317, 525/525) (18 lines, cropped to 1132×1571)",
+      "steps": 5,
+      "ms": 6228,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 17,
+      "name": "10R: Auto upright on a real photo (high-rise looking up, CC0)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -9.09° / 10.91° → -0.34° / 0.01° (edge support 102/160, 110/163) (18 lines, cropped to 1046×588)",
+      "steps": 5,
+      "ms": 5831,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c6.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 17,
+      "name": "10R: Auto upright on a real photo (high-rise looking up, CC0)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -9.09° / 10.91° → -0.34° / 0.01° (edge support 102/160, 110/163) (18 lines, cropped to 1046×588)",
+      "steps": 5,
+      "ms": 5844,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c6.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 17,
+      "name": "10R: Auto upright on a real photo (high-rise looking up, CC0)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -9.09° / 10.91° → -0.34° / 0.01° (edge support 102/160, 110/163) (18 lines, cropped to 1046×588)",
+      "steps": 5,
+      "ms": 5901,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c6.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 18,
+      "name": "10R: Guided upright on the same real photo (two drawn guides)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.02° / -0.12° / 0.04° (edge support 1121/1123, 317/320, 502/503) (2 lines, cropped to 1114×1546)",
+      "steps": 7,
+      "ms": 6385,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Guided upright",
+        "drag: guide along a vertical edge",
+        "drag: guide along a vertical edge",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Guided)": 5,
+        "Photoshop (Camera Raw filter Upright Guided)": 7,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 18,
+      "name": "10R: Guided upright on the same real photo (two drawn guides)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.02° / -0.12° / 0.04° (edge support 1121/1123, 317/320, 502/503) (2 lines, cropped to 1114×1546)",
+      "steps": 7,
+      "ms": 6444,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Guided upright",
+        "drag: guide along a vertical edge",
+        "drag: guide along a vertical edge",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Guided)": 5,
+        "Photoshop (Camera Raw filter Upright Guided)": 7,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 18,
+      "name": "10R: Guided upright on the same real photo (two drawn guides)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.02° / -0.12° / 0.04° (edge support 1121/1123, 317/320, 502/503) (2 lines, cropped to 1114×1546)",
+      "steps": 7,
+      "ms": 6532,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Guided upright",
+        "drag: guide along a vertical edge",
+        "drag: guide along a vertical edge",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Guided)": 5,
+        "Photoshop (Camera Raw filter Upright Guided)": 7,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 19,
+      "name": "Export for web with a saved preset and a text watermark (first time)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "2048×1365; watermark changes 4.1% of the bottom-right band (elsewhere 0.00%); repeat export: 1 step",
+      "steps": 9,
+      "ms": 5889,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "key: Control+Shift+e",
+        "click: Preset → web",
+        "click: Watermark…",
+        "type: Watermark text = © K. Cope 2026",
+        "click: Done (ticks “Add watermark”)",
+        "click: OK",
+        "key: Control+Alt+Shift+e"
+      ],
+      "paid": {
+        "Lightroom Classic (Export preset + watermark)": 6,
+        "Photoshop (text layer + Export As)": 9,
+        "Affinity Photo (text layer + Export)": 8,
+        "Pixelmator Pro (text layer + Export)": 8,
+        "Photopea (text layer + Export)": 8
+      }
+    },
+    {
+      "id": 19,
+      "name": "Export for web with a saved preset and a text watermark (first time)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "2048×1365; watermark changes 4.1% of the bottom-right band (elsewhere 0.00%); repeat export: 1 step",
+      "steps": 9,
+      "ms": 5687,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "key: Control+Shift+e",
+        "click: Preset → web",
+        "click: Watermark…",
+        "type: Watermark text = © K. Cope 2026",
+        "click: Done (ticks “Add watermark”)",
+        "click: OK",
+        "key: Control+Alt+Shift+e"
+      ],
+      "paid": {
+        "Lightroom Classic (Export preset + watermark)": 6,
+        "Photoshop (text layer + Export As)": 9,
+        "Affinity Photo (text layer + Export)": 8,
+        "Pixelmator Pro (text layer + Export)": 8,
+        "Photopea (text layer + Export)": 8
+      }
+    },
+    {
+      "id": 19,
+      "name": "Export for web with a saved preset and a text watermark (first time)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "2048×1365; watermark changes 4.1% of the bottom-right band (elsewhere 0.00%); repeat export: 1 step",
+      "steps": 9,
+      "ms": 5726,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait.jpg",
+        "key: Control+Shift+e",
+        "click: Preset → web",
+        "click: Watermark…",
+        "type: Watermark text = © K. Cope 2026",
+        "click: Done (ticks “Add watermark”)",
+        "click: OK",
+        "key: Control+Alt+Shift+e"
+      ],
+      "paid": {
+        "Lightroom Classic (Export preset + watermark)": 6,
+        "Photoshop (text layer + Export As)": 9,
+        "Affinity Photo (text layer + Export)": 8,
+        "Pixelmator Pro (text layer + Export)": 8,
+        "Photopea (text layer + Export)": 8
+      }
+    },
+    {
+      "id": 20,
+      "name": "Batch-resize 6 photos to 2048 px JPEG with a watermark",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, watermark brightness +64 in the corner (min over files)",
+      "steps": 12,
+      "ms": 3381,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: Watermark…",
+        "type: Watermark text = © K. Cope 2026",
+        "click: Done (ticks “Add watermark”)",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (Export, watermark)": 8,
+        "Photoshop (Image Processor + action with text)": 12,
+        "Affinity Photo (Batch Job, macro)": 12,
+        "Pixelmator Pro (Shortcuts)": 10,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 20,
+      "name": "Batch-resize 6 photos to 2048 px JPEG with a watermark",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, watermark brightness +64 in the corner (min over files)",
+      "steps": 12,
+      "ms": 3278,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: Watermark…",
+        "type: Watermark text = © K. Cope 2026",
+        "click: Done (ticks “Add watermark”)",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (Export, watermark)": 8,
+        "Photoshop (Image Processor + action with text)": 12,
+        "Affinity Photo (Batch Job, macro)": 12,
+        "Pixelmator Pro (Shortcuts)": 10,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 20,
+      "name": "Batch-resize 6 photos to 2048 px JPEG with a watermark",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, watermark brightness +64 in the corner (min over files)",
+      "steps": 12,
+      "ms": 2975,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: Watermark…",
+        "type: Watermark text = © K. Cope 2026",
+        "click: Done (ticks “Add watermark”)",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (Export, watermark)": 8,
+        "Photoshop (Image Processor + action with text)": 12,
+        "Affinity Photo (Batch Job, macro)": 12,
+        "Pixelmator Pro (Shortcuts)": 10,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 22,
+      "name": "10R: Upright Full on the church photo (verticals + horizontals)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.00° / -0.20° / -0.18° (edge support 1105/1105, 314/317, 525/525) (18 lines, cropped to 1132×1571)",
+      "steps": 5,
+      "ms": 6473,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 22,
+      "name": "10R: Upright Full on the church photo (verticals + horizontals)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.00° / -0.20° / -0.18° (edge support 1105/1105, 314/317, 525/525) (18 lines, cropped to 1132×1571)",
+      "steps": 5,
+      "ms": 6453,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 22,
+      "name": "10R: Upright Full on the church photo (verticals + horizontals)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.00° / -0.20° / -0.18° (edge support 1105/1105, 314/317, 525/525) (18 lines, cropped to 1132×1571)",
+      "steps": 5,
+      "ms": 6452,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 23,
+      "name": "Level a tilted sea horizon (3°) with Upright: level",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "horizon tilt 3.00° → 0.01° (level, 1468×918)",
+      "steps": 5,
+      "ms": 6128,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file sea.png",
+        "click: Image menu",
+        "click: Image ▸ Upright: level",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Level)": 2,
+        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Affinity Photo (Straighten)": 3,
+        "Pixelmator Pro (Auto straighten)": 2,
+        "Photopea (ruler + rotate)": 4
+      }
+    },
+    {
+      "id": 23,
+      "name": "Level a tilted sea horizon (3°) with Upright: level",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "horizon tilt 3.00° → 0.01° (level, 1468×918)",
+      "steps": 5,
+      "ms": 6096,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file sea.png",
+        "click: Image menu",
+        "click: Image ▸ Upright: level",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Level)": 2,
+        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Affinity Photo (Straighten)": 3,
+        "Pixelmator Pro (Auto straighten)": 2,
+        "Photopea (ruler + rotate)": 4
+      }
+    },
+    {
+      "id": 23,
+      "name": "Level a tilted sea horizon (3°) with Upright: level",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "horizon tilt 3.00° → 0.01° (level, 1468×918)",
+      "steps": 5,
+      "ms": 6097,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file sea.png",
+        "click: Image menu",
+        "click: Image ▸ Upright: level",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Level)": 2,
+        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Affinity Photo (Straighten)": 3,
+        "Pixelmator Pro (Auto straighten)": 2,
+        "Photopea (ruler + rotate)": 4
+      }
+    },
+    {
+      "id": 24,
+      "name": "Batch-resize 6 photos to 2048 px JPEG with a logo watermark",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, magenta logo pixels in the bottom-right 30827+ per file (top-left 0)",
+      "steps": 14,
+      "ms": 3211,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: Watermark…",
+        "click: Type: logo image → image",
+        "click: Choose image…",
+        "pick: logo file",
+        "click: Done (ticks “Add watermark”)",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (Export, graphic watermark)": 9,
+        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Affinity Photo (Batch Job, macro)": 13,
+        "Pixelmator Pro (Shortcuts)": 11,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 24,
+      "name": "Batch-resize 6 photos to 2048 px JPEG with a logo watermark",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, magenta logo pixels in the bottom-right 30827+ per file (top-left 0)",
+      "steps": 14,
+      "ms": 3309,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: Watermark…",
+        "click: Type: logo image → image",
+        "click: Choose image…",
+        "pick: logo file",
+        "click: Done (ticks “Add watermark”)",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (Export, graphic watermark)": 9,
+        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Affinity Photo (Batch Job, macro)": 13,
+        "Pixelmator Pro (Shortcuts)": 11,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 24,
+      "name": "Batch-resize 6 photos to 2048 px JPEG with a logo watermark",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, magenta logo pixels in the bottom-right 30827+ per file (top-left 0)",
+      "steps": 14,
+      "ms": 3310,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: Watermark…",
+        "click: Type: logo image → image",
+        "click: Choose image…",
+        "pick: logo file",
+        "click: Done (ticks “Add watermark”)",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (Export, graphic watermark)": 9,
+        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Affinity Photo (Batch Job, macro)": 13,
+        "Pixelmator Pro (Shortcuts)": 11,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 25,
+      "name": "Repeat job 24 with a saved export preset (2048 px JPEG + logo; preset saved beforehand, not counted)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, magenta logo pixels in the bottom-right 32232+ per file (top-left 0)",
+      "steps": 7,
+      "ms": 2831,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Export preset → u-mw0uczijibi",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 25,
+      "name": "Repeat job 24 with a saved export preset (2048 px JPEG + logo; preset saved beforehand, not counted)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, magenta logo pixels in the bottom-right 32232+ per file (top-left 0)",
+      "steps": 7,
+      "ms": 2711,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Export preset → u-mw0ud36352w",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 25,
+      "name": "Repeat job 24 with a saved export preset (2048 px JPEG + logo; preset saved beforehand, not counted)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, magenta logo pixels in the bottom-right 32232+ per file (top-left 0)",
+      "steps": 7,
+      "ms": 2692,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Export preset → u-mw0ud6tywqm",
+        "click: OK",
+        "pick: output folder in the folder dialog"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 26,
+      "name": "10R holdout: Auto upright on a second real tower photo (CC0, not used for tuning)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt 0.44° / 2.77° / 4.75° → -0.00° / 0.06° / 0.23° (edge support 253/285, 256/260, 160/191) (14 lines, cropped to 1185×596)",
+      "steps": 5,
+      "ms": 5523,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file tower.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 26,
+      "name": "10R holdout: Auto upright on a second real tower photo (CC0, not used for tuning)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt 0.44° / 2.77° / 4.75° → -0.00° / 0.06° / 0.23° (edge support 253/285, 256/260, 160/191) (14 lines, cropped to 1185×596)",
+      "steps": 5,
+      "ms": 5490,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file tower.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 26,
+      "name": "10R holdout: Auto upright on a second real tower photo (CC0, not used for tuning)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt 0.44° / 2.77° / 4.75° → -0.00° / 0.06° / 0.23° (edge support 253/285, 256/260, 160/191) (14 lines, cropped to 1185×596)",
+      "steps": 5,
+      "ms": 5538,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file tower.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 27,
+      "name": "10R holdout: Upright Full on a real photo with converging horizontals (library shelves, CC0; verticals and horizontals measured)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt 0.79° / -0.05° / -4.15° / 4.57° / -4.33° → 0.75° / -0.08° / 0.85° / 0.68° / 0.50° (edge support 306/344, 273/441, 252/338, 298/349, 132/182) (22 lines + 4 horizontal, cropped to 1002×668)",
+      "steps": 5,
+      "ms": 5837,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file library.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 27,
+      "name": "10R holdout: Upright Full on a real photo with converging horizontals (library shelves, CC0; verticals and horizontals measured)",
+      "run": 2,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt 0.79° / -0.05° / -4.15° / 4.57° / -4.33° → 0.75° / -0.08° / 0.85° / 0.68° / 0.50° (edge support 306/344, 273/441, 252/338, 298/349, 132/182) (22 lines + 4 horizontal, cropped to 1002×668)",
+      "steps": 5,
+      "ms": 5766,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file library.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 27,
+      "name": "10R holdout: Upright Full on a real photo with converging horizontals (library shelves, CC0; verticals and horizontals measured)",
+      "run": 3,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt 0.79° / -0.05° / -4.15° / 4.57° / -4.33° → 0.75° / -0.08° / 0.85° / 0.68° / 0.50° (edge support 306/344, 273/441, 252/338, 298/349, 132/182) (22 lines + 4 horizontal, cropped to 1002×668)",
+      "steps": 5,
+      "ms": 5782,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file library.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 28,
+      "name": "10R holdout: Upright Full on a second real photo with converging horizontals (shop front, CC0; verticals and horizontals measured)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt 0.05° / 0.85° / 5.13° / 4.21° / 1.60° → 0.23° / 1.15° / -0.33° / -0.97° / -0.06° (edge support 183/183, 134/160, 131/153, 93/93, 88/144) (14 lines + 9 horizontal, cropped to 971×647)",
+      "steps": 5,
+      "ms": 6152,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file brick.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 28,
+      "name": "10R holdout: Upright Full on a second real photo with converging horizontals (shop front, CC0; verticals and horizontals measured)",
+      "run": 2,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt 0.05° / 0.85° / 5.13° / 4.21° / 1.60° → 0.23° / 1.15° / -0.33° / -0.97° / -0.06° (edge support 183/183, 134/160, 131/153, 93/93, 88/144) (14 lines + 9 horizontal, cropped to 971×647)",
+      "steps": 5,
+      "ms": 6165,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file brick.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 28,
+      "name": "10R holdout: Upright Full on a second real photo with converging horizontals (shop front, CC0; verticals and horizontals measured)",
+      "run": 3,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt 0.05° / 0.85° / 5.13° / 4.21° / 1.60° → 0.23° / 1.15° / -0.33° / -0.97° / -0.06° (edge support 183/183, 134/160, 131/153, 93/93, 88/144) (14 lines + 9 horizontal, cropped to 971×647)",
+      "steps": 5,
+      "ms": 6215,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file brick.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 31,
+      "name": "11R holdout: Upright Full on a third real photo (office facade with diagonal fins, CC0; seeds fixed before the first run, never tuned on)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt -0.21° / 0.50° / 0.60° / 0.38° / 0.43° → -0.66° / 0.00° / 0.11° / 0.86° / 0.92° (edge support 311/514, 513/516, 694/695, 237/237, 197/197) (20 lines, cropped to 1257×838)",
+      "steps": 5,
+      "ms": 5636,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file geneva.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 31,
+      "name": "11R holdout: Upright Full on a third real photo (office facade with diagonal fins, CC0; seeds fixed before the first run, never tuned on)",
+      "run": 2,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt -0.21° / 0.50° / 0.60° / 0.38° / 0.43° → -0.66° / 0.00° / 0.11° / 0.86° / 0.92° (edge support 311/514, 513/516, 694/695, 237/237, 197/197) (20 lines, cropped to 1257×838)",
+      "steps": 5,
+      "ms": 5655,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file geneva.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 31,
+      "name": "11R holdout: Upright Full on a third real photo (office facade with diagonal fins, CC0; seeds fixed before the first run, never tuned on)",
+      "run": 3,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt -0.21° / 0.50° / 0.60° / 0.38° / 0.43° → -0.66° / 0.00° / 0.11° / 0.86° / 0.92° (edge support 311/514, 513/516, 694/695, 237/237, 197/197) (20 lines, cropped to 1257×838)",
+      "steps": 5,
+      "ms": 5627,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file geneva.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 29,
+      "name": "Next session: repeat the job 25 batch with File ▸ Batch again (folders and preset remembered; first run is setup, not counted)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 2 steps)",
+      "steps": 4,
+      "ms": 4128,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch again",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 29,
+      "name": "Next session: repeat the job 25 batch with File ▸ Batch again (folders and preset remembered; first run is setup, not counted)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 2 steps)",
+      "steps": 4,
+      "ms": 3715,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch again",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 29,
+      "name": "Next session: repeat the job 25 batch with File ▸ Batch again (folders and preset remembered; first run is setup, not counted)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 2 steps)",
+      "steps": 4,
+      "ms": 3866,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch again",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 30,
+      "name": "Next session: repeat the job 25 batch through the Batch process dialog (folders and preset remembered; first run is setup, not counted)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 3 steps)",
+      "steps": 5,
+      "ms": 4456,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: OK",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 30,
+      "name": "Next session: repeat the job 25 batch through the Batch process dialog (folders and preset remembered; first run is setup, not counted)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 3 steps)",
+      "steps": 5,
+      "ms": 4174,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: OK",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 30,
+      "name": "Next session: repeat the job 25 batch through the Batch process dialog (folders and preset remembered; first run is setup, not counted)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 3 steps)",
+      "steps": 5,
+      "ms": 4047,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: OK",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    }
+  ]
+}
