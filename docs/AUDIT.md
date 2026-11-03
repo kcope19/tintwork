@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated for v1.8.0 and v1.9.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,23 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.9.0 update (2026-11-03, America/New_York)
+
+The user asked for no AI in this release, so v1.9 polishes the non-AI tools. Every fix below was reproduced 3/3.
+`scripts/v19-test.mjs` has 36 checks: it passed 36/36 three times on v1.9, and fails on a v1.8.0 checkout
+(`TW_ROOT=<v1.8.0 worktree>`: 6 of 14 checks before it stops). The full `npm test` passed all 953 checks (917 in v1.8 + 36).
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F13 | The export watermark could only be text. Lightroom's Watermark Editor also places graphics. | gap | v1.8 COMPARISON; bench job 24 fails on v1.8 3/3 | **Logo image** watermark (position, opacity, width %, margin), in single, multi-size, batch and 16-bit exports; each preset keeps its own copy | v1.9.0 |
+| F14 | Upright corrected verticals only; there were no Level or Full modes. | gap | jobs 22/23 fail on v1.8 3/3 | **Auto · Level · Vertical · Full** with safety checks on the horizontals. Full falls back to exactly Vertical when they are unreliable, and Level accepts one long horizon | v1.9.0 (Full unproven on real photos, see the benchmark) |
+| F15 | Fill empty edges refused on 16-bit layers. | gap | v18-test check | 16-bit push-pull fill; opaque pixels unchanged | v1.9.0 |
+| F16 | The bench reported 66–76 s for the real-portrait heal. | **measurement error** (mine) | In-app timing: heal 27 ms after mouse-up | The bench now keeps images in the page and reports the app time (0.3–0.4 s). The app was not slow. | v1.9.0 (bench) |
+| F17 | Dialogs taller than the window could not be closed: the Help ▸ performance benchmark result put **Close** below the screen. `v16-test` failed 3/3 on this box, on both v1.9 and the v1.8.0 checkout, so it depends on the environment rather than being a regression. | bug | `v16-test` timeout on `#modalOk` | Desktop dialogs get `max-height: 100vh − 32px` and scroll | v1.9.0 |
+| F18 | In Full mode, a side-ratio check skipped one of its conditions (an operator-precedence slip), so a verticals-only result could be refused. | bug | code review | Brackets fixed | v1.9.0 |
+
+**Not done in v1.9:** soft proofing (ICC printer profiles) was not started. Healing quality did not improve (79%; see the benchmark for the 9 variants I tried and rejected). Job 17 (high-rise Auto upright) still fails at −0.50°.
 
 ## Findings and fixes
 
@@ -89,12 +106,15 @@ and other RAW files from Explorer through `file_handlers`. Alt/F10 menu access i
 
 ## What is still missing, ranked (biggest gap first)
 
-1. **One-click subject / background / sky selection (ML).** Every paid editor and Photopea has it (see the benchmark, job 4). Tintwork has the wand, colour range and edge refine only. Would need an on-device segmentation model (tens of MB, WebGPU).
-2. **Content-aware / generative fill and remove** for real texture (Photoshop Generative Fill, Lightroom Generative Remove).
-3. **Auto upright** (one click, detects lines) — Guided upright now covers the manual case; also a *Constrain crop* option to hide the transparent corners.
+Updated for v1.9; items 3 and 6 of the v1.7 list are done (Auto upright in v1.8, its Level/Full modes in v1.9; presets
+and text/logo watermarks in v1.8/v1.9).
+
+1. **One-click subject / background / sky selection (ML).** Not planned until the user wants AI.
+2. **Content-aware / generative fill and remove** for real texture. Healing is at 79% removal on the real portrait, and the empty-edge fill smears.
+3. **Full upright on real photos:** its horizontal correction is rejected on both real test photos. It needs a better horizontal line detector and more real test photos.
 4. **AI denoise and camera-matching profiles for RAW.**
 5. **Print workflow:** soft proofing with ICC printer profiles, output sharpening, CMYK export.
-6. **Saved export presets and an export watermark** (jobs 6, 7, 9 would each drop to 1–3 steps).
+6. **Batch with export presets:** Batch process cannot use a saved export preset, so it takes 12–14 steps against Lightroom's ~6–9.
 7. Edge-aware local adjustment brushes (Lightroom-style masks with auto-mask).
 
 ## What I might be wrong about

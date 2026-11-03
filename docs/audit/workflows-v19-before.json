@@ -1,0 +1,325 @@
+{
+  "url": "https://kcope19.github.io/tintwork/",
+  "label": "v19-before",
+  "date": "2026-11-03T13:29:22.414Z",
+  "results": [
+    {
+      "id": 13,
+      "name": "3R: remove a blemish on a real portrait (USDA, public domain)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "mean error vs the untouched photo in the spot: 25.0 → 5.3 levels (79% removed); grain 1.39× the photo's; skin above the spot changed 0.00; stroke + heal 331 ms",
+      "steps": 4,
+      "ms": 5928,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait-usda.png",
+        "click: tool spot",
+        "drag: paint over the blemish"
+      ],
+      "paid": {
+        "Photoshop": 2,
+        "Lightroom Classic": 2,
+        "Affinity Photo": 2,
+        "Pixelmator Pro": 2,
+        "Photopea": 2
+      }
+    },
+    {
+      "id": 13,
+      "name": "3R: remove a blemish on a real portrait (USDA, public domain)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "mean error vs the untouched photo in the spot: 25.0 → 5.3 levels (79% removed); grain 1.39× the photo's; skin above the spot changed 0.00; stroke + heal 288 ms",
+      "steps": 4,
+      "ms": 5840,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait-usda.png",
+        "click: tool spot",
+        "drag: paint over the blemish"
+      ],
+      "paid": {
+        "Photoshop": 2,
+        "Lightroom Classic": 2,
+        "Affinity Photo": 2,
+        "Pixelmator Pro": 2,
+        "Photopea": 2
+      }
+    },
+    {
+      "id": 13,
+      "name": "3R: remove a blemish on a real portrait (USDA, public domain)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "mean error vs the untouched photo in the spot: 25.0 → 5.3 levels (79% removed); grain 1.39× the photo's; skin above the spot changed 0.00; stroke + heal 414 ms",
+      "steps": 4,
+      "ms": 5924,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file portrait-usda.png",
+        "click: tool spot",
+        "drag: paint over the blemish"
+      ],
+      "paid": {
+        "Photoshop": 2,
+        "Lightroom Classic": 2,
+        "Affinity Photo": 2,
+        "Pixelmator Pro": 2,
+        "Photopea": 2
+      }
+    },
+    {
+      "id": 22,
+      "name": "10R: Upright Full on the church photo (verticals + horizontals)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "no Full mode",
+      "steps": 2,
+      "ms": 5224,
+      "errors": [],
+      "notes": [
+        "no Full upright in this version"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 22,
+      "name": "10R: Upright Full on the church photo (verticals + horizontals)",
+      "run": 2,
+      "ok": false,
+      "skip": false,
+      "detail": "no Full mode",
+      "steps": 2,
+      "ms": 5174,
+      "errors": [],
+      "notes": [
+        "no Full upright in this version"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 22,
+      "name": "10R: Upright Full on the church photo (verticals + horizontals)",
+      "run": 3,
+      "ok": false,
+      "skip": false,
+      "detail": "no Full mode",
+      "steps": 2,
+      "ms": 5190,
+      "errors": [],
+      "notes": [
+        "no Full upright in this version"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 23,
+      "name": "Level a tilted sea horizon (3°) with Upright: level",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "no Level mode",
+      "steps": 2,
+      "ms": 5529,
+      "errors": [],
+      "notes": [
+        "no Level upright in this version"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file sea.png"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Level)": 2,
+        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Affinity Photo (Straighten)": 3,
+        "Pixelmator Pro (Auto straighten)": 2,
+        "Photopea (ruler + rotate)": 4
+      }
+    },
+    {
+      "id": 23,
+      "name": "Level a tilted sea horizon (3°) with Upright: level",
+      "run": 2,
+      "ok": false,
+      "skip": false,
+      "detail": "no Level mode",
+      "steps": 2,
+      "ms": 5551,
+      "errors": [],
+      "notes": [
+        "no Level upright in this version"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file sea.png"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Level)": 2,
+        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Affinity Photo (Straighten)": 3,
+        "Pixelmator Pro (Auto straighten)": 2,
+        "Photopea (ruler + rotate)": 4
+      }
+    },
+    {
+      "id": 23,
+      "name": "Level a tilted sea horizon (3°) with Upright: level",
+      "run": 3,
+      "ok": false,
+      "skip": false,
+      "detail": "no Level mode",
+      "steps": 2,
+      "ms": 5503,
+      "errors": [],
+      "notes": [
+        "no Level upright in this version"
+      ],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file sea.png"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Level)": 2,
+        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Affinity Photo (Straighten)": 3,
+        "Pixelmator Pro (Auto straighten)": 2,
+        "Photopea (ruler + rotate)": 4
+      }
+    },
+    {
+      "id": 24,
+      "name": "Batch-resize 6 photos to 2048 px JPEG with a logo watermark",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "text watermark only",
+      "steps": 8,
+      "ms": 1388,
+      "errors": [],
+      "notes": [
+        "no logo watermark in this version"
+      ],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: Watermark…"
+      ],
+      "paid": {
+        "Lightroom Classic (Export, graphic watermark)": 9,
+        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Affinity Photo (Batch Job, macro)": 13,
+        "Pixelmator Pro (Shortcuts)": 11,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 24,
+      "name": "Batch-resize 6 photos to 2048 px JPEG with a logo watermark",
+      "run": 2,
+      "ok": false,
+      "skip": false,
+      "detail": "text watermark only",
+      "steps": 8,
+      "ms": 1334,
+      "errors": [],
+      "notes": [
+        "no logo watermark in this version"
+      ],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: Watermark…"
+      ],
+      "paid": {
+        "Lightroom Classic (Export, graphic watermark)": 9,
+        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Affinity Photo (Batch Job, macro)": 13,
+        "Pixelmator Pro (Shortcuts)": 11,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 24,
+      "name": "Batch-resize 6 photos to 2048 px JPEG with a logo watermark",
+      "run": 3,
+      "ok": false,
+      "skip": false,
+      "detail": "text watermark only",
+      "steps": 8,
+      "ms": 1389,
+      "errors": [],
+      "notes": [
+        "no logo watermark in this version"
+      ],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: Choose folder…",
+        "pick: folder in the folder dialog",
+        "click: Size mode → long",
+        "type: Long edge = 2048",
+        "click: Format → image/jpeg",
+        "click: Watermark…"
+      ],
+      "paid": {
+        "Lightroom Classic (Export, graphic watermark)": 9,
+        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Affinity Photo (Batch Job, macro)": 13,
+        "Pixelmator Pro (Shortcuts)": 11,
+        "Photopea": "no batch"
+      }
+    }
+  ]
+}

@@ -1,10 +1,77 @@
-# Workflow benchmark (v1.7.0 → v1.8.0)
+# Workflow benchmark (v1.7.0 → v1.8.0 → v1.9.0)
 
 v1.8 adds nine jobs (13–21) that use **real photos** (public domain / CC0, `test-assets/real/LICENSES.md`) and the new
 features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from v1.7 (below, kept for history).
 
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
+
+## v1.9 scorecard (non-AI polish: logo watermark, upright modes, 16-bit fill, healing)
+
+v1.9 adds three jobs:
+- **22:** Upright Full on the real church photo.
+- **23:** Upright Level on a 3°-tilted synthetic sea horizon.
+- **24:** Batch export of 6 photos with a logo watermark.
+
+It also changes how **job 13** is timed (see below). Jobs 1–21 are otherwise unchanged.
+
+The runs:
+- **Before:** the live site at v1.8.0, 3 runs, 2026-11-03 about 8:28 AM America/New_York (`docs/audit/workflows-v19-before.json`).
+- **After (local):** the v1.9 commit served locally, 3 runs (`workflows-v19-local.json`).
+- **After (live):** the live site at v1.9.0 after deploy, 3 runs (`workflows-v19-after.json`). See *Live verification* below.
+
+| # | Job | Before (v1.8, live) | After (v1.9) | Tintwork steps excl. open | Competitors (docs) | Verdict |
+|---|-----|------|------|------|------|------|
+| 13 (3R) | Remove a blemish on a real portrait | pass 3/3: 25.0 → 5.3 levels (79% removed); stroke + heal 288–414 ms | pass 3/3: **identical** 25.0 → 5.3 (79%); grain 1.39× the photo's; stroke + heal 294–338 ms | 2 | 2 in all five | **trails** |
+| 22 (10R) | Upright Full, church photo | fail 3/3: no Full mode | pass 3/3: −0.23° / −0.18° / 0.12°, but **with 0 horizontal lines used** (rejected as unreliable), so the result is exactly Vertical's | 3 | Lightroom Upright Full 2, Camera Raw 4, Affinity 5, Pixelmator Pro 4, Photopea 5 | **trails** |
+| 23 | Level a 3° sea horizon | fail 3/3: no Level mode | pass 3/3: 3.00° → 0.01° (rotation from one horizon line, cropped to 1468×918) | 3 | Lightroom Upright Level 2, Pixelmator Pro Auto straighten 2, Camera Raw 3, Affinity 3, Photopea 4 | **trails** |
+| 24 | Batch 6 photos to 2048 px with a logo watermark | fail 3/3: text watermark only | pass 3/3: 6 files, logo in the bottom-right of each (≥ 30,827 logo pixels per file, 0 in the top-left) | 14 | Lightroom Export with a graphic watermark ~9 | **trails** |
+| 19 | Export preset + watermark (text) | pass 3/3 | pass 3/3 (unchanged: 9 steps first time, 1 to repeat) | 7 / 1 | Lightroom 6 / 1–2 | **matches** |
+| 20 | Batch with a text watermark | pass 3/3 | pass 3/3 (unchanged, 12 steps) | 12 | Lightroom 6–7 | **trails** |
+| 16 / 17 / 18 | Auto upright (church), Auto upright (high-rise), Guided | 16 pass, 17 **fail** (−0.50°), 18 pass | unchanged: 16 pass, 17 **fail 3/3** −0.50° / 0.10°, 18 pass | 3 / 3 / 5 | as in v1.8 | trails / trails / **matches** |
+
+**Summary (v1.9): 0 beat, 2 match (18, 19), every other job trails (now 24 jobs). Job 17 still fails its own 0.5° bar.**
+The new features turned three jobs from *fail* into *pass*, but none of them reaches a competitor's step count or capability.
+
+### Healing: speed and quality, honestly
+
+- **Speed:** in the v1.8 bench, job 13 took about 66–76 s per run. Timing the app itself showed this was the benchmark
+  script, not the healer. The script passed multi-MB images between Node and the page as JSON number arrays.
+  - In the app, opening the photo takes ~0.37 s and the heal 27 ms after mouse-up; the stroke plus heal takes ~0.3–0.4 s.
+  - The bench now keeps the reference images in the page and reports the app time separately. The job takes ~6 s end to end, and v1.8 timed the same way also takes 0.29–0.41 s.
+  - **So v1.9 did not make healing faster; it fixed a misleading number.**
+- **Quality: unchanged at 79%.** I tried 9 variants of the source search offline, on 12 synthetic spots on the same portrait plus 10 held-out spots: patch-border width, 32 angles × 6 radii, a colour-mean penalty, and averaging the best 2 sources.
+  - Held-out results (removed % / texture log-error, lower is better): current 60.6% / 0.185; best variant 63.8% / 0.272.
+  - Averaging two sources reached 71.8% removed on the tuning spots, but it smooths the skin.
+  - A plain smooth fill scores 76.3% on the tuning set with almost no grain (texture log-error 1.82), so the mean-error metric rewards blur.
+  - No variant improved both measures on the held-out spots, so none shipped. The ceiling with the best single source offset is about 87%.
+  - v1.9 adds a grain check (high-pass energy relative to the photo; 1.39× now) so a blur "improvement" cannot pass silently.
+- **Counter-argument:** Lightroom's Remove tool and Photoshop's Spot Healing are content-aware or generative and were not measured on this image. Same clicks, but almost certainly better on real texture. **Trails.**
+
+### The case against each v1.9 verdict
+
+- **22 Full:** passes only because Full falls back to Vertical. On both real test photos (c4 church, c6 high-rise) the horizontal lines fail the safety checks: fewer than 3 agree, or their vanishing point is too close. Full therefore leaves the horizontals alone.
+  - Its two-axis correction is proven only on a synthetic facade (≤ 0.02° in `v19-test`).
+  - Lightroom's Full applies "level, horizontal, and vertical perspective corrections" ([help](https://helpx.adobe.com/lightroom-classic/desktop/help/upright-automatic-perspective-correction.html)). **Trails.**
+- **23 Level:** the image is synthetic, with one clean horizon line and noise of ±6 levels. A real seascape with waves, haze or a boat would be harder.
+  - v1.8's Image ▸ Auto straighten (Hough, ±20°) could probably already level this image. Level adds a 15° safety limit and lives in the upright bar; it is not a new capability.
+  - 3 steps against 2 in Lightroom and Pixelmator Pro. **Trails.**
+- **24 Logo batch:** works, but takes 14 steps (choosing the folders and logo, size, format, watermark type). A Lightroom user with a saved preset and graphic watermark needs about 9 the first time and 1–2 afterwards.
+  - Tintwork's export presets keep the logo, but Batch process does not take an export preset. **Trails.**
+  - Tintwork has no logo rotation and no fit/fill sizing, which Lightroom's Watermark Editor has ([help](https://helpx.adobe.com/lightroom-classic/desktop/workspace/using-watermark-editor.html)).
+- **19 (matches):** the v1.8 counter-argument ("text only") is answered by the logo watermark. The step count is still one above Lightroom's on the first export. Kept at *matches* on the strength of the 1-step repeat.
+- **18 (matches):** unchanged since v1.8 (same 5 steps as Lightroom Guided). The counter-argument stands: Lightroom's Guided takes up to 4 guides; Tintwork's takes 2.
+
+### Not measured
+
+- **16-bit Fill edges** has no bench job. It is covered by `v19-test`: every filled value comes from 16-bit data, opaque pixels are unchanged, and Undo works.
+- Competitors' fill is content-aware in Photoshop, which is better on texture; Tintwork's push-pull fill smears.
+
+### Test-change disclosure
+
+- `scripts/v18-test.mjs`: the v1.8 check that "16-bit Fill empty edges refuses" now accepts either that refusal or a successful 16-bit fill, because v1.9 implements the fill. This loosens that one check; the new behaviour is tested strictly in `v19-test`.
+- Bench job 13 changed its timing method (above), but its pass bar and metric did not change: 25.0 → 5.3 on both versions.
+- Job 22 counts only edges still in the frame. On v1.9 all 3 edges are in the frame.
 
 ## v1.8 scorecard (real photos and new features)
 
