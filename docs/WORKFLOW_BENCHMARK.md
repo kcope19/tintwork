@@ -49,7 +49,15 @@ What the upright numbers say, plainly:
 
 ### Live verification (v1.11.0)
 
-@@LIVE@@
+Pages finished deploying commit 75c8b3a at about 10:41 AM America/New_York on 2026-11-03; the live `sw.js` reports `tintwork-shell-v1.11.0`.
+- `TW_URL=https://kcope19.github.io/tintwork/ node scripts/v111-test.mjs` passed 15/15 in a clean set of three runs (3/3). One earlier live run, started about 2 minutes after the deploy, crashed in Node before it finished. Only its last line was kept, so the cause is unknown. Two runs in that same batch passed 15/15.
+- The live bench for jobs 29–31 (3 runs each; 6 of 9 runs pass) matched the local results exactly:
+  - Job 29 (Batch again) passed 3/3 in 4 steps.
+  - Job 30 (the dialog) passed 3/3 in 5 steps.
+  - Job 31 (geneva, held out) failed 3/3, with the same −0.66° / 0.00° / 0.11° / 0.86° / 0.92° edges as local.
+- Screenshots:
+  - `screenshots/111-live-batch-folders.png` shows Batch process on a new session with the remembered "batch-in" and "batch-out" folders, Forget folders and the preset.
+  - `screenshots/111-live-batch-again.png` shows the result of File ▸ Batch again ("Batch finished: 6 of 6 images, 6 files written to batch-out.").
 
 ### Test-change disclosure
 

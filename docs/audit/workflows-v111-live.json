@@ -1,0 +1,238 @@
+{
+  "url": "https://kcope19.github.io/tintwork/",
+  "label": "v111-live",
+  "date": "2026-11-03T15:44:12.238Z",
+  "results": [
+    {
+      "id": 31,
+      "name": "11R holdout: Upright Full on a third real photo (office facade with diagonal fins, CC0; seeds fixed before the first run, never tuned on)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt -0.21° / 0.50° / 0.60° / 0.38° / 0.43° → -0.66° / 0.00° / 0.11° / 0.86° / 0.92° (edge support 311/514, 513/516, 694/695, 237/237, 197/197) (20 lines, cropped to 1257×838)",
+      "steps": 5,
+      "ms": 5744,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file geneva.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 31,
+      "name": "11R holdout: Upright Full on a third real photo (office facade with diagonal fins, CC0; seeds fixed before the first run, never tuned on)",
+      "run": 2,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt -0.21° / 0.50° / 0.60° / 0.38° / 0.43° → -0.66° / 0.00° / 0.11° / 0.86° / 0.92° (edge support 311/514, 513/516, 694/695, 237/237, 197/197) (20 lines, cropped to 1257×838)",
+      "steps": 5,
+      "ms": 5687,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file geneva.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 31,
+      "name": "11R holdout: Upright Full on a third real photo (office facade with diagonal fins, CC0; seeds fixed before the first run, never tuned on)",
+      "run": 3,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt -0.21° / 0.50° / 0.60° / 0.38° / 0.43° → -0.66° / 0.00° / 0.11° / 0.86° / 0.92° (edge support 311/514, 513/516, 694/695, 237/237, 197/197) (20 lines, cropped to 1257×838)",
+      "steps": 5,
+      "ms": 5696,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file geneva.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 29,
+      "name": "Next session: repeat the job 25 batch with File ▸ Batch again (folders and preset remembered; first run is setup, not counted)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 2 steps)",
+      "steps": 4,
+      "ms": 4608,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch again",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 29,
+      "name": "Next session: repeat the job 25 batch with File ▸ Batch again (folders and preset remembered; first run is setup, not counted)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 2 steps)",
+      "steps": 4,
+      "ms": 4638,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch again",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 29,
+      "name": "Next session: repeat the job 25 batch with File ▸ Batch again (folders and preset remembered; first run is setup, not counted)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 2 steps)",
+      "steps": 4,
+      "ms": 4480,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch again",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 30,
+      "name": "Next session: repeat the job 25 batch through the Batch process dialog (folders and preset remembered; first run is setup, not counted)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 3 steps)",
+      "steps": 5,
+      "ms": 4292,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: OK",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 30,
+      "name": "Next session: repeat the job 25 batch through the Batch process dialog (folders and preset remembered; first run is setup, not counted)",
+      "run": 2,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 3 steps)",
+      "steps": 5,
+      "ms": 4404,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: OK",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    },
+    {
+      "id": 30,
+      "name": "Next session: repeat the job 25 batch through the Batch process dialog (folders and preset remembered; first run is setup, not counted)",
+      "run": 3,
+      "ok": true,
+      "skip": false,
+      "detail": "6 files, 2048×1365, logo bottom-right 32232+ px per file; 2 permission prompts, 0 folder dialogs (same session or \"Allow on every visit\": 3 steps)",
+      "steps": 5,
+      "ms": 4552,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "click: File menu",
+        "click: File ▸ Batch process",
+        "click: OK",
+        "click: Allow (batch-in:read) in the browser's permission prompt",
+        "click: Allow (batch-out:readwrite) in the browser's permission prompt"
+      ],
+      "paid": {
+        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Affinity Photo (Batch Job, saved macro)": 9,
+        "Pixelmator Pro (run saved Shortcut)": 3,
+        "Photopea": "no batch"
+      }
+    }
+  ]
+}
