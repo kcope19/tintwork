@@ -38,7 +38,10 @@ What the held-out photos say, plainly:
 
 ### Live verification (v1.10.0)
 
-LIVE_PLACEHOLDER
+Pages finished deploying at about 9:44 AM America/New_York on 2026-11-03.
+- `TW_URL=https://kcope19.github.io/tintwork/ node scripts/v110-test.mjs` passed 19/19, three times out of three.
+- The live bench (jobs 13, 16–20 and 22–28, 3 runs each; 33 of 39 runs pass) matched the local results exactly. Jobs 27 and 28 failed 3/3; everything else passed 3/3.
+- Screenshots: `screenshots/110-live-batch-preset.png` shows Batch process with an export preset chosen, its size, format and quality filled in, and its logo. `screenshots/110-live-soft-proof.png` shows the matte-paper proof on the library photo.
 
 ### The case against each v1.10 verdict
 
