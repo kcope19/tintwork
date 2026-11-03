@@ -3429,6 +3429,7 @@ const cmds = {
   mode8: needDoc(() => setDepth(8)),
   mode16: needDoc(() => setDepth(16)),
   engine: () => openEngineDialog(),
+  proofOff: () => setProof(null), proofGlossy: () => setProof('glossy'), proofMatte: () => setProof('matte'),
   benchmark: () => openBenchmarkDialog(),
   userGuide: () => openUserGuide(),
   perspective: needDoc(() => startMeshXf('perspective')),
@@ -3687,7 +3688,7 @@ const MENUS = [
     ['Invert', 'invert', 'Ctrl+I'], ['Grayscale', 'grayscale', 'Ctrl+Shift+U'], ['Sepia tone…', 'sepia']]],
   ['Filter', [['Convert to live layer', 'convertSmart'], '-', ['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
   ['Actions', [['Actions…', 'actions'], ['Start recording', 'actionRecord'], ['Stop recording and save…', 'actionStop'], '-', ['Batch process…', 'batch']]],
-  ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1'], '-', ['Rendering engine…', 'engine']]],
+  ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1'], '-', ['Proof: off', 'proofOff'], ['Proof: glossy paper', 'proofGlossy'], ['Proof: matte paper', 'proofMatte'], '-', ['Rendering engine…', 'engine']]],
   ['Help', [['Keyboard shortcuts', 'shortcuts', '?'], ['User guide', 'userGuide', 'F1'], ['Run performance benchmark…', 'benchmark'], [`About ${APP}`, 'about']]],
 ];
 
@@ -6427,6 +6428,26 @@ function labelControls(root = document) {
 }
 labelControls(); new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) labelControls(n); }).observe(document.body, { childList: true, subtree: true });
 
+/**
+ * Soft proof (v1.10): a view-only preview of how a print compresses the image between the paper's white and the
+ * darkest black its ink reaches (an SVG filter on the view, worked in linear light; pixels and exports are unchanged).
+ * Approximate typical papers, not a printer profile: no ICC profiles are read or applied.
+ */
+const PROOF_PAPERS = { glossy: { name: 'glossy paper', white: [246, 245, 240], black: [22, 22, 24] }, matte: { name: 'matte paper', white: [240, 238, 230], black: [48, 47, 46] } };
+let proofMode = null;
+const srgbToLin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+function setProof(mode) {
+  proofMode = PROOF_PAPERS[mode] ? mode : null;
+  let svg = document.getElementById('twProofSvg');
+  if (!svg) { svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.id = 'twProofSvg'; svg.setAttribute('width', '0'); svg.setAttribute('height', '0'); svg.setAttribute('aria-hidden', 'true'); svg.style.position = 'absolute'; document.body.append(svg); }
+  const view = document.getElementById('view');
+  if (!proofMode) { view.style.filter = ''; svg.innerHTML = ''; status('Proof off.'); return null; }
+  const p = PROOF_PAPERS[proofMode], f = (i) => { const w = srgbToLin(p.white[i]), b = srgbToLin(p.black[i]); return `slope="${(w - b).toFixed(5)}" intercept="${b.toFixed(5)}"`; };
+  svg.innerHTML = `<filter id="twProof" color-interpolation-filters="linearRGB"><feComponentTransfer><feFuncR type="linear" ${f(0)}/><feFuncG type="linear" ${f(1)}/><feFuncB type="linear" ${f(2)}/></feComponentTransfer></filter>`;
+  view.style.filter = 'url(#twProof)';
+  status(`Proof: ${p.name} (paper white and ink black simulated on screen only; View ▸ Proof: off to leave).`);
+  return proofMode;
+}
 function status(msg) { $('#status').textContent = platformText(msg); }
 let toastTimer = 0, toastUntil = 0;
 /** Brief notice. A notice arriving while another is still showing is added below it, so neither is lost. */
@@ -7855,6 +7876,7 @@ window.tintwork = {
     stroke: async (st) => { const s = state.objSel; if (!s) return null; s.strokes.push({ fg: st.fg !== false, r: st.r || 12, pts: st.pts }); return objSelRun(); }, settled: () => objSelJob, done: objSelDone, cancel: objSelCancel, get state() { return state.objSel; } },
   autoUprightCmd, get lastUpright() { return lastUpright; }, cropEmptyEdges, fillEmptyEdges, innerOpaqueRect, segment: seg,
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
+  setProof, get proofMode() { return proofMode; }, PROOF_PAPERS,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
   renderVariant, exportVariants, runBatch, memorySink, zipSink, formatName, variantSize, withDpi, autoOpts, saveAutoOpts, openAutoOptionsDialog,
   // v0.8

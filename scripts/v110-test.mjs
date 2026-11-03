@@ -151,6 +151,26 @@ const fmt = (es) => es.map((e) => (e.deg == null ? '—' : `${e.deg.toFixed(2)}�
   check(br.lu?.hlines >= 3 && br.after.length === 3 && worst(br.after) < worst(br.before) / 3, `held-out shop front, Full: ${br.lu?.hlines} horizontal lines used, horizontals ${fmt(br.before)} → ${fmt(br.after)}`);
 }
 
+// --- 5. soft proof: paper white and ink black on screen only
+{
+  await T(async () => { const t = window.tintwork; t.newDocument(600, 200, 'white', 'proof'); const l = t.activeLayer(), x = l.canvas.getContext('2d'); x.fillStyle = '#ffffff'; x.fillRect(0, 0, 200, 200); x.fillStyle = '#000000'; x.fillRect(200, 0, 200, 200); x.fillStyle = '#808080'; x.fillRect(400, 0, 200, 200); t.touch(l); t.markDirty(); t.renderNow(); await t.compositeSettled?.(); t.run('zoomFit'); });
+  await page.waitForTimeout(300);
+  const sample = async () => { const out = []; for (const px of [100, 300, 500]) { const p = await toScreen({ x: px, y: 100 }); const buf = await page.screenshot({ clip: { x: Math.round(p.x) - 2, y: Math.round(p.y) - 2, width: 5, height: 5 } }); const v = await T(async (b) => { const bm = await createImageBitmap(new Blob([new Uint8Array(b)], { type: 'image/png' })); const c = new OffscreenCanvas(bm.width, bm.height), x = c.getContext('2d'); x.drawImage(bm, 0, 0); return [...x.getImageData(2, 2, 1, 1).data.slice(0, 3)]; }, [...buf]); out.push(v); } return out; };
+  const off = await sample();
+  const hasProof = await T(() => typeof window.tintwork.setProof === 'function' && !!document.querySelector('#menus .menu-items button[data-cmd="proofGlossy"]'));
+  check(hasProof, 'View menu has Proof: glossy / matte paper');
+  if (hasProof) {
+    await T(() => window.tintwork.run('proofMatte')); await page.waitForTimeout(200); const matte = await sample();
+    const near = (a, b, tol = 4) => a.every((v, i) => Math.abs(v - b[i]) <= tol);
+    check(near(off[0], [255, 255, 255]) && near(off[1], [0, 0, 0]), `proof off shows the pixels as they are (${JSON.stringify(off)})`);
+    check(near(matte[0], [240, 238, 230]) && near(matte[1], [48, 47, 46]) && matte[2][0] > 120 && matte[2][0] < 132, `matte proof: white → paper white, black → ink black, mid-grey stays mid (${JSON.stringify(matte)})`);
+    const px = await T(async () => { const t = window.tintwork, b = await t.renderExportWith('image/png', 1, {}); const bm = await createImageBitmap(b), c = new OffscreenCanvas(bm.width, bm.height), x = c.getContext('2d'); x.drawImage(bm, 0, 0); return [...x.getImageData(100, 100, 1, 1).data.slice(0, 3), ...x.getImageData(300, 100, 1, 1).data.slice(0, 3)]; });
+    check(px.join() === '255,255,255,0,0,0', `export is unchanged while proofing (${px})`);
+    await T(() => window.tintwork.run('proofOff')); await page.waitForTimeout(200); const back = await sample();
+    check(near(back[0], [255, 255, 255]) && near(back[1], [0, 0, 0]), 'Proof: off restores the view');
+  }
+}
+
 console.log(errors.length ? `page errors: ${errors.slice(0, 3).join(' | ')}` : 'no page errors');
 check(!errors.length, 'no page errors');
 await browser.close(); server.close();
