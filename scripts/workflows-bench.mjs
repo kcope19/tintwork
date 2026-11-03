@@ -379,17 +379,25 @@ const JOBS = [
 
   // ---- v1.8: real photos (test-assets/real, public domain / CC0) and the new export features ----------------------
   { id: 13, name: '3R: remove a blemish on a real portrait (USDA, public domain)', async run(R, page) {
-    // an artificial dark spot (r 8 px) is painted on freckled cheek skin; the result is compared with the untouched photo
-    const pair = await page.evaluate(async (u8) => { const bm = await createImageBitmap(new Blob([new Uint8Array(u8)])); const c = new OffscreenCanvas(bm.width, bm.height), x = c.getContext('2d'); x.drawImage(bm, 0, 0);
-      const orig = [...new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer())];
+    // an artificial dark spot (r 8 px) is painted on freckled cheek skin; the result is compared with the untouched photo.
+    // v1.9: the reference images stay in the page (v1.8 shipped multi-MB number arrays back and forth, which made this
+    // job look like 66 s; the app's own time is now reported separately as “heal …ms”).
+    const spot = await page.evaluate(async (b64) => { const u8 = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)); const bm = await createImageBitmap(new Blob([u8])); const c = new OffscreenCanvas(bm.width, bm.height), x = c.getContext('2d'); x.drawImage(bm, 0, 0);
+      window.__heal = { orig: x.getImageData(0, 0, bm.width, bm.height) };
       const g = x.createRadialGradient(590, 640, 0, 590, 640, 8); g.addColorStop(0, 'rgba(70,35,25,0.95)'); g.addColorStop(0.7, 'rgba(85,45,30,0.85)'); g.addColorStop(1, 'rgba(90,50,35,0)'); x.fillStyle = g; x.beginPath(); x.arc(590, 640, 8, 0, 7); x.fill();
-      return { orig, spot: [...new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer())] }; }, [...REAL('portrait-usda.jpg')]);
-    await ctrlO(R, page, 'portrait-usda.png', pair.spot);
-    await R.tool('spot'); await R.drag([{ x: 585, y: 640 }, { x: 595, y: 640 }], 'paint over the blemish');
-    const now = await page.evaluate(async () => { const t = window.tintwork; await t.compositeSettled?.(); const b = await new Promise((r) => t.compositeCanvas().toBlob(r, 'image/png')); return [...new Uint8Array(await b.arrayBuffer())]; });
-    const box = { x: 578, y: 628, w: 24, h: 24 }, before = await imgDiff(page, pair.spot, pair.orig, box), after = await imgDiff(page, now, pair.orig, box);
-    const ring = await imgDiff(page, now, pair.orig, { x: 560, y: 610, w: 60, h: 14 });
-    return { ok: after < before * 0.3 && ring < 2, detail: `mean error vs the untouched photo in the spot: ${before.toFixed(1)} → ${after.toFixed(1)} levels (${Math.round(100 - 100 * after / before)}% removed); skin above the spot changed ${ring.toFixed(2)}` };
+      window.__heal.spot = x.getImageData(0, 0, bm.width, bm.height);
+      const buf = new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer()); let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000)); return btoa(s); }, REAL('portrait-usda.jpg').toString('base64'));
+    await ctrlO(R, page, 'portrait-usda.png', Buffer.from(spot, 'base64'));
+    await R.tool('spot'); const t0 = Date.now(); await R.drag([{ x: 585, y: 640 }, { x: 595, y: 640 }], 'paint over the blemish'); const healMs = Date.now() - t0;
+    const m = await page.evaluate(async () => {
+      const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), now = c.getContext('2d').getImageData(0, 0, c.width, c.height), { orig, spot } = window.__heal, W = orig.width;
+      const diff = (A, r) => { let s = 0; for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) { const i = (y * W + x) * 4; s += (Math.abs(A.data[i] - orig.data[i]) + Math.abs(A.data[i + 1] - orig.data[i + 1]) + Math.abs(A.data[i + 2] - orig.data[i + 2])) / 3; } return s / (r.w * r.h); };
+      // texture: high-pass energy (pixel minus its 4 neighbours) inside the spot, relative to the untouched photo (1 = same grain)
+      const hp = (A, r) => { let s = 0, n = 0; const L = (i) => 0.299 * A.data[i * 4] + 0.587 * A.data[i * 4 + 1] + 0.114 * A.data[i * 4 + 2]; for (let y = r.y + 1; y < r.y + r.h - 1; y++) for (let x = r.x + 1; x < r.x + r.w - 1; x++) { const i = y * W + x, v = L(i) - (L(i - 1) + L(i + 1) + L(i - W) + L(i + W)) / 4; s += v * v; n++; } return Math.sqrt(s / n); };
+      const box = { x: 578, y: 628, w: 24, h: 24 };
+      return { before: diff(spot, box), after: diff(now, box), ring: diff(now, { x: 560, y: 610, w: 60, h: 14 }), tex: hp(now, box) / hp(orig, box) };
+    });
+    return { ok: m.after < m.before * 0.3 && m.ring < 2, detail: `mean error vs the untouched photo in the spot: ${m.before.toFixed(1)} → ${m.after.toFixed(1)} levels (${Math.round(100 - 100 * m.after / m.before)}% removed); grain ${m.tex.toFixed(2)}× the photo's; skin above the spot changed ${m.ring.toFixed(2)}; stroke + heal ${healMs} ms` };
   }, paid: { 'Photoshop': 2, 'Lightroom Classic': 2, 'Affinity Photo': 2, 'Pixelmator Pro': 2, 'Photopea': 2 } },
 
   { id: 14, name: '4R: select a real subject (public-domain portrait) — object select', async run(R, page) {
