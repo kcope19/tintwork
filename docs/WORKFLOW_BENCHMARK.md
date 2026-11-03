@@ -4,7 +4,7 @@ v1.8 adds nine jobs (13–21) that use **real photos** (public domain / CC0, `te
 features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from v1.7 (below, kept for history).
 
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
-v1.8.0, 3 runs after deploy (see the table). Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
+v1.8.0, 3 runs after deploy (see the table). Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
 ## v1.8 scorecard (real photos and new features)
 
