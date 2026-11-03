@@ -76,6 +76,11 @@ async function newSession(browser, opts = {}) {
     window.showSaveFilePicker = async (o) => { W.save++; W.lastSave = o.suggestedName; const root = await navigator.storage.getDirectory(); return root.getFileHandle(o.suggestedName, { create: true }); };
     window.showOpenFilePicker = async () => { W.open++; const root = await navigator.storage.getDirectory(); return [await root.getFileHandle(W.nextOpen)]; };
     window.showDirectoryPicker = async (o) => { W.dir++; const root = await navigator.storage.getDirectory(); return root.getDirectoryHandle(o?.mode === 'read' ? 'batch-in' : 'batch-out', { create: true }); };
+    // sessionStorage 'perm' = 'prompt' simulates a new browser session: stored folder handles need permission again
+    // (each prompt is one "Allow" click, counted by the jobs that use it)
+    W.req = []; const H = window.FileSystemHandle?.prototype;
+    if (H) { const q = H.queryPermission; H.queryPermission = async function (d) { if (sessionStorage.getItem('perm') === 'prompt' && !W.granted?.has(`${this.name}:${d?.mode}`)) return 'prompt'; return q ? q.call(this, d) : 'granted'; };
+      H.requestPermission = async function (d) { W.req.push(`${this.name}:${d?.mode}`); (W.granted ||= new Set()).add(`${this.name}:${d?.mode}`); return 'granted'; }; }
   });
   const page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(e.message)); page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -558,8 +563,37 @@ const JOBS = [
   { id: 28, name: '10R holdout: Upright Full on a second real photo with converging horizontals (shop front, CC0; verticals and horizontals measured)', async run(R, page) {
     return realUpright(R, page, 'brick.jpg', [[[1020, 603], [1020, 799]], [[1067, 625], [1069, 794]], [[1030, 572], [1274, 594]], [[1072, 615], [1189, 623]], [[1035, 817], [1274, 823]]], 'full');
   }, paid: { 'Lightroom Classic (Upright Full)': 2, 'Photoshop (Camera Raw filter Upright Full)': 4, 'Affinity Photo (Perspective, both directions)': 6, 'Pixelmator Pro (Perspective)': 5, 'Photopea (Perspective transform)': 6 } },
+  { id: 29, name: 'Next session: repeat the job 25 batch with File ▸ Batch again (folders and preset remembered; first run is setup, not counted)', async run(R, page, A) {
+    return batchRepeat(R, page, A, 'again');
+  }, paid: { 'Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)': 4, 'Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)': 6, 'Affinity Photo (Batch Job, saved macro)': 9, 'Pixelmator Pro (run saved Shortcut)': 3, 'Photopea': 'no batch' } },
+  { id: 30, name: 'Next session: repeat the job 25 batch through the Batch process dialog (folders and preset remembered; first run is setup, not counted)', async run(R, page, A) {
+    return batchRepeat(R, page, A, 'dialog');
+  }, paid: { 'Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)': 4, 'Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)': 6, 'Affinity Photo (Batch Job, saved macro)': 9, 'Pixelmator Pro (run saved Shortcut)': 3, 'Photopea': 'no batch' } },
 ];
-/** IoU of the current selection with the published cut-out's alpha, inside the cut-out's frame (it touches 3 sides). */
+/** Jobs 29/30: set up as in job 25 and run it once (not counted), reload as a new session (permissions forgotten),
+ *  then repeat it. Each permission prompt counts as one step ("Allow"). */
+async function batchRepeat(R, page, A, how) {
+  await page.evaluate(async (files) => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-in', { create: true }); for (let i = 0; i < files.length; i++) { const w = await (await dir.getFileHandle(`photo-${i + 1}.jpg`, { create: true })).createWritable(); await w.write(new Uint8Array(files[i])); await w.close(); } }, A.batch);
+  const pid = await page.evaluate(async () => { const t = window.tintwork; if (!t.batchAgain) return null; const c = new OffscreenCanvas(400, 200), x = c.getContext('2d'); x.fillStyle = '#ff00ff'; x.fillRect(0, 0, 400, 200); x.fillStyle = '#fff'; x.fillRect(150, 50, 100, 100); const b = await c.convertToBlob({ type: 'image/png' }); const url = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(b); });
+    return t.exportPresets.save({ name: 'Web 2048 + logo', type: 'image/jpeg', quality: 85, size: { mode: 'long', long: 2048 }, watermark: { kind: 'image', image: url, imageName: 'logo.png', scale: 20, opacity: 90, position: 'br', margin: 3, shadow: false } }).id; });
+  if (!pid) { R.note('no remembered batch folders / Batch again in this version'); return { ok: false, detail: 'no Batch again' }; }
+  // setup run (not counted)
+  await page.evaluate(() => window.tintwork.run('batch')); await page.waitForSelector('#modal:not(.hidden) #bSrcDir');
+  await page.click('#bSrcDir'); await page.waitForFunction(() => /6 image/.test(document.querySelector('#bSrcInfo')?.textContent || ''), null, { timeout: 10000 });
+  await page.selectOption('#bPreset', pid); await page.click('#modalOk');
+  await page.waitForFunction(() => /Batch finished/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
+  await page.evaluate(async () => { const root = await navigator.storage.getDirectory(), d = await root.getDirectoryHandle('batch-out'); const ns = []; for await (const [n] of d.entries()) ns.push(n); for (const n of ns) await d.removeEntry(n); sessionStorage.setItem('perm', 'prompt'); });
+  await page.reload(); await page.waitForFunction(() => window.tintwork && document.readyState === 'complete'); await page.evaluate(() => window.tintwork.engineReady);
+  // the counted repeat
+  if (how === 'again') await R.menu('File', 'Batch again');
+  else { await R.menu('File', 'Batch process'); await page.waitForSelector('#modal:not(.hidden) #bSrcDir'); await page.waitForTimeout(300); await R.ok(); }
+  await page.waitForFunction(() => /Batch (finished|failed)/.test(document.querySelector('#status').textContent) || /No permission|gone/.test(document.querySelector('#toast')?.textContent || ''), null, { timeout: 120000 });
+  const pk = await page.evaluate(() => ({ req: window.__pick.req, dir: window.__pick.dir }));
+  for (const q of pk.req) R.step('click', `Allow (${q}) in the browser's permission prompt`);
+  for (let k = 0; k < pk.dir; k++) R.step('pick', 'folder in the folder dialog');
+  const outs = await page.evaluate(async () => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-out'); const r = []; for await (const [n, h] of dir.entries()) { const f = await h.getFile(); const b = await createImageBitmap(f); const c = new OffscreenCanvas(b.width, b.height), x = c.getContext('2d'); x.drawImage(b, 0, 0); const f0 = x.getImageData(10, 10, 1, 1).data; const red = (rx, ry, rw, rh) => { const d = x.getImageData(rx, ry, rw, rh).data; let k = 0; for (let i = 0; i < d.length; i += 4) if ((d[i] + d[i + 2]) / 2 - d[i + 1] > 110 && Math.abs(d[i] - d[i + 2]) < 60 && Math.abs(d[i] - f0[0]) + Math.abs(d[i + 1] - f0[1]) + Math.abs(d[i + 2] - f0[2]) > 80) k++; return k; }; r.push([n, b.width, b.height, red(Math.round(b.width * 0.6), Math.round(b.height * 0.6), Math.round(b.width * 0.4), Math.round(b.height * 0.4)), red(0, 0, Math.round(b.width * 0.4), Math.round(b.height * 0.4))]); } return r; });
+  return { ok: outs.length === 6 && outs.every(([, w, h, br, tl]) => Math.max(w, h) === 2048 && br > 5000 && tl < br * 0.05), detail: `${outs.length} files, ${outs[0]?.[1]}×${outs[0]?.[2]}, logo bottom-right ${Math.min(...outs.map((o) => o[3]))}+ px per file; ${pk.req.length} permission prompts, ${pk.dir} folder dialogs (same session or "Allow on every visit": ${R.steps - pk.req.length} steps)` };
+}/** IoU of the current selection with the published cut-out's alpha, inside the cut-out's frame (it touches 3 sides). */
 const GT_RECT = { x: 300, y: 150, w: 1056, h: 1408 };
 async function selIoU(page, gtFile = 'evers-gt.png', rect = GT_RECT) {
   return page.evaluate(async ({ gt, r }) => {

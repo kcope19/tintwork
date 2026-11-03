@@ -13,7 +13,7 @@ import { runBenchmark, benchText, benchKinds, probeEngines, stackId, BENCH_SIZES
 import * as mesh from './mesh.js';
 import * as seg from './segment.js';
 import { FX_TYPES, FX_ORDER, defaultEffect, hasActiveStyles, normalizeStyles, renderStyled, effectStack, BODY_BLENDS } from './layerfx.js';
-import { fsaSupported, pickOpen, pickSave, writeFile, ensurePermission, listRecent, addRecent, removeRecent, clearRecent, EXPORT_TYPES, putLink, getLink, newLinkId, pickRaw } from './files.js';
+import { fsaSupported, pickOpen, pickSave, writeFile, ensurePermission, listRecent, addRecent, removeRecent, clearRecent, EXPORT_TYPES, putLink, getLink, deleteLink, newLinkId, pickRaw } from './files.js';
 import { blendIndex, createDeep, cloneDeep, deepFromImageData, deepToImageData, reconcileDeep, compositeDeep, accToDeep, runDeep, DEEP_OPS } from './deep.js';
 import { decodePNG, encodePNG, pngInfo } from './png.js';
 import { BUILTIN_PRESETS, RATIO_ONLY, allPresets, presetById, presetPixels, centredRatioRect, constrainRect, describePreset, saveCustomPreset, deleteCustomPreset, customPresets } from './presets.js';
@@ -3578,7 +3578,7 @@ const cmds = {
   cropPresetTool: needDoc(() => { setTool('crop'); if (!state.opts.cropPreset) setCropPreset('sq'); else setCropPreset(state.opts.cropPreset); }),
   exportMulti: needDoc(() => openExportVariantsDialog()),
   exportLastPreset: needDoc(() => exportWithLastPreset()), watermarkSettings: () => openWatermarkDialog(),
-  batch: () => openBatchDialog(),
+  batch: () => openBatchDialog(), batchAgain: () => batchAgain(),
   actions: () => openActionsDialog(),
   actionRecord: () => startRecording(),
   actionStop: () => stopRecording(),
@@ -3624,7 +3624,7 @@ function run(name) {
 
 // Ctrl+V is handled by the paste event (so system-clipboard images work too).
 const SHORTCUTS = {
-  'mod+n': 'new', 'mod+o': 'open', 'mod+shift+o': 'place', 'mod+s': 'saveProject', 'mod+shift+s': 'saveAs', 'mod+shift+e': 'export', 'mod+shift+alt+e': 'exportLastPreset',
+  'mod+n': 'new', 'mod+o': 'open', 'mod+shift+o': 'place', 'mod+s': 'saveProject', 'mod+shift+s': 'saveAs', 'mod+shift+e': 'export', 'mod+shift+alt+e': 'exportLastPreset', 'mod+shift+alt+b': 'batchAgain',
   'mod+z': 'undo', 'mod+shift+z': 'redo', 'mod+y': 'redo',
   'mod+a': 'selectAll', 'mod+d': 'deselect', 'mod+shift+i': 'invertSelection', 'mod+alt+d': 'feather', 'shift+f6': 'feather', '\\': 'editMaskToggle', 'delete': 'clear', 'backspace': 'clear', 'alt+backspace': 'fillSelection',
   'mod+c': 'copy', 'mod+shift+c': 'copyMerged', 'mod+x': 'cut',
@@ -3657,7 +3657,7 @@ const shortcutLabel = (cmd, spec) => keyLabel(shortcutFor(cmd, spec));
 
 const MENUS = [
   ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Take photo (camera)…', 'camera'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
-    ['Open recent…', 'openRecent'], '-', ['Save', 'saveProject', 'Ctrl+S'], ['Save as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E'], ['Export with last preset', 'exportLastPreset', 'Ctrl+Alt+Shift+E'], ['Export watermark…', 'watermarkSettings'], ['Export layered PSD…', 'exportPSD'], ['Export multiple sizes…', 'exportMulti'], ['Batch process…', 'batch'], '-',
+    ['Open recent…', 'openRecent'], '-', ['Save', 'saveProject', 'Ctrl+S'], ['Save as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E'], ['Export with last preset', 'exportLastPreset', 'Ctrl+Alt+Shift+E'], ['Export watermark…', 'watermarkSettings'], ['Export layered PSD…', 'exportPSD'], ['Export multiple sizes…', 'exportMulti'], ['Batch process…', 'batch'], ['Batch again (last settings)', 'batchAgain', 'Ctrl+Alt+Shift+B'], '-',
     ['Next document', 'docNext', 'Ctrl+Tab'], ['Previous document', 'docPrev', 'Ctrl+Shift+Tab'], ['Close document', 'docClose', 'Ctrl+Alt+W']]],
   ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
     ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-',
@@ -4720,7 +4720,7 @@ function openShortcutsDialog() {
     [`${K('new', 'Ctrl+N')} / ${K('layerNew', 'Ctrl+Shift+N')}`, 'New canvas / new layer'], [K('freeTransform', 'Ctrl+T'), 'Free transform'],
     [`${K('brightnessContrast', 'Ctrl+B')} / ${K('hueSaturation', 'Ctrl+U')} / ${K('levels', 'Ctrl+L')} / ${K('curves', 'Ctrl+M')} / ${K('invert', 'Ctrl+I')}`, 'Brightness-contrast / Hue-sat / Levels / Curves / Invert'],
     [`${K('zoomFit', 'Ctrl+0')} / ${K('zoom100', 'Ctrl+1')}`, 'Fit / 100%'], ['Enter / Esc', 'Apply / cancel crop'],
-    ['Arrows (Move tool)', platformText('Nudge layer (Shift = 10px)')], [`${K('saveProject', 'Ctrl+S')} / ${K('saveAs', 'Ctrl+Shift+S')} / ${K('export', 'Ctrl+Shift+E')}`, 'Save / save as / export'], [K('exportLastPreset', 'Ctrl+Alt+Shift+E'), 'Export with last preset'],
+    ['Arrows (Move tool)', platformText('Nudge layer (Shift = 10px)')], [`${K('saveProject', 'Ctrl+S')} / ${K('saveAs', 'Ctrl+Shift+S')} / ${K('export', 'Ctrl+Shift+E')}`, 'Save / save as / export'], [K('exportLastPreset', 'Ctrl+Alt+Shift+E'), 'Export with last preset'], [K('batchAgain', 'Ctrl+Alt+Shift+B'), 'Batch again with the last settings and folders'],
   ];
   const note = `<p class="muted" id="kbNote">${IS_MAC ? 'Mac keyboard: ⌘ Command · ⌥ Option · ⇧ Shift.' : 'Ctrl / Alt / Shift keyboard (Windows, Linux, ChromeOS).'} ` +
     `Some combinations are kept by the browser or system (${(IS_MAC ? ['Ctrl+N', 'Ctrl+T', 'Ctrl+W', 'Ctrl+Q', 'Ctrl+M', 'Ctrl+Shift+N'] : ['Ctrl+N', 'Ctrl+T', 'Ctrl+W', 'Ctrl+Shift+N', 'Ctrl+Shift+I', 'Ctrl+Shift+C']).map(keyLabel).join(', ')}), so Tintwork shows an alternate for those. ` +
@@ -6306,6 +6306,7 @@ window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth =
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', async (e) => {
   e.preventDefault(); dragDepth = 0; $('#dropzone').classList.add('hidden');
+  if (batchDrop) { batchDrop(e); return; } // the Batch process dialog is open: dropped files / a folder become its source
   const files = [...(e.dataTransfer?.files || [])];
   // file handles (Chrome / Edge): must be asked for during the drop event; RAW files can then be linked
   const hp = [...(e.dataTransfer?.items || [])].filter((it) => it.kind === 'file').map((it) => (typeof it.getAsFileSystemHandle === 'function' ? it.getAsFileSystemHandle().catch(() => null) : null));
@@ -7783,10 +7784,87 @@ async function collectFolderImages(dir, recurse = false, out = []) {
   }
   return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
+// ---- v1.11: remembered batch folders, Batch again, drop onto the dialog ----
+// The source and output folders are kept as File System Access handles in IndexedDB (the linked-file store), so
+// the next session can reuse them. Browsers forget the permission between sessions unless the user chose
+// "Allow on every visit", so each run asks again (one prompt per folder) from the click that starts it.
+const LAST_BATCH_KEY = 'tintwork.lastBatch', BATCH_WRITTEN_KEY = 'tintwork.lastBatchWritten', BATCH_IN = 'batch:in', BATCH_OUT = 'batch:out';
+let batchDrop = null, lastBatchPrompts = 0;
+async function batchHandle(key) { try { const r = await getLink(key); return r?.handle?.kind === 'directory' ? r.handle : null; } catch { return null; } }
+async function rememberBatchDir(key, h) { if (h?.kind === 'directory') { try { await putLink(key, h, { name: h.name }); } catch { /* handles not storable here */ } } }
+async function forgetBatchDirs() { await deleteLink(BATCH_IN); await deleteLink(BATCH_OUT); }
+/** Permission for a stored handle; counts the prompts it had to show (lastBatchPrompts). */
+async function batchGrant(h, mode) {
+  if (!h.queryPermission) return true;
+  if ((await h.queryPermission({ mode })) === 'granted') return true;
+  lastBatchPrompts++;
+  try { return !!h.requestPermission && (await h.requestPermission({ mode })) === 'granted'; } catch { return false; }
+}
+/** false when a stored folder was deleted, moved or renamed since (its handle no longer resolves). */
+async function dirAlive(h) { try { for await (const k of h.keys()) { void k; break; } return true; } catch { return false; } }
+async function batchDestSink(remembered) {
+  if (remembered) {
+    if (!(await batchGrant(remembered, 'readwrite'))) toast(`No permission to write to “${remembered.name}”. Choose the output folder.`, 4000);
+    else if (!(await dirAlive(remembered))) { toast(`The output folder “${remembered.name}” is gone (moved, renamed or deleted). Choose it again.`, 5000); await deleteLink(BATCH_OUT); }
+    else return dirSink(remembered);
+  }
+  if ('showDirectoryPicker' in window) {
+    try { const dir = await window.showDirectoryPicker({ id: 'tintwork-export', mode: 'readwrite' }); await rememberBatchDir(BATCH_OUT, dir); return dirSink(dir); }
+    catch (err) { if (err?.name === 'AbortError') return null; toast(`Folder access unavailable (${err.message}); downloading a zip instead.`, 4000); }
+  }
+  return zipSink('tintwork-batch.zip');
+}
+function batchWritten() { try { const v = JSON.parse(localStorage.getItem(BATCH_WRITTEN_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } }
+/** Sources from a folder, minus the files the last batch wrote there when the output folder is the same folder. */
+async function batchSourcesFrom(dir, dest) {
+  let list = await collectFolderImages(dir);
+  let same = false; try { same = !!dest && (await dir.isSameEntry?.(dest)); } catch { /* ignore */ }
+  if (same) { const w = new Set(batchWritten()); list = list.filter((h) => !w.has(h.name)); }
+  return list;
+}
+async function executeBatch(sources, opts, destHandle) {
+  const sink = await batchDestSink(destHandle); if (!sink) { status('Batch cancelled.'); return null; }
+  const ui = progressUI('Batch');
+  try {
+    const r = await runBatch(sources, { ...opts, sink, signal: ui.signal, onProgress: (i, n, t) => ui.update(i, n, t) });
+    await sink.finish(r.cancelled);
+    try { localStorage.setItem(BATCH_WRITTEN_KEY, JSON.stringify(r.files.map((f) => f.name).slice(0, 5000))); } catch { /* ignore */ }
+    const msg = `Batch ${r.cancelled ? 'cancelled' : 'finished'}: ${r.done} of ${sources.length} images, ${r.files.length} files written to ${sink.label}${r.failed.length ? `; ${r.failed.length} failed (${r.failed[0].name}: ${r.failed[0].error})` : ''}.`;
+    status(msg); toast(msg, 6000);
+    return r;
+  } catch (err) { toast(`Batch failed: ${err.message}`, 5000); return null; } finally { ui.done(); }
+}
+/** Saved dialog settings → runBatch options, or a reason string when they no longer work. */
+function batchOptsFrom(last) {
+  if (last.actionId && !allActions().some((a) => a.id === last.actionId)) return 'its action was deleted';
+  if (last.lookId && !allLooks().some((l) => l.id === last.lookId)) return 'its look was deleted';
+  let watermark = null;
+  if (last.wm === 'preset') { const p = allExportPresets().find((x) => x.id === last.presetId); if (!p) return 'its export preset was deleted'; watermark = watermarkOfPreset(p); }
+  else if (last.wm === 'global') watermark = watermarkSettings();
+  if (!Array.isArray(last.variants) || !last.variants.length) return 'it has no outputs';
+  return { actionId: last.actionId || null, lookId: last.lookId || null, intensity: last.intensity || 100, rawSettings: rawSettingsFor(last.raw || ''), variants: last.variants, pattern: last.pattern || '{name}-edited', watermark };
+}
+/** File ▸ Batch again: the last batch's settings on its source folder, into its output folder. */
+async function batchAgain() {
+  let last = null; try { last = JSON.parse(localStorage.getItem(LAST_BATCH_KEY) || 'null'); } catch { /* ignore */ }
+  lastBatchPrompts = 0;
+  const inH = last?.src === 'folder' ? await batchHandle(BATCH_IN) : null;
+  if (!last || !inH) { toast('Batch again repeats a batch run on a folder. Run Batch process on a folder once first.', 5000); openBatchDialog(); return null; }
+  const opts = batchOptsFrom(last);
+  if (typeof opts === 'string') { toast(`Can't repeat the last batch: ${opts}. Opening Batch process.`, 5000); openBatchDialog(); return null; }
+  if (!(await batchGrant(inH, 'read'))) { toast(`No permission to read “${inH.name}”.`, 4000); return null; }
+  if (!(await dirAlive(inH))) { await deleteLink(BATCH_IN); toast(`The source folder “${inH.name}” is gone (moved, renamed or deleted). Choose it again.`, 5000); openBatchDialog(); return null; }
+  const outH = await batchHandle(BATCH_OUT);
+  const sources = await batchSourcesFrom(inH, outH);
+  if (!sources.length) { toast(`No images in “${inH.name}”.`, 4000); return null; }
+  status(`Batch again: ${sources.length} images from “${inH.name}”…`);
+  return executeBatch(sources, opts, outH);
+}
 function openBatchDialog() {
-  const list = savedVariants().slice(0, 1), body = document.createElement('div'); let sources = [];
-  const acts = allActions(), looks = allLooks();
-  body.innerHTML = `<div class="field two"><span>Source</span><span><button type="button" id="bSrcDir" ${'showDirectoryPicker' in window ? '' : 'disabled title="Folder access needs Chrome or Edge"'}>Choose folder…</button> <button type="button" id="bSrcFiles">Choose files…</button> <span id="bSrcInfo" class="muted">No images chosen</span></span></div>` +
+  const list = savedVariants().slice(0, 1), body = document.createElement('div'); let sources = [], srcDir = null, destDir = null;
+  const acts = allActions(), looks = allLooks(), fsa = 'showDirectoryPicker' in window;
+  body.innerHTML = `<div class="field two"><span>Source</span><span><button type="button" id="bSrcDir" ${fsa ? '' : 'disabled title="Folder access needs Chrome or Edge"'}>Choose folder…</button> <button type="button" id="bSrcFiles">Choose files…</button> <span id="bSrcInfo" class="muted">No images chosen (or drop files or a folder here)</span></span></div>` +
+    `<div class="field two"><span>Output folder</span><span><button type="button" id="bDestDir" ${fsa ? '' : 'disabled title="Folder access needs Chrome or Edge; a .zip is downloaded"'}>Choose folder…</button> <span id="bDestInfo" class="muted">${fsa ? 'Asked when you run' : '.zip download'}</span> <button type="button" id="bForget" class="hidden" title="Forget the remembered source and output folders">Forget folders</button></span></div>` +
     formHTML([
       { label: 'Export preset', html: `<select id="bPreset" title="Use a saved export preset for the outputs (format, quality, size, ppi and its watermark)"><option value="">(set the outputs below)</option>${allExportPresets().map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('')}</select>` },
       { label: 'Action', html: `<select id="bAct"><option value="">(none)</option>${acts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('')}</select>` },
@@ -7795,7 +7873,7 @@ function openBatchDialog() {
       { label: 'RAW files develop with', html: `<select id="bRaw" title="Develop settings for camera RAW files in the batch">${rawPresetOptions(false)}</select>` },
       { label: 'File names', html: `<input type="text" id="bPattern" value="{name}-edited" />` },
       { label: 'Watermark', html: watermarkFieldHTML('bWm') },
-    ]) + '<p class="muted small">Tokens: {name} {preset} {w} {h} {N} (file number, {N:3} padded) {date}. Output goes to a folder you choose (or a .zip download).</p><b>Outputs</b>';
+    ]) + '<p class="muted small">Tokens: {name} {preset} {w} {h} {N} (file number, {N:3} padded) {date}. Tintwork remembers both folders for next time (File ▸ Batch again repeats the whole run); the browser may ask again for permission to use them.</p><b>Outputs</b>';
   const ve = variantEditor(list); body.append(ve);
   let presetWm = null; // the chosen export preset's own watermark (until the watermark is edited here)
   wireWatermarkField(body, 'bWm', () => {});
@@ -7811,21 +7889,49 @@ function openBatchDialog() {
   bp.addEventListener('change', () => { const p = allExportPresets().find((x) => x.id === bp.value); if (p) useExportPreset(p); try { localStorage.setItem(LAST_BATCH_PRESET_KEY, bp.value); } catch { /* ignore */ } });
   ve.addEventListener('change', () => { if (bp.value) { bp.value = ''; presetWm = null; } }); // editing the outputs by hand leaves the preset
   if (lastBp && allExportPresets().some((x) => x.id === lastBp)) { bp.value = lastBp; useExportPreset(allExportPresets().find((x) => x.id === lastBp)); }
-  const info = () => { body.querySelector('#bSrcInfo').textContent = sources.length ? `${sources.length} image${sources.length === 1 ? '' : 's'}` : 'No images chosen'; };
-  body.querySelector('#bSrcDir').onclick = async () => { try { const dir = await window.showDirectoryPicker({ id: 'tintwork-batch-in', mode: 'read' }); sources = await collectFolderImages(dir); info(); } catch (err) { if (err?.name !== 'AbortError') toast(err.message, 4000); } };
-  body.querySelector('#bSrcFiles').onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = OPEN_ACCEPT; inp.onchange = () => { sources = [...inp.files]; info(); }; inp.click(); };
-  showModal({ title: 'Batch process', body, okLabel: 'Run batch', ok: () => {
-    if (!sources.length) { toast('Choose a folder or some images first.'); return false; }
-    const opts = { actionId: body.querySelector('#bAct').value || null, lookId: body.querySelector('#bLook').value || null, intensity: +body.querySelector('#bInt').value || 100, rawSettings: rawSettingsFor(body.querySelector('#bRaw').value), variants: list, pattern: body.querySelector('#bPattern').value || '{name}-edited', watermark: body.querySelector('#bWm').checked ? (presetWm || watermarkSettings()) : null };
+  const plural = (n) => `${n} image${n === 1 ? '' : 's'}`;
+  const info = (text) => { body.querySelector('#bSrcInfo').textContent = text ?? (sources.length ? `${plural(sources.length)}${srcDir ? ` in “${srcDir.name}”` : ''}` : srcDir ? `“${srcDir.name}” (last folder; the browser may ask to read it again when you run)` : 'No images chosen (or drop files or a folder here)'); };
+  const destInfo = () => { body.querySelector('#bDestInfo').textContent = destDir ? `“${destDir.name}”${destDir === rememberedOut ? ' (last used)' : ''}` : fsa ? 'Asked when you run' : '.zip download'; body.querySelector('#bForget').classList.toggle('hidden', !(destDir || srcDir)); };
+  let rememberedOut = null, picked = false; // picked: the user chose a source in this dialog (don't overwrite it with the remembered one)
+  const useDir = async (dir) => { picked = true; srcDir = dir; sources = await batchSourcesFrom(dir, destDir); info(); destInfo(); await rememberBatchDir(BATCH_IN, dir); };
+  (async () => { // remembered folders
+    const [inH, outH] = await Promise.all([batchHandle(BATCH_IN), batchHandle(BATCH_OUT)]);
+    if (outH && !destDir) { destDir = rememberedOut = outH; destInfo(); }
+    if (inH && !picked) {
+      srcDir = inH; info(); destInfo();
+      try { if ((await inH.queryPermission?.({ mode: 'read' })) === 'granted' && !picked) { if (!(await dirAlive(inH))) { srcDir = null; await deleteLink(BATCH_IN); info(); destInfo(); } else { sources = await batchSourcesFrom(inH, destDir); info(); } } } catch { /* ask when run */ }
+    }
+  })();
+  body.querySelector('#bSrcDir').onclick = async () => { try { await useDir(await window.showDirectoryPicker({ id: 'tintwork-batch-in', mode: 'read' })); } catch (err) { if (err?.name !== 'AbortError') toast(err.message, 4000); } };
+  body.querySelector('#bSrcFiles').onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = OPEN_ACCEPT; inp.onchange = () => { picked = true; srcDir = null; sources = [...inp.files]; info(); destInfo(); }; inp.click(); };
+  body.querySelector('#bDestDir').onclick = async () => { try { const dir = await window.showDirectoryPicker({ id: 'tintwork-export', mode: 'readwrite' }); destDir = dir; rememberedOut = null; destInfo(); await rememberBatchDir(BATCH_OUT, dir); } catch (err) { if (err?.name !== 'AbortError') toast(err.message, 4000); } };
+  body.querySelector('#bForget').onclick = async () => { await forgetBatchDirs(); destDir = rememberedOut = null; if (!picked) { srcDir = null; sources = []; } destInfo(); info(); status('Batch folders forgotten.'); };
+  const isImageName = (n) => /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(n) || isRawName(n) || isPsdName(n);
+  batchDrop = async (e) => { // files or one folder dropped anywhere while this dialog is open
+    const items = [...(e.dataTransfer?.items || [])].filter((it) => it.kind === 'file');
+    const hs = await Promise.all(items.map((it) => (typeof it.getAsFileSystemHandle === 'function' ? it.getAsFileSystemHandle().catch(() => null) : null)));
+    const dir = hs.find((h) => h?.kind === 'directory');
+    if (dir) { await useDir(dir); return; }
+    const files = [...(e.dataTransfer?.files || [])].filter((f) => isImageName(f.name));
+    if (!files.length) { toast('Drop image files or a folder of images.'); return; }
+    picked = true; srcDir = null; sources = files; info(); destInfo();
+  };
+  showModal({ title: 'Batch process', body, okLabel: 'Run batch', onClose: () => { batchDrop = null; }, ok: () => {
+    if (!sources.length && !srcDir) { toast('Choose a folder or some images first.'); return false; }
+    const raw = body.querySelector('#bRaw').value, wmOn = body.querySelector('#bWm').checked;
+    const opts = { actionId: body.querySelector('#bAct').value || null, lookId: body.querySelector('#bLook').value || null, intensity: +body.querySelector('#bInt').value || 100, rawSettings: rawSettingsFor(raw), variants: list, pattern: body.querySelector('#bPattern').value || '{name}-edited', watermark: wmOn ? (presetWm || watermarkSettings()) : null };
+    try { localStorage.setItem(LAST_BATCH_KEY, JSON.stringify({ src: srcDir ? 'folder' : 'files', presetId: bp.value || null, actionId: opts.actionId, lookId: opts.lookId, intensity: opts.intensity, raw, variants: list.map((v) => ({ ...v })), pattern: opts.pattern, wm: !wmOn ? 'none' : presetWm ? 'preset' : 'global' })); } catch { /* ignore */ }
+    lastBatchPrompts = 0;
+    const dir = srcDir, dest = destDir;
     (async () => {
-      const sink = await chooseSink('tintwork-batch.zip'); if (!sink) { status('Batch cancelled.'); return; }
-      const ui = progressUI('Batch'); const src = sources;
-      try {
-        const r = await runBatch(src, { ...opts, sink, signal: ui.signal, onProgress: (i, n, t) => ui.update(i, n, t) });
-        await sink.finish(r.cancelled);
-        const msg = `Batch ${r.cancelled ? 'cancelled' : 'finished'}: ${r.done} of ${src.length} images, ${r.files.length} files written to ${sink.label}${r.failed.length ? `; ${r.failed.length} failed (${r.failed[0].name}: ${r.failed[0].error})` : ''}.`;
-        status(msg); toast(msg, 6000);
-      } catch (err) { toast(`Batch failed: ${err.message}`, 5000); } finally { ui.done(); }
+      let src = sources;
+      if (dir) { // a remembered folder needs its permission again in a new session; this click allows the prompt
+        if (!(await batchGrant(dir, 'read'))) { toast(`No permission to read “${dir.name}”.`, 4000); return; }
+        if (!src.length && !(await dirAlive(dir))) { await deleteLink(BATCH_IN); toast(`The source folder “${dir.name}” is gone (moved, renamed or deleted). Choose it again.`, 5000); return; }
+        if (!src.length) src = await batchSourcesFrom(dir, dest);
+        if (!src.length) { toast(`No images in “${dir.name}”.`, 4000); return; }
+      }
+      await executeBatch(src, opts, dest);
     })();
   } });
 }
@@ -7877,6 +7983,7 @@ window.tintwork = {
   autoUprightCmd, get lastUpright() { return lastUpright; }, cropEmptyEdges, fillEmptyEdges, innerOpaqueRect, segment: seg,
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
   setProof, get proofMode() { return proofMode; }, PROOF_PAPERS,
+  batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
   renderVariant, exportVariants, runBatch, memorySink, zipSink, formatName, variantSize, withDpi, autoOpts, saveAutoOpts, openAutoOptionsDialog,
   // v0.8
