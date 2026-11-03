@@ -10,3 +10,6 @@ test-assets/.v13/
 test-assets/.v14/
 test-assets/.v15/
 test-assets/.v16/
+# workflow-bench screenshots (regenerated on every run; the 1–2 kept per release are committed explicitly)
+screenshots/17x-wf-*.png
+screenshots/18x-wf-*.png

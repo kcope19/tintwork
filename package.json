@@ -33,7 +33,8 @@
     "audit:safety": "node scripts/safety-audit.mjs",
     "test:v18": "node scripts/v18-test.mjs",
     "test:v19": "node scripts/v19-test.mjs",
-    "test:v110": "node scripts/v110-test.mjs"
+    "test:v110": "node scripts/v110-test.mjs",
+    "test:v111": "node scripts/v111-test.mjs"
   },
   "license": "MIT",
   "type": "module",

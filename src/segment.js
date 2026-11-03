@@ -540,6 +540,10 @@ export function estimateUpright(lines, W, H, { tolDeg = 1.2 } = {}) {
     const sx = l.x2 - l.x1, sy = l.y2 - l.y1, c = Math.abs(dx * sx + dy * sy) / (Math.hypot(dx, dy) * Math.hypot(sx, sy) || 1);
     return Math.acos(Math.min(1, c)) * 180 / Math.PI;
   };
+  // v1.11: a line votes with its length capped at 0.4 of the frame's long side, so the one or two long edges of a single
+  // leaning object (a library ladder, a lamp post) cannot outvote many shorter edges of the building. Lines shorter
+  // than the cap vote exactly as before (jobs 16/17/22/26 unchanged).
+  const cap = 0.4 * Math.max(W, H), wt = (l) => Math.min(l.len, cap);
   let best = null;
   for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
     const a = hom(lines[i]), b = hom(lines[j]);
@@ -548,13 +552,13 @@ export function estimateUpright(lines, W, H, { tolDeg = 1.2 } = {}) {
     // a vanishing point between the lines' ends inside the frame is not a vertical
     if (Math.abs(v[2]) > 1e-9) { const y = v[1] / v[2], x = v[0] / v[2]; if (y > -0.05 * H && y < 1.05 * H && x > -0.05 * W && x < 1.05 * W) continue; }
     let score = 0; const inl = [];
-    lines.forEach((l, k) => { if (angErr(l, v) <= tolDeg) { score += l.len; inl.push(k); } });
+    lines.forEach((l, k) => { if (angErr(l, v) <= tolDeg) { score += wt(l); inl.push(k); } });
     if (!best || score > best.score) best = { score, v, inl };
   }
   if (!best || best.inl.length < 2) return { mode: 'none', inliers: [], lines };
   // least-squares refinement: v = smallest eigenvector of Σ w l lᵀ (normalised lines)
   const M = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-  for (const k of best.inl) { const l = hom(lines[k]), n = Math.hypot(l[0], l[1]), w = lines[k].len, u = l.map((t) => t / n); for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) M[a * 3 + b] += w * u[a] * u[b]; }
+  for (const k of best.inl) { const l = hom(lines[k]), n = Math.hypot(l[0], l[1]), w = wt(lines[k]), u = l.map((t) => t / n); for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) M[a * 3 + b] += w * u[a] * u[b]; }
   let v = smallestEigvec3(M); if (v[1] < 0 || (v[1] === 0 && v[0] < 0)) v = v.map((t) => -t);
   const inl = best.inl.filter((k) => angErr(lines[k], v) <= tolDeg * 1.5);
   // distance of the VP from the image centre, in image heights; very far = parallel lines = just a tilt

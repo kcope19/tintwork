@@ -2750,6 +2750,7 @@ function autoUprightCmd(req = 'auto') {
   }
   lastUpright = { req, mode: next ? used : 'none', vkind: u.mode, vp: u.vp ? toDoc(u.vp) : null, angle: u.angle ?? null, lines: (u.inliers || []).length, found: lines.length,
     hkind: uh.mode, hweak: !!uh.weak, hvp: uh.vp ? toDoc(uh.vp) : null, hangle: uh.angle ?? null, hlines: uh.mode === 'none' ? 0 : (uh.inliers || []).length, hfound: hl.length, ms: Math.round(performance.now() - t0) };
+  { const D = (l) => [...toDoc([l.x1, l.y1]), ...toDoc([l.x2, l.y2])].map((t) => Math.round(t * 10) / 10); lastUpright.debug = { v: lines.map(D), vin: [...(u.inliers || [])], h: hl.map(D), hin: uh.mode === 'none' ? [] : [...(uh.inliers || [])] }; } // detected lines (document pixels), for diagnosis
   if (used === 'vertical' && next) lastUpright.mode = u.mode; // 'keystone' | 'rotate' (v1.8 values)
   if (!next || !mesh.perspectiveMesh(x.w, x.h, next) || !mxfBounds(mxfMesh({ ...x, pts: next }))) {
     lastUpright.mode = 'none';

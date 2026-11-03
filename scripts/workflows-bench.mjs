@@ -563,6 +563,9 @@ const JOBS = [
   { id: 28, name: '10R holdout: Upright Full on a second real photo with converging horizontals (shop front, CC0; verticals and horizontals measured)', async run(R, page) {
     return realUpright(R, page, 'brick.jpg', [[[1020, 603], [1020, 799]], [[1067, 625], [1069, 794]], [[1030, 572], [1274, 594]], [[1072, 615], [1189, 623]], [[1035, 817], [1274, 823]]], 'full');
   }, paid: { 'Lightroom Classic (Upright Full)': 2, 'Photoshop (Camera Raw filter Upright Full)': 4, 'Affinity Photo (Perspective, both directions)': 6, 'Pixelmator Pro (Perspective)': 5, 'Photopea (Perspective transform)': 6 } },
+  { id: 31, name: '11R holdout: Upright Full on a third real photo (office facade with diagonal fins, CC0; seeds fixed before the first run, never tuned on)', async run(R, page) {
+    return realUpright(R, page, 'geneva.jpg', [[[360, 300], [359, 829]], [[1023, 152], [1028, 783]], [[1131, 38], [1139, 829]], [[1030, 367], [1274, 369]], [[1030, 632], [1274, 634]]], 'full');
+  }, paid: { 'Lightroom Classic (Upright Full)': 2, 'Photoshop (Camera Raw filter Upright Full)': 4, 'Affinity Photo (Perspective, both directions)': 6, 'Pixelmator Pro (Perspective)': 5, 'Photopea (Perspective transform)': 6 } },
   { id: 29, name: 'Next session: repeat the job 25 batch with File ▸ Batch again (folders and preset remembered; first run is setup, not counted)', async run(R, page, A) {
     return batchRepeat(R, page, A, 'again');
   }, paid: { 'Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)': 4, 'Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)': 6, 'Affinity Photo (Batch Job, saved macro)': 9, 'Pixelmator Pro (run saved Shortcut)': 3, 'Photopea': 'no batch' } },
