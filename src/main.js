@@ -2694,6 +2694,11 @@ function autoUprightCmd(req = 'auto') {
       const far = !uh.vp || Math.hypot(uh.vp[0] - img.width / 2, uh.vp[1] - img.height / 2) >= 1.5 * S;
       if (uh.inliers.length < 3 || len < 0.5 * img.width || !far) uh = { ...uh, mode: 'none', weak: true };
     }
+    // a lone horizon (sea, plain) is one long line: for a rotation that is enough when it spans 60 % of the width
+    if (uh.mode === 'none' && req !== 'full') {
+      let b = -1; hl.forEach((l, i) => { if (l.len >= 0.6 * img.width && (b < 0 || l.len > hl[b].len)) b = i; });
+      if (b >= 0) { const l = hl[b], d = l.x2 >= l.x1 ? [l.x2 - l.x1, l.y2 - l.y1] : [l.x1 - l.x2, l.y1 - l.y2]; uh = { mode: 'single', inliers: [b], vh: [d[0], d[1], 0], vp: null }; }
+    }
   };
   if (wantH || (req === 'auto' && u.mode === 'none')) horiz();
   let next = null, used = req, msg = '';
@@ -2701,7 +2706,7 @@ function autoUprightCmd(req = 'auto') {
     if (uh.mode === 'none') return null;
     const a = seg.directionAt(toDocH(uh.vh), cx, cy, 'h');
     if (Math.abs(a) < 0.05 || Math.abs(a) > 15) return null; // > 15° is perspective, not a tilted camera
-    msg = `${uh.inliers.length} horizontal lines levelled by rotating ${Math.round(-a * 10) / 10}°`; return rotateBy(-a);
+    msg = `${uh.inliers.length} horizontal line${uh.inliers.length === 1 ? '' : 's'} levelled by rotating ${Math.round(-a * 10) / 10}°`; return rotateBy(-a);
   };
   if (req === 'vertical' || (req === 'auto' && u.mode !== 'none')) {
     used = 'vertical';
@@ -2722,12 +2727,15 @@ function autoUprightCmd(req = 'auto') {
       const sideL = (i) => Math.hypot(q[(i + 1) % 4][0] - q[i][0], q[(i + 1) % 4][1] - q[i][1]);
       const ang = (i) => { const p = q[(i + 3) % 4], c = q[i], n = q[(i + 1) % 4], a1 = Math.atan2(p[1] - c[1], p[0] - c[0]), a2 = Math.atan2(n[1] - c[1], n[0] - c[0]); let d = Math.abs(a1 - a2) * 180 / Math.PI; if (d > 180) d = 360 - d; return d; };
       if (vh && [0, 1, 2, 3].some((i) => ang(i) < 50 || ang(i) > 130)) return null; // (verticals alone: as trusted as Vertical)
-      if (vh && Math.max(sideL(0), sideL(2)) > 2.5 * Math.min(sideL(0), sideL(2)) || Math.max(sideL(1), sideL(3)) > 2.5 * Math.min(sideL(1), sideL(3))) return null;
+      if (vh && (Math.max(sideL(0), sideL(2)) > 2.5 * Math.min(sideL(0), sideL(2)) || Math.max(sideL(1), sideL(3)) > 2.5 * Math.min(sideL(1), sideL(3)))) return null;
       return q;
     };
     let hUsed = uh.mode !== 'none';
     next = hUsed ? tryH(toDocH(uh.vh)) : null;
-    if (!next && vv) { if (hUsed) uh = { ...uh, mode: 'none', weak: true }; hUsed = false; next = tryH(null); }
+    if (!next && vv) { // horizontals unusable: exactly what Vertical does, so the two modes never disagree on the same verticals
+      if (hUsed) uh = { ...uh, mode: 'none', weak: true }; hUsed = false;
+      next = u.mode === 'keystone' ? uprightFromGuides(x.pts, seg.guidesFromVP(u.vp, img.width, img.height).map((g) => g.map(toDoc))) : rotateBy(u.angle);
+    }
     msg = hUsed ? `${vv ? `${u.inliers.length} vertical and ` : ''}${uh.inliers.length} horizontal lines straightened${vv ? '' : ' (no vertical lines found)'}`
       : `${u.inliers.length} vertical lines straightened (${uh.weak ? 'the horizontal lines were too few or too uncertain to use' : 'no horizontal lines found'})`;
   }

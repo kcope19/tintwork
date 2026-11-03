@@ -478,6 +478,48 @@ const JOBS = [
     const outs = await page.evaluate(async () => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-out'); const r = []; for await (const [n, h] of dir.entries()) { const f = await h.getFile(); const b = await createImageBitmap(f); const c = new OffscreenCanvas(b.width, b.height), x = c.getContext('2d'); x.drawImage(b, 0, 0); const px = (rx, ry, rw, rh) => { const d = x.getImageData(rx, ry, rw, rh).data; let m = 0; for (let i = 0; i < d.length; i += 4) m = Math.max(m, d[i] + d[i + 1] + d[i + 2]); return m / 3; }; r.push([n, b.width, b.height, px(b.width - 500, b.height - 120, 480, 100) - px(20, 20, 480, 100)]); } return r; });
     return { ok: outs.length === 6 && outs.every(([, w, h, br]) => Math.max(w, h) === 2048 && br > 30), detail: `${outs.length} files, ${outs[0]?.[1]}×${outs[0]?.[2]}, watermark brightness +${Math.round(Math.min(...outs.map((o) => o[3])))} in the corner (min over files)` };
   }, paid: { 'Lightroom Classic (Export, watermark)': 8, 'Photoshop (Image Processor + action with text)': 12, 'Affinity Photo (Batch Job, macro)': 12, 'Pixelmator Pro (Shortcuts)': 10, 'Photopea': 'no batch' } },
+  { id: 22, name: '10R: Upright Full on the church photo (verticals + horizontals)', async run(R, page) {
+    return realUpright(R, page, 'c4.jpg', [[[124, 446], [15, 1774]], [[543, 277], [541, 547]], [[935, 492], [968, 996]]], 'full');
+  }, paid: { 'Lightroom Classic (Upright Full)': 2, 'Photoshop (Camera Raw filter Upright Full)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
+
+  { id: 23, name: 'Level a tilted sea horizon (3°) with Upright: level', async run(R, page) {
+    // synthetic seascape: sky gradient over darker sea, horizon tilted 3°, with sensor-like noise
+    const png = await page.evaluate(async () => { const W = 1600, H = 1000, c = new OffscreenCanvas(W, H), x = c.getContext('2d'), im = x.createImageData(W, H), tn = Math.tan(3 * Math.PI / 180);
+      let s = 7; const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * 12;
+      for (let y = 0; y < H; y++) for (let xx = 0; xx < W; xx++) { const hy = 500 + (xx - 800) * tn, sea = y > hy, i = (y * W + xx) * 4, n = rnd(); im.data[i] = (sea ? 30 : 150 + y * 0.08) + n; im.data[i + 1] = (sea ? 70 : 190 + y * 0.04) + n; im.data[i + 2] = (sea ? 110 : 235) + n; im.data[i + 3] = 255; }
+      x.putImageData(im, 0, 0); const buf = new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer()); let b = ''; for (let i = 0; i < buf.length; i += 0x8000) b += String.fromCharCode(...buf.subarray(i, i + 0x8000)); return btoa(b); });
+    await ctrlO(R, page, 'sea.png', Buffer.from(png, 'base64'));
+    if (!(await page.locator('#menus .menu-items button[data-cmd="uprightLevel"]').count())) { R.note('no Level upright in this version'); return { ok: false, detail: 'no Level mode' }; }
+    await R.menu('Image', 'Upright: level'); await R.key('Enter'); await R.settle();
+    const m = await page.evaluate(async () => { const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), W = c.width, H = c.height, d = c.getContext('2d').getImageData(0, 0, W, H).data;
+      // horizon row at a column: the y where blue drops most (sub-pixel by threshold crossing on a 9-px column average)
+      const row = (x0) => { const b = (y) => { let s = 0, n = 0; for (let x = x0 - 4; x <= x0 + 4; x++) { const i = (y * W + x) * 4; if (d[i + 3] > 250) { s += d[i + 2]; n++; } } return n ? s / n : null; };
+        for (let y = 50; y < H - 50; y++) { const a = b(y), c2 = b(y + 1); if (a != null && c2 != null && a >= 172 && c2 < 172) return y + (a - 172) / (a - c2); } return null; };
+      const xa = Math.round(W * 0.2), xb = Math.round(W * 0.8), ya = row(xa), yb = row(xb);
+      return { deg: ya != null && yb != null ? Math.atan2(yb - ya, xb - xa) * 180 / Math.PI : null, mode: t.lastUpright?.mode, W, H };
+    });
+    return { ok: m.deg != null && Math.abs(m.deg) < 0.2, detail: `horizon tilt 3.00° → ${m.deg?.toFixed(2)}° (${m.mode}, ${m.W}×${m.H})` };
+  }, paid: { 'Lightroom Classic (Upright Level)': 2, 'Photoshop (Camera Raw filter Upright Level / crop auto-straighten)': 3, 'Affinity Photo (Straighten)': 3, 'Pixelmator Pro (Auto straighten)': 2, 'Photopea (ruler + rotate)': 4 } },
+
+  { id: 24, name: 'Batch-resize 6 photos to 2048 px JPEG with a logo watermark', async run(R, page, A) {
+    await page.evaluate(async (files) => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-in', { create: true }); for (let i = 0; i < files.length; i++) { const w = await (await dir.getFileHandle(`photo-${i + 1}.jpg`, { create: true })).createWritable(); await w.write(new Uint8Array(files[i])); await w.close(); } }, A.batch);
+    const logo = await page.evaluate(async () => { const c = new OffscreenCanvas(400, 200), x = c.getContext('2d'); x.fillStyle = '#ff00ff'; x.fillRect(0, 0, 400, 200); x.fillStyle = '#fff'; x.fillRect(150, 50, 100, 100); const buf = new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer()); let b = ''; for (let i = 0; i < buf.length; i++) b += String.fromCharCode(buf[i]); return btoa(b); });
+    await R.menu('File', 'Batch process'); await page.waitForSelector('#modal:not(.hidden) #bSrcDir');
+    await R.click('#bSrcDir', 'Choose folder…'); R.step('pick', 'folder in the folder dialog');
+    await page.waitForFunction(() => /6 image/.test(document.querySelector('#bSrcInfo')?.textContent || ''), null, { timeout: 10000 });
+    await R.select('#modalBody tr[data-i="0"] select[data-f="mode"]', 'long', 'Size mode'); await page.waitForTimeout(100);
+    await R.type('#modalBody tr[data-i="0"] input[data-f="long"]', 2048, 'Long edge');
+    await R.select('#modalBody tr[data-i="0"] select[data-f="type"]', 'image/jpeg', 'Format');
+    await R.click('[data-wmedit="bWm"]', 'Watermark…');
+    if (!(await page.locator('.wm-panel [data-wm=kind]').count())) { R.note('no logo watermark in this version'); return { ok: false, detail: 'text watermark only' }; }
+    await R.select('.wm-panel [data-wm=kind]', 'image', 'Type: logo image');
+    const fc = page.waitForEvent('filechooser', { timeout: 5000 }); await R.click('.wm-panel [data-wmpick]', 'Choose image…'); (await fc).setFiles({ name: 'logo.png', mimeType: 'image/png', buffer: Buffer.from(logo, 'base64') }); R.step('pick', 'logo file');
+    await page.waitForTimeout(300); await R.click('.wm-panel [data-wmdone]', 'Done (ticks “Add watermark”)');
+    await R.ok(); R.step('pick', 'output folder in the folder dialog');
+    await page.waitForFunction(() => /Batch finished/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
+    const outs = await page.evaluate(async () => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-out'); const r = []; for await (const [n, h] of dir.entries()) { const f = await h.getFile(); const b = await createImageBitmap(f); const c = new OffscreenCanvas(b.width, b.height), x = c.getContext('2d'); x.drawImage(b, 0, 0); const f0 = x.getImageData(10, 10, 1, 1).data; /* the photo's own flat colour */ const red = (rx, ry, rw, rh) => { const d = x.getImageData(rx, ry, rw, rh).data; let k = 0; for (let i = 0; i < d.length; i += 4) if ((d[i] + d[i + 2]) / 2 - d[i + 1] > 110 && Math.abs(d[i] - d[i + 2]) < 60 && Math.abs(d[i] - f0[0]) + Math.abs(d[i + 1] - f0[1]) + Math.abs(d[i + 2] - f0[2]) > 80) k++; return k; }; r.push([n, b.width, b.height, red(Math.round(b.width * 0.6), Math.round(b.height * 0.6), Math.round(b.width * 0.4), Math.round(b.height * 0.4)), red(0, 0, Math.round(b.width * 0.4), Math.round(b.height * 0.4))]); } return r; });
+    return { ok: outs.length === 6 && outs.every(([, w, h, br, tl]) => Math.max(w, h) === 2048 && br > 5000 && tl < br * 0.05), detail: `${outs.length} files, ${outs[0]?.[1]}×${outs[0]?.[2]}, magenta logo pixels in the bottom-right ${Math.min(...outs.map((o) => o[3]))}+ per file (top-left ${Math.max(...outs.map((o) => o[4]))})` };
+  }, paid: { 'Lightroom Classic (Export, graphic watermark)': 9, 'Photoshop (Image Processor + action placing the logo)': 13, 'Affinity Photo (Batch Job, macro)': 13, 'Pixelmator Pro (Shortcuts)': 11, 'Photopea': 'no batch' } },
 ];
 /** IoU of the current selection with the published cut-out's alpha, inside the cut-out's frame (it touches 3 sides). */
 const GT_RECT = { x: 300, y: 150, w: 1056, h: 1408 };
@@ -496,6 +538,9 @@ async function realUpright(R, page, file, seeds, how) {
   if (how === 'auto') {
     if (!(await page.locator('#menus .menu-items button[data-cmd="autoUpright"]').count())) { R.note('no Auto upright in this version'); return { ok: false, detail: 'no auto upright' }; }
     await R.menu('Image', 'Auto upright');
+  } else if (how === 'full') {
+    if (!(await page.locator('#menus .menu-items button[data-cmd="uprightFull"]').count())) { R.note('no Full upright in this version'); return { ok: false, detail: 'no Full mode' }; }
+    await R.menu('Image', 'Upright: full');
   } else {
     await R.menu('Image', 'Guided upright'); await page.waitForFunction(() => window.tintwork.mxf);
     for (const [a, b] of [seeds[0], seeds[seeds.length - 1]]) await R.drag([{ x: a[0], y: a[1] }, { x: b[0], y: b[1] }], 'guide along a vertical edge');
@@ -506,8 +551,11 @@ async function realUpright(R, page, file, seeds, how) {
   if (!lu?.H) return { ok: false, detail: `no correction (${lu?.mode || 'none'}); edges before ${before.map((e) => e.deg?.toFixed(2)).join('° / ')}°` };
   const mapped = []; for (const sd of seeds) mapped.push(await mapUpright(page, sd));
   const after = await edgeAngle(page, mapped), d = await page.evaluate(() => [window.tintwork.doc.width, window.tintwork.doc.height]);
-  const ok = after.every((e) => e.deg != null && Math.abs(e.deg) < 0.5 && e.n >= 0.5 * e.of);
-  return { ok, detail: `edge tilt ${before.map((e) => `${e.deg?.toFixed(2)}°`).join(' / ')} → ${after.map((e) => `${e.deg?.toFixed(2)}°`).join(' / ')} (edge support ${after.map((e) => `${e.n}/${e.of}`).join(', ')}) (${lu.lines ?? 2} lines${lu.crop ? `, cropped to ${d[0]}×${d[1]}` : ''})` };
+  // Full (v1.9) also corrects the horizontals, so its crop can push an edge near the border out of the frame: that edge
+  // is reported as cropped away and the job needs every edge still in the frame within 0.5° (and at least 2 of them)
+  const inFrame = how === 'full' ? after.filter((e) => e.of) : after, cut = after.length - inFrame.length;
+  const ok = inFrame.length >= 2 && inFrame.every((e) => e.deg != null && Math.abs(e.deg) < 0.5 && e.n >= 0.5 * e.of);
+  return { ok, detail: `edge tilt ${before.map((e) => `${e.deg?.toFixed(2)}°`).join(' / ')} → ${after.map((e) => `${e.deg?.toFixed(2)}°`).join(' / ')} (edge support ${after.map((e) => `${e.n}/${e.of}`).join(', ')}) (${lu.lines ?? 2} lines${lu.hlines ? ` + ${lu.hlines} horizontal` : ''}${lu.crop ? `, cropped to ${d[0]}×${d[1]}` : ''}${cut ? `; ${cut} edge cropped out of the frame` : ''})` };
 }
 /** Watermark present in the exported file's bottom-right corner and nowhere else (compared with a render without it). */
 async function watermarkCheck(page, name) {
