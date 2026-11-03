@@ -219,6 +219,26 @@ if (hasModes) {
   await T(() => window.tintwork.run('mode8'));
 }
 
+// --- 4. spot healing on a real portrait (regression guard for quality and speed; v1.9 changed the benchmark, not the healer)
+{
+  const spot = await T(async (b64) => { const u8 = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)); const bm = await createImageBitmap(new Blob([u8])); const c = new OffscreenCanvas(bm.width, bm.height), x = c.getContext('2d'); x.drawImage(bm, 0, 0);
+    window.__heal = { orig: x.getImageData(0, 0, bm.width, bm.height) };
+    const g = x.createRadialGradient(590, 640, 0, 590, 640, 8); g.addColorStop(0, 'rgba(70,35,25,0.95)'); g.addColorStop(0.7, 'rgba(85,45,30,0.85)'); g.addColorStop(1, 'rgba(90,50,35,0)'); x.fillStyle = g; x.beginPath(); x.arc(590, 640, 8, 0, 7); x.fill();
+    window.__heal.spot = x.getImageData(0, 0, bm.width, bm.height);
+    const buf = new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer()); let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000)); return btoa(s); }, REAL('portrait-usda.jpg').toString('base64'));
+  await open('portrait-usda.png', Buffer.from(spot, 'base64'));
+  await page.click('#toolbar button[data-tool="spot"]');
+  const t0 = Date.now(); await drag({ x: 585, y: 640 }, { x: 595, y: 640 }); await T(async () => { await window.tintwork.idle?.(); await window.tintwork.compositeSettled?.(); }); const ms = Date.now() - t0;
+  const m = await T(async () => {
+    const t = window.tintwork, c = t.compositeCanvas(), now = c.getContext('2d').getImageData(0, 0, c.width, c.height), { orig, spot } = window.__heal, W = orig.width, box = { x: 578, y: 628, w: 24, h: 24 };
+    const diff = (A) => { let s = 0; for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) { const i = (y * W + x) * 4; s += (Math.abs(A.data[i] - orig.data[i]) + Math.abs(A.data[i + 1] - orig.data[i + 1]) + Math.abs(A.data[i + 2] - orig.data[i + 2])) / 3; } return s / (box.w * box.h); };
+    const hp = (A) => { let s = 0, n = 0; const L = (i) => 0.299 * A.data[i * 4] + 0.587 * A.data[i * 4 + 1] + 0.114 * A.data[i * 4 + 2]; for (let y = box.y + 1; y < box.y + box.h - 1; y++) for (let x = box.x + 1; x < box.x + box.w - 1; x++) { const i = y * W + x, v = L(i) - (L(i - 1) + L(i + 1) + L(i - W) + L(i + W)) / 4; s += v * v; n++; } return Math.sqrt(s / n); };
+    return { removed: 100 - 100 * diff(now) / diff(spot), grain: hp(now) / hp(orig) };
+  });
+  check(m.removed >= 75 && m.grain > 0.5 && m.grain < 2, `spot heal on a real portrait: ${m.removed.toFixed(0)}% of the blemish removed, grain ${m.grain.toFixed(2)}x the photo's (not a smooth smear)`);
+  check(ms < 2000, `stroke + heal settles in ${ms} ms (under 2 s)`);
+}
+
 // --- wording, errors
 const words = await T(() => document.body.innerText + ' ' + [...document.querySelectorAll('[title],[aria-label]')].map((e) => e.title + ' ' + e.getAttribute('aria-label')).join(' '));
 check(!/photoshop|adobe/i.test(words), 'no other editor brand names in the UI');
