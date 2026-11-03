@@ -189,8 +189,11 @@ if (hasAuto) {
   const c6t = await transparentCorners(); check(c6?.mode === 'keystone' && !!c6.H && c6t === 0, `real photo (high-rise looking up): ${c6?.mode} from ${c6?.lines} lines, H ${!!c6?.H}, ${c6t} see-through pixels after the crop`);
   // a 16-bit layer: Fill edges explains instead of failing
   await building(); await T(() => window.tintwork.run('mode16')); await T(() => window.tintwork.run('autoUpright')); await page.locator('#optionsbar [data-cmd="uprightEdges_keep"]').click(); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle());
-  const f16 = await T(() => window.tintwork.fillEmptyEdges());
-  check(f16 === false && /16-bit/.test(await T(() => document.querySelector('#status').textContent)), 'Fill empty edges on a 16-bit layer says why it cannot (no silent change)');
+  // v1.9 changed this: 16-bit layers are now filled (scripts/v19-test.mjs checks the 16-bit result); v1.8 refused with a message.
+  // Here only “no failure, no silent no-op” is checked, then Crop is tested on a fresh 16-bit upright.
+  const f16 = await T(() => window.tintwork.fillEmptyEdges()), st16 = await T(() => document.querySelector('#status').textContent);
+  check(f16 === true || (f16 === false && /16-bit/.test(st16)), `Fill empty edges on a 16-bit layer either fills (v1.9+) or says why it cannot (v1.8): ${f16}`);
+  if (f16 === true) { await building(); await T(() => window.tintwork.run('mode16')); await T(() => window.tintwork.run('autoUpright')); await page.locator('#optionsbar [data-cmd="uprightEdges_keep"]').click(); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle()); }
   await T(() => window.tintwork.run('cropEmptyEdges'));
   check((await transparentCorners()) === 0, 'Crop away empty edges works on a 16-bit document');
 }

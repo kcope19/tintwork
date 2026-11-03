@@ -605,10 +605,10 @@ export function largestInnerRect(alpha, W, H, { ratio = null, thr = 250 } = {}) 
   return res;
 }
 /** Fill pixels with alpha < 255 from their opaque surroundings (push-pull pyramid). Mutates and returns img. */
-export function pushPullFill(img) {
-  const W = img.width, H = img.height, d = img.data;
+export function pushPullFill(img, { max = 255 } = {}) {
+  const W = img.width, H = img.height, d = img.data, M = max, round = max !== 255 || !(d instanceof Uint8ClampedArray);
   const levels = []; let cur = { W, H, c: new Float32Array(W * H * 4) };
-  for (let i = 0; i < W * H; i++) { const a = d[i * 4 + 3] / 255; cur.c[i * 4] = d[i * 4] * a; cur.c[i * 4 + 1] = d[i * 4 + 1] * a; cur.c[i * 4 + 2] = d[i * 4 + 2] * a; cur.c[i * 4 + 3] = a; }
+  for (let i = 0; i < W * H; i++) { const a = d[i * 4 + 3] / M; cur.c[i * 4] = d[i * 4] * a; cur.c[i * 4 + 1] = d[i * 4 + 1] * a; cur.c[i * 4 + 2] = d[i * 4 + 2] * a; cur.c[i * 4 + 3] = a; }
   levels.push(cur);
   while (cur.W > 1 || cur.H > 1) { // pull: premultiplied 2×2 averages
     const w = Math.max(1, Math.ceil(cur.W / 2)), h = Math.max(1, Math.ceil(cur.H / 2)), c = new Float32Array(w * h * 4);
@@ -631,6 +631,11 @@ export function pushPullFill(img) {
     }
   }
   const top = levels[0].c;
-  for (let i = 0; i < W * H; i++) { if (d[i * 4 + 3] === 255) continue; const a = top[i * 4 + 3] || 1; d[i * 4] = top[i * 4] / a; d[i * 4 + 1] = top[i * 4 + 1] / a; d[i * 4 + 2] = top[i * 4 + 2] / a; d[i * 4 + 3] = 255; }
+  for (let i = 0; i < W * H; i++) {
+    if (d[i * 4 + 3] === M) continue; const a = top[i * 4 + 3] || 1;
+    if (round) for (let ch = 0; ch < 3; ch++) d[i * 4 + ch] = Math.min(M, Math.max(0, Math.round(top[i * 4 + ch] / a)));
+    else { d[i * 4] = top[i * 4] / a; d[i * 4 + 1] = top[i * 4 + 1] / a; d[i * 4 + 2] = top[i * 4 + 2] / a; }
+    d[i * 4 + 3] = M;
+  }
   return img;
 }

@@ -2778,7 +2778,7 @@ function cropEmptyEdges({ label = 'Crop empty edges', quiet = false, keepRatio =
 function fillEmptyEdges({ quiet = false } = {}) {
   const d = doc(), l = activeLayer();
   if (!l || l.kind === 'adjust' || l.kind === 'text' || l.kind === 'smart' || isGroup(l)) { if (!quiet) status('Fill empty edges needs a pixel layer.'); return false; }
-  if (useDeep(l)) { status('Fill empty edges works on 8-bit layers; this one is 16-bit (Image ▸ Mode: 8 bits/channel first).'); return false; }
+  if (useDeep(l)) return fillEmptyEdgesDeep(l, { quiet });
   const W = d.width, H = d.height, full = makeCanvas(W, H), fx = full.getContext('2d', { willReadFrequently: true });
   fx.drawImage(l.canvas, l.x, l.y);
   const k = Math.min(1, 1024 / Math.max(W, H)), sw = Math.max(1, Math.round(W * k)), sh = Math.max(1, Math.round(H * k));
@@ -2790,6 +2790,39 @@ function fillEmptyEdges({ quiet = false } = {}) {
   ox.drawImage(sm, 0, 0, W, H); ox.drawImage(full, 0, 0); // the original pixels stay on top; only the gaps take the fill
   l.canvas = out; l.x = 0; l.y = 0; touch(l); compDirty = true;
   commit('Fill empty edges'); if (!quiet) status('Empty edges filled from nearby pixels (best for sky, walls and other plain areas).');
+  updateLayersPanel(); requestRender(); return true;
+}
+/**
+ * 16-bit Fill empty edges (v1.9): the same push-pull fill as the 8-bit path, at 16 bits per channel. The gaps are
+ * filled on a ≤ 1024 px copy (area-averaged in premultiplied 16-bit) and sampled back bilinearly; the original pixels
+ * stay on top (partly transparent edge pixels are blended over the fill, like the 8-bit source-over).
+ */
+function fillEmptyEdgesDeep(l, { quiet = false } = {}) {
+  const d = doc(), W = d.width, H = d.height, src = deepOf(l), full = createDeep(W, H), F = full.data, S = src.data;
+  for (let y = 0; y < src.height; y++) { const Y = y + l.y; if (Y < 0 || Y >= H) continue; for (let x = 0; x < src.width; x++) { const X = x + l.x; if (X < 0 || X >= W) continue; const i = (y * src.width + x) * 4, o = (Y * W + X) * 4; F[o] = S[i]; F[o + 1] = S[i + 1]; F[o + 2] = S[i + 2]; F[o + 3] = S[i + 3]; } }
+  let empty = 0; for (let i = 3; i < F.length; i += 4) if (F[i] < 65535) { empty++; break; }
+  if (!empty) { if (!quiet) status('There are no empty edges to fill.'); return false; }
+  const k = Math.min(1, 1024 / Math.max(W, H)), sw = Math.max(1, Math.round(W * k)), sh = Math.max(1, Math.round(H * k));
+  const acc = new Float64Array(sw * sh * 5);
+  for (let y = 0; y < H; y++) { const sy = Math.min(sh - 1, Math.floor(y * sh / H)); for (let x = 0; x < W; x++) { const sx = Math.min(sw - 1, Math.floor(x * sw / W)), i = (y * W + x) * 4, o = (sy * sw + sx) * 5, a = F[i + 3]; acc[o] += F[i] * a; acc[o + 1] += F[i + 1] * a; acc[o + 2] += F[i + 2] * a; acc[o + 3] += a; acc[o + 4]++; } }
+  const small = { width: sw, height: sh, data: new Uint16Array(sw * sh * 4) };
+  for (let j = 0; j < sw * sh; j++) { const o = j * 5, a = acc[o + 3]; if (a > 0) { small.data[j * 4] = Math.round(acc[o] / a); small.data[j * 4 + 1] = Math.round(acc[o + 1] / a); small.data[j * 4 + 2] = Math.round(acc[o + 2] / a); } small.data[j * 4 + 3] = acc[o + 4] ? Math.round(a / acc[o + 4]) : 0; }
+  seg.pushPullFill(small, { max: 65535 });
+  const T = small.data;
+  for (let y = 0; y < H; y++) {
+    const gy = (y + 0.5) * sh / H - 0.5, y0 = Math.max(0, Math.floor(gy)), y1 = Math.min(sh - 1, y0 + 1), fy = Math.min(1, Math.max(0, gy - y0));
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4, a = F[i + 3]; if (a === 65535) continue;
+      const gx = (x + 0.5) * sw / W - 0.5, x0 = Math.max(0, Math.floor(gx)), x1 = Math.min(sw - 1, x0 + 1), fx = Math.min(1, Math.max(0, gx - x0)), t = a / 65535;
+      for (let ch = 0; ch < 3; ch++) {
+        const v = (T[(y0 * sw + x0) * 4 + ch] * (1 - fx) + T[(y0 * sw + x1) * 4 + ch] * fx) * (1 - fy) + (T[(y1 * sw + x0) * 4 + ch] * (1 - fx) + T[(y1 * sw + x1) * 4 + ch] * fx) * fy;
+        F[i + ch] = Math.round(F[i + ch] * t + v * (1 - t));
+      }
+      F[i + 3] = 65535;
+    }
+  }
+  l.x = 0; l.y = 0; setDeep(l, full); compDirty = true;
+  commit('Fill empty edges'); if (!quiet) status('Empty edges filled from nearby pixels at 16 bits (best for sky, walls and other plain areas).');
   updateLayersPanel(); requestRender(); return true;
 }
 /** renderMeshCPU on a 16-bit DImage (same triangles and sampling as the 8-bit path). */

@@ -185,6 +185,40 @@ if (hasModes) {
   }
 }
 
+// --- 3. Fill empty edges on 16-bit layers
+{
+  const r = await T(async () => {
+    const t = window.tintwork; t.newDocument(900, 600, 'white', 'deepfill'); t.run('mode16'); const l = t.activeLayer(), d = t.createDeep(900, 600), D = d.data;
+    // a 16-bit ramp 30000 → 30600 (≈ 2 eight-bit steps across 900 px), with a transparent wedge in the top-left and a soft-edged hole
+    for (let y = 0; y < 600; y++) for (let x = 0; x < 900; x++) { const i = (y * 900 + x) * 4, v = 30000 + Math.round(x * 600 / 899); D[i] = v; D[i + 1] = 20000 + y * 10; D[i + 2] = 40000; D[i + 3] = x + y < 200 ? 0 : x + y < 204 ? 32768 : 65535; }
+    t.setDeep(l, d); t.touch(l); t.commit('Ramp with a hole'); t.renderNow(); await t.compositeSettled?.();
+    const before = new Uint16Array(t.deepOf(l).data);
+    const ok = t.fillEmptyEdges(), after = t.deepOf(t.activeLayer()).data;
+    let alpha0 = 0, changedOpaque = 0, off257 = 0, filled = 0, maxErr = 0;
+    for (let i = 0; i < after.length; i += 4) {
+      if (after[i + 3] !== 65535) alpha0++;
+      if (before[i + 3] === 65535) { if (after[i] !== before[i] || after[i + 1] !== before[i + 1] || after[i + 2] !== before[i + 2]) changedOpaque++; }
+      else if (before[i + 3] === 0) { filled++; if (after[i] % 257 || after[i + 1] % 257) off257++; const x = (i / 4) % 900; maxErr = Math.max(maxErr, Math.abs(after[i] - (30000 + x * 600 / 899))); }
+    }
+    const depth = t.doc.depth; t.undo(); await t.idle?.(); const back = t.deepOf(t.activeLayer()).data[3];
+    return { ok, alpha0, changedOpaque, off257, filled, maxErr: Math.round(maxErr), depth, back, status: document.querySelector('#status').textContent };
+  });
+  check(r.ok === true && r.alpha0 === 0 && r.depth === 16, `16-bit Fill empty edges: ${r.filled} empty pixels filled, ${r.alpha0} left transparent, document still ${r.depth}-bit (${r.status})`);
+  check(r.changedOpaque === 0, `16-bit fill leaves every opaque pixel exactly as it was (${r.changedOpaque} changed)`);
+  check(r.off257 > r.filled * 0.5 && r.maxErr < 400, `the fill is 16-bit, not an 8-bit copy (${r.off257}/${r.filled} filled values between 8-bit steps; red within ${r.maxErr} of the ramp)`);
+  check(r.back === 0, 'Undo brings the empty corner back');
+  // through the UI: 16-bit upright with “Fill edges”
+  const u = await T(async () => {
+    const t = window.tintwork; t.newDocument(1000, 1000, 'white', 'deepup'); const l = t.activeLayer(), x = l.canvas.getContext('2d');
+    x.fillStyle = '#a9c4dc'; x.fillRect(0, 0, 1000, 1000); x.fillStyle = '#5a4a3a'; x.beginPath(); x.moveTo(250, 120); x.lineTo(750, 120); x.lineTo(880, 980); x.lineTo(120, 980); x.closePath(); x.fill();
+    t.touch(l); t.markDirty(); t.run('mode16'); t.renderNow(); await t.compositeSettled?.(); return t.doc.depth;
+  });
+  await T(() => window.tintwork.run('autoUpright')); await page.locator('#optionsbar [data-cmd="uprightEdges_fill"]').click(); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle());
+  const uf = await T(async () => { const t = window.tintwork, l = t.activeLayer(), d = t.deepOf(l); let n = 0; for (let i = 3; i < d.data.length; i += 4) if (d.data[i] < 65535) n++; return { n, w: t.doc.width, h: t.doc.height, filled: t.lastUpright?.filled, depth: t.doc.depth, mode: t.lastUpright?.mode }; });
+  check(u === 16 && uf.filled && uf.n === 0 && uf.depth === 16 && uf.w === 1000, `16-bit upright with “Fill edges”: ${uf.mode}, size kept ${uf.w}×${uf.h}, ${uf.n} transparent 16-bit pixels`);
+  await T(() => window.tintwork.run('mode8'));
+}
+
 // --- wording, errors
 const words = await T(() => document.body.innerText + ' ' + [...document.querySelectorAll('[title],[aria-label]')].map((e) => e.title + ' ' + e.getAttribute('aria-label')).join(' '));
 check(!/photoshop|adobe/i.test(words), 'no other editor brand names in the UI');
