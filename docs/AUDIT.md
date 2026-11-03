@@ -1,0 +1,107 @@
+# Tintwork self-audit (v1.6.0 → v1.7.0)
+
+Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
+Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
+emulation), Lighthouse 12 desktop preset, and reading competitors' public documentation. **Every finding below was
+reproduced 3 times out of 3 on fresh browser profiles** unless it says otherwise. Each regression test in
+`scripts/v17-test.mjs` was also run against a v1.6.0 checkout (`TW_ROOT=<v1.6 checkout> node scripts/v17-test.mjs`):
+it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should pass on both) and passes on v1.7 (35/35).
+
+Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
+[docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## Findings and fixes
+
+Severity: **bug** = wrong result; **friction** = works but costs the user extra steps or trips them up; **site** = hosting/metadata.
+
+| # | Finding (v1.6.0) | Severity | Repro (3/3) | Fix in v1.7.0 | Verified live |
+|---|---|---|---|---|---|
+| F1 | Print exports lose their resolution: an 8×10 in crop at 300 ppi exports as a JPEG with JFIF density 1:1 (unit 0, "no ppi"), so print software assumes 72 ppi (33×42 in). | bug | Open a photo ▸ Crop tool ▸ ratio *8×10 in (300 ppi)* ▸ Enter ▸ Ctrl+Shift+E ▸ JPEG ▸ OK ▸ read bytes 13–17 of the file. Bench job 8. | JPEG JFIF density and PNG pHYs are written from the document ppi; Export dialog gains **Resolution** and **Size** (long edge / width / %). | see "Live verification" |
+| F2 | Converging verticals can't be fixed accurately: dragging the four corners of Edit ▸ Perspective by eye left the facade edges leaning 152 px over the frame. | friction (capability) | Bench job 10 (synthetic building, measured edge x at 15 % and 85 % height). | **Image ▸ Guided upright**: draw two guides along edges that should be vertical/horizontal; corrected after the second guide; Guides button in the Perspective bar. Residual lean ≤ 3 px. | ✔ |
+| F3 | Dialog sliders can't take typed values (no number box): exact values need many arrow presses or a careful drag. | friction | Open Adjust ▸ Brightness/contrast; there is no editable field for the value. | Number box beside every dialog slider; Enter applies the dialog. | ✔ |
+| F4 | Adding a layer mask leaves the foreground/background colours as they were (orange/blue by default), so the first gradient or brush stroke on the mask gives a partial grey, not hide/reveal. | friction | New photo ▸ Layer ▸ Add layer mask ▸ check the colour swatches (still the defaults). | Adding a mask sets black/white (unless both are already greys) and says so in the status bar. Bench job 11: 8 → 7 steps. | ✔ |
+| F5 | Alt does nothing: Windows users can't reach the menus from the keyboard (no Alt/F10, no arrow keys in menus). | friction (accessibility) | Load ▸ press and release Alt ▸ `document.activeElement` is still `body`. `audit:safety`. | Alt alone or F10 focuses the menu bar; ←/→, ↓/Enter/Space, ↑/↓, Esc. ARIA menubar/menu/menuitem roles. Not on Mac (Alt is Option there). | ✔ |
+| F6 | Tab leaves an open dialog: 23 of 30 Tab presses put focus behind the modal. | friction (accessibility) | Open Image ▸ Image size ▸ press Tab 30× and check focus after each press. | Tab and Shift+Tab wrap inside the dialog. | ✔ |
+| F7 | The Window menu advertises Ctrl+Shift+Tab for *Previous document*; Chrome and Edge keep that shortcut for their own tabs, so it never reaches the page. | bug (docs/UI) | Open the Window menu and read the shortcut. `audit:safety`. | Shown as Ctrl+Shift+F6 (which works); the combination is now on the reserved list on every platform. User guide also corrected for Ctrl+N, Ctrl+T, Ctrl+Shift+N and Ctrl+Tab (it listed browser-reserved keys; the menus already showed the alternates). | ✔ |
+| F8 | No Content-Security-Policy. Not exploitable today (no third-party code, no uploads) but nothing would stop an injected script from sending image data out. | site / security | View source; `audit:safety` "CSP limits connections". | CSP meta tag: same-origin only for scripts, connections and workers; `object-src 'none'`, `form-action 'none'`, `base-uri 'self'`. No violations in a full open/edit/export session. | ✔ |
+| F9 | No meta description, social preview image, canonical link; unknown URLs show GitHub's generic 404. Lighthouse SEO 91. | site | `audit:site`. | Description, Open Graph + Twitter card with a 1200×630 preview image, canonical link, branded `404.html`. | ✔ |
+| F10 | White text on primary buttons and highlighted menu items is 3.63:1 (WCAG AA needs 4.5:1). | accessibility | Lighthouse colour-contrast, 3/3 runs. | `--accent-strong` #c94a32 for those fills (4.66:1). | ✔ |
+| F11 | Updates can be missed or mixed: GitHub Pages sends `max-age=600`, and the service worker fetched files through the HTTP cache, so after a deploy a user could get a new `index.html` with 10-minute-old modules, and an open tab never learnt about a new version. | bug (data safety, rare) | `curl -I` shows `cache-control: max-age=600` on every file; v1.6 `sw.js` used plain `fetch(req)` and precached with default cache mode. Simulated deploy in `v17-test` (sw.js CACHE bumped). | The service worker revalidates every request (`cache: 'no-cache'`, precache with `cache: 'reload'`), checks for updates hourly and when the tab comes back after 10 min, and shows a **Reload / Later** bar with both version numbers. Nothing reloads by itself, so unsaved work is never lost to an update. | ✔ |
+| F12 | Exclusion blend in 8-bit is off by up to 1.76/255 from the W3C formula (all other modes ≤ 1.04/255; 16-bit ≤ 0.5/65535). | minor (not fixed) | `npm run audit:math`, 3/3. | Not fixed: invisible in practice; tolerance documented. | n/a |
+
+## Site audit (live)
+
+| | v1.6.0 (before) | v1.7.0 (after) |
+|---|---|---|
+| App ready (median of 3, Chromium) | 307 ms | AFTER_READY |
+| First-load transfer | 497 KB, 117 requests | AFTER_KB |
+| Console errors / failed requests / third-party requests | 0 / 0 / 0 | AFTER_ERR |
+| Service worker, offline reload | installs; offline reload works 3/3 | AFTER_SW |
+| Installable (manifest + icons) | yes | yes |
+| Meta description / OG image / canonical / CSP / 404 page | no / no / no / no / GitHub's | AFTER_META |
+| README + user guide links | 14 checked, 0 broken | AFTER_LINKS |
+| Lighthouse desktop: Performance / Accessibility / Best practices / SEO | 71 / 89 / 100 / 91 | AFTER_LH |
+| WebKit (iPhone 13 emulation) | loads, 0 errors, offline works | AFTER_WK |
+
+Lighthouse items deliberately not changed: `meta-viewport` (`user-scalable=no` is intentional: pinch on the canvas
+zooms the image, not the page, and iOS Safari still allows page zoom from Accessibility settings); `unminified-javascript`,
+`unused-javascript`, `valid-source-maps` (no build step by design); `uses-long-cache-ttl` (GitHub Pages sets the headers).
+Total Blocking Time is dominated by the one-off engine speed probe that runs on the first visit of each version; on this
+box it runs on a software GPU, so the number is pessimistic.
+
+## Image math (`npm run audit:math`, 50/50 pass)
+
+All 11 blend modes at 100 % and 50 % opacity in 8-bit and 16-bit against the W3C Compositing formulas; Levels against a
+reference at all 256 inputs (max error 0.5); invert exact; grayscale uses Rec. 709 weights; 16-bit PNG export has bit
+depth 16 and round-trips exactly (0 of 3072 samples differ). Only finding: F12.
+
+## Data safety, privacy and security (`npm run audit:safety`, live, 3/3)
+
+Pass in both versions: no third-party requests during open/edit/export; every request is a GET (nothing is uploaded);
+no console errors; closing a tab with unsaved changes asks first; after a crash the next visit offers recovery; a full
+disk (quota error) shows a warning instead of silently dropping autosaves; a corrupt 60000×60000 PNG is refused with a
+message and no uncaught errors; Esc closes dialogs; a `:focus-visible` style exists. A file and a layer named
+`<img src=x onerror=…>` were displayed as text (no element created) in the title, tabs, layers panel and menus (1 probe,
+not exhaustive). Failed in v1.6, fixed in v1.7: F5, F6, F7, F8.
+
+## Windows specifics
+
+Chrome and Edge keep Ctrl+N, Ctrl+T, Ctrl+W, Ctrl+Shift+N, Ctrl+Tab, Ctrl+Shift+Tab and a few others; Tintwork binds
+the familiar key and shows a working alternate (Ctrl+Alt+N, Ctrl+Alt+T, Ctrl+Alt+W, Ctrl+Alt+Shift+N, Ctrl+F6,
+Ctrl+Shift+F6) in menus and in the guide. The installed app (Chrome/Edge "Install") opens `.png .jpg .psd .dng`
+and other RAW files from Explorer through `file_handlers`. Alt/F10 menu access is new (F5).
+
+## Code health
+
+- `src/main.js` is 7,366 lines, half of the app's 14.5k lines of top-level source. It works and is covered by 864
+  browser checks, but every new feature lands there; splitting dialogs, the transform/perspective session and the
+  service-worker/update code into modules would make review easier.
+- No silent `catch {}` blocks in `src/`. 64 `innerHTML` assignments in `main.js`; the ones I checked that include
+  user-controlled text (names) go through `escapeHtml` (not all 64 were reviewed), and the CSP now blocks inline handlers as a second line of defence.
+- No build step, no dependencies at runtime; tests are 15 Playwright scripts run by `npm test`.
+- The heavy pixel work has a worker path with a main-thread fallback (`ops.js`); the fallback is exercised by tests but is
+  slower on big images.
+
+## What is still missing, ranked (biggest gap first)
+
+1. **One-click subject / background / sky selection (ML).** Every paid editor and Photopea has it (see the benchmark, job 4). Tintwork has the wand, colour range and edge refine only. Would need an on-device segmentation model (tens of MB, WebGPU).
+2. **Content-aware / generative fill and remove** for real texture (Photoshop Generative Fill, Lightroom Generative Remove).
+3. **Auto upright** (one click, detects lines) — Guided upright now covers the manual case; also a *Constrain crop* option to hide the transparent corners.
+4. **AI denoise and camera-matching profiles for RAW.**
+5. **Print workflow:** soft proofing with ICC printer profiles, output sharpening, CMYK export.
+6. **Saved export presets and an export watermark** (jobs 6, 7, 9 would each drop to 1–3 steps).
+7. Edge-aware local adjustment brushes (Lightroom-style masks with auto-mask).
+
+## What I might be wrong about
+
+- **Competitor step counts come from their documentation, not from using the apps.** A practised user may need fewer steps (shortcuts, presets) or more (dialogs the docs skip). Treat them as ±2.
+- **The test images are synthetic** (flat backgrounds, ideal edges). Jobs 3 and 4 pass partly because of that; on real photos the wand and the healing brush would do worse, and the paid editors' ML tools much better.
+- **Only software rendering (SwiftShader) on this box.** Times and Lighthouse performance/TBT say little about a real Windows PC with a GPU; WebGPU paths were not exercised on real hardware.
+- **Edge was not tested separately.** It is the same Chromium engine, so behaviour should match, but Edge-specific shortcuts or policies could differ.
+- **Alt/F10 were tested in headless Linux Chromium.** Real Windows Chrome/Edge could treat a lone Alt press differently (e.g. if a browser extension or IME grabs it). Not verified on a Windows machine.
+- **iPhone is WebKit emulation, not a device.** Touch gestures, memory limits and the share sheet behave differently on real iOS; the export file itself was not checked on iPhone.
+- **The update bar was tested by simulating a deploy locally** (bumping the service-worker cache name). The live check went from v1.6 to v1.7 once per run; real-world timing depends on when the browser re-checks `sw.js` (GitHub's 10-minute cache).
+- **The injection probe covered a handful of places** where names are shown, not every dialog.
+- **robots.txt** can't be served for a project site under `/tintwork/` (it would have to be at the domain root), so the Lighthouse SEO "robots.txt" result reflects github.io, not Tintwork.
+- **The background-colour swatch (`#bgColor`) is smaller than Lighthouse's 24 px target size** recommendation; left as is because it overlaps the foreground swatch by design. It may still be hard to hit on touch screens.
+- Verdicts in the scorecard are mine. I defaulted to *trails* whenever I could find a documented reason; someone who weighs price, privacy (nothing leaves the browser) or "no install" more heavily would score Tintwork higher.

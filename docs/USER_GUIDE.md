@@ -6,14 +6,14 @@ Tintwork is a layered photo editor that runs entirely in your browser. Nothing i
 
 - **Welcome screen**: open an image, start a blank canvas, pick a size preset (Full HD, square, 4:5, A4, 24 MP) or reopen a recent file. It appears whenever no document is open.
 - **Open** (Ctrl+O): JPEG, PNG (8- and 16-bit), WebP, GIF, BMP, Tintwork projects, layered PSD/PSB files and camera RAW files (DNG, CR2, CR3, NEF, ARW, RAF, ORF, RW2 and more). You can also drag files onto the window or paste an image (Ctrl+V). Opening several files gives each its own tab.
-- **New canvas** (Ctrl+N): width, height and background (white, background color or transparent).
+- **New canvas** (Ctrl+Alt+N; the browser keeps Ctrl+N for a new window): width, height and background (white, background color or transparent).
 - **Recent files** (File ▸ Open recent): Chrome and Edge remember files you opened or saved.
 - **Install**: in Chrome or Edge use the install icon in the address bar to run Tintwork in its own window, offline.
 
 ## The workspace
 
 - **Menu bar** at the top, **tool options bar** under it, **tools** on the left, **panels** on the right (Color, Histogram, Layers, History, Looks), **status bar** at the bottom.
-- **Document tabs** sit above the canvas. Ctrl+Tab and Ctrl+Shift+Tab switch, Ctrl+Alt+W closes.
+- **Document tabs** sit above the canvas. Ctrl+F6 and Ctrl+Shift+F6 switch (Ctrl+Tab and Ctrl+Shift+Tab belong to the browser's own tabs), Ctrl+Alt+W closes.
 - **Navigate**: mouse wheel zooms at the cursor, hold Space or middle-drag to pan, Ctrl+0 fits, Ctrl+1 shows actual pixels.
 - Press **?** for every keyboard shortcut and **F1** for this guide.
 
@@ -43,9 +43,9 @@ Tintwork is a layered photo editor that runs entirely in your browser. Nothing i
 
 ## Layers
 
-- **New layer** Ctrl+Shift+N, **duplicate** Ctrl+J, **merge down** Ctrl+E, **reorder** by dragging or Ctrl+[ and Ctrl+].
+- **New layer** Ctrl+Alt+Shift+N, **duplicate** Ctrl+J, **merge down** Ctrl+E, **reorder** by dragging or Ctrl+[ and Ctrl+].
 - Each layer has visibility, opacity and a blend mode. Double-click a name to rename it.
-- **Masks**: Layer ▸ Add layer mask. Paint black to hide and white to reveal. Press `\` to switch between mask and pixels; Shift+click the mask thumbnail to disable it.
+- **Masks**: Layer ▸ Add layer mask. Paint black to hide and white to reveal; adding a mask switches the colours to black and white for you (X swaps them). Press `\` to switch between mask and pixels; Shift+click the mask thumbnail to disable it.
 - **Groups** (Ctrl+G), **clipping masks** (Ctrl+Alt+G) and **layer styles** (drop shadow, inner shadow, outer and inner glow, stroke, color overlay).
 - **Multi-select**: Ctrl+click and Shift+click layers, then move, transform, align, distribute or group them together.
 - **Live layers** (Filter ▸ Convert to live layer) keep filters editable.
@@ -60,13 +60,15 @@ Tintwork is a layered photo editor that runs entirely in your browser. Nothing i
 ## Filters and transforms
 
 - Filter menu: Gaussian blur, Sharpen, Add noise, Vignette.
-- **Free transform** (Ctrl+T): scale, rotate, skew, perspective and warp grids. Enter applies, Esc cancels.
-- Image menu: rotate, flip, Image size, Canvas size, Resize to preset, Auto straighten.
+- **Free transform** (Ctrl+Alt+T; the browser keeps Ctrl+T for a new tab): scale, rotate, skew, perspective and warp grids. Enter applies, Esc cancels.
+- **Guided upright** (Image menu): drag a line along each of two edges that should be vertical, such as the sides of a building (or horizontal, if you draw them flatter than 45°). The photo is corrected as soon as the second line is drawn; drag the corners to fine-tune, then Enter. Crop afterwards to remove the empty corners. The **Guides** button in the Perspective options bar does the same during Edit ▸ Perspective.
+- Image menu: rotate, flip, Image size, Canvas size, Resize to preset, Auto straighten, Guided upright.
+- **Typed values**: every slider in a dialog has a number box next to it. Click it (or Tab to it), type a value and press Enter to apply the dialog.
 
 ## Saving, exporting and recovery
 
 - **Save** (Ctrl+S) writes a `.tintwork` project that keeps layers, masks, styles, adjustment layers and 16-bit data. **Save as** is Ctrl+Shift+S.
-- **Export** (Ctrl+Shift+E): PNG, JPEG or WebP with a quality setting. **Export multiple sizes** writes several sizes at once into a folder or a ZIP.
+- **Export** (Ctrl+Shift+E): PNG, JPEG or WebP with a quality setting. **Size** exports at the original size, a long edge, a width or a percentage, without changing the document. **Resolution** (ppi) is written into JPEG and PNG files so print shops and layout apps see the print size; it starts at the document's resolution (crop presets such as 8×10 in at 300 ppi set it). **Export multiple sizes** writes several sizes at once into a folder or a ZIP.
 - **Autosave**: every open document is saved in the browser a few seconds after each change. If the browser or the tab closes unexpectedly, the next start offers to **Restore** it.
 - **Actions and batch**: record steps in the Actions menu and replay them on a folder of images with File ▸ Batch process.
 
@@ -147,4 +149,8 @@ To compare the engines on your computer, open Help ▸ Run performance benchmark
 
 ## Accessibility
 
-Every control can be reached with the keyboard (Tab and Shift+Tab); the focused control has a visible outline. Buttons with only an icon have a spoken name. Dialogs open with the first field focused; Enter confirms and Esc cancels.
+Every control can be reached with the keyboard (Tab and Shift+Tab); the focused control has a visible outline. Press **Alt** on its own (or **F10**) to move to the menu bar, then use ←/→ to choose a menu, ↓ or Enter to open it, ↑/↓ to pick a command and Esc to go back. While a dialog is open, Tab stays inside it. Buttons with only an icon have a spoken name. Dialogs open with the first field focused; Enter confirms and Esc cancels.
+
+## Updates
+
+Tintwork works offline after the first visit. When a new version is published, a bar at the top says it is ready: save your work and click **Reload** (or **Later** to keep working; the next start uses the new version).

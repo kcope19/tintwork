@@ -6,6 +6,27 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.7: workflow benchmark, print resolution, guided upright, typed values, keyboard menus (2026-11-02)
+
+Measured, not just listed: 12 everyday jobs scripted against the live site and scored against step counts from each
+vendor's documentation. Full scorecard, method and counter-arguments: [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md);
+findings and limits: [AUDIT.md](AUDIT.md). Verdicts default to *trails* unless no documented advantage could be found.
+
+| Feature | Lightroom Classic / Camera Raw | Photoshop | Affinity Photo 2 | Pixelmator Pro | Photopea | Tintwork 1.7 |
+|---|---|---|---|---|---|---|
+| Perspective from guides | ✅ Upright Auto/Vertical (1 click) and Guided (Shift+T, 2+ lines) | ✅ Camera Raw filter Upright | 🟡 Perspective filter, by eye | 🟡 Perspective, by eye | 🟡 Perspective transform, by eye | ✅ **Image ▸ Guided upright** (2 lines, corrected after the second). ❌ No Auto, no constrain-crop. |
+| Print resolution in exported files | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ JPEG JFIF / PNG pHYs from the document ppi (v1.6 wrote none). ❌ No soft proofing, ICC printer profiles or print sharpening. |
+| Export size without resizing the document | ✅ Export dialog | ✅ Export As | ✅ Export | ✅ Export | ✅ Export as | ✅ Long edge / width / %. ❌ No saved export presets. |
+| Typed values in dialogs | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ Number box beside every slider. |
+| Keyboard access to menus | ✅ (native menus) | ✅ | ✅ | ✅ | — not checked | ✅ Alt or F10, arrows, Esc; ARIA menu roles. |
+| One-click subject selection | ✅ Select Subject | ✅ Select Subject | ✅ 2.6+ (model download) | ✅ Control-S | ✅ Select Subject | ❌ Magic wand / colour range only. |
+| Sky replacement | 🟡 Select Sky mask | ✅ Edit ▸ Sky Replacement | — not checked | — not checked | — not checked | ❌ Manual blend with a gradient mask (now 1 step shorter). |
+
+### Summary
+Scorecard (12 jobs): **0 beat, 3 match, 9 trail.** v1.6 failed 2 jobs outright (print ppi, converging verticals); v1.7
+passes all 12, 3 runs each, on the live site. The largest gaps are the ML features every competitor has (subject/sky
+selection, generative remove, Auto upright, AI denoise), then print tooling and saved export presets.
+
 ## v1.6: GPU develop and masks, live preview, combined mask shapes, more local controls (2026-11-02)
 
 Compared with Lightroom Classic / Camera Raw masking and Affinity Photo 2's Develop Persona. No new sources were needed; the references are the v1.5 ones.

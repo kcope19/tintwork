@@ -7,6 +7,20 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.7 (workflow benchmark, site audit and fixes)
+
+v1.7 comes from a self-audit: 12 everyday jobs scripted against the live site, plus checks of the site itself, the image math, data safety, privacy and keyboard use. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md) and [docs/AUDIT.md](docs/AUDIT.md).
+
+- **Print exports keep their resolution.** JPEG and PNG exports now carry the document's ppi (JFIF density / pHYs). Before, an 8×10 in crop at 300 ppi was exported as "72 ppi", so the print size was lost.
+- **Export dialog: Size and Resolution.** Export at a long edge, a width or a percentage without resizing the document, and set the ppi written into the file.
+- **Typed values in every dialog.** Each slider has a number box; type a value and press Enter.
+- **Image ▸ Guided upright.** Draw two lines along edges that should be vertical and the perspective is corrected (also a **Guides** button in Edit ▸ Perspective).
+- **Masks start in black and white.** Adding a layer mask switches the colours to black/white, so the first stroke or gradient does what it looks like.
+- **Keyboard:** Alt on its own or F10 moves to the menu bar (arrows, Enter, Esc); dialogs keep Tab inside them; Previous document is shown as Ctrl+Shift+F6 because the browser keeps Ctrl+Shift+Tab.
+- **Updates reach you.** The service worker revalidates every file (no stale mix after a deploy) and a bar offers **Reload** when a new version is ready.
+- **Site:** Content-Security-Policy, description and social preview image, canonical link, a Tintwork 404 page, and AA contrast for white text on primary buttons.
+- New scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`; `scripts/v17-test.mjs` joins `npm test`.
+
 ## What's new in v1.6 (GPU develop and masks, live preview, combined mask shapes, more local controls)
 
 ![A radial mask with a subtracted radial shape, the shapes list and the new local controls](screenshots/16a-raw-mask-shapes.png)
