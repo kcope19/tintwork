@@ -7,7 +7,7 @@ twelve everyday jobs with Playwright in Chromium at 1280×800, the way a mouse-a
 `docs/audit/workflows-<label>.json`; one screenshot per job goes to `screenshots/17x-wf-NN.png`. An iPhone 13
 (WebKit emulation) smoke pass opens a photo, edits it and exports.
 
-**Before** = the live site at v1.6.0, 3 runs (2026-11-02, evening, America/New_York). **After** = the live site at v1.7.0, 3 runs after deploy.
+**Before** = the live site at v1.6.0, 3 runs (2026-11-02, evening, America/New_York). **After** = the live site at v1.7.0, 3 runs after deploy (2026-11-03, about 1 AM America/New_York).
 
 ## How to read the numbers
 

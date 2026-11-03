@@ -1,0 +1,15 @@
+ok   no third-party requests during open/edit/export (40 requests, third-party: none)
+ok   no uploads: every request is GET (none)
+ok   Content-Security-Policy limits connections to the site itself (default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; st…)
+ok   no CSP violations during the session (none)
+ok   no console errors (none)
+ok   closing a tab with unsaved changes asks first (beforeunload)
+ok   after a crash the next visit offers recovery ("Tintwork closed with unsaved changes. Autosaved copy found:unsaved work800 × 600")
+ok   a full disk / quota error shows a warning ("Autosave is unavailable here (The quota has been exceeded.). Save your project to keep you")
+ok   a corrupt 60000×60000 PNG is refused with a message ("huge.png could not be read. The file may be damaged or in a format this browser cannot dec")
+ok   no uncaught errors on the bad file (none)
+ok   Alt moves focus to the menu bar ("File") so menus work without a mouse
+ok   a dialog takes focus and Tab stays inside it (opened true, focus inside true, after 40 Tabs true)
+ok   Escape closes the dialog
+ok   a :focus-visible outline style exists for keyboard users
+ok   no menu advertises a browser-reserved shortcut (41 shortcuts listed; reserved used: none)

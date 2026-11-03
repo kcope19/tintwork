@@ -16,7 +16,7 @@ Severity: **bug** = wrong result; **friction** = works but costs the user extra 
 
 | # | Finding (v1.6.0) | Severity | Repro (3/3) | Fix in v1.7.0 | Verified live |
 |---|---|---|---|---|---|
-| F1 | Print exports lose their resolution: an 8×10 in crop at 300 ppi exports as a JPEG with JFIF density 1:1 (unit 0, "no ppi"), so print software assumes 72 ppi (33×42 in). | bug | Open a photo ▸ Crop tool ▸ ratio *8×10 in (300 ppi)* ▸ Enter ▸ Ctrl+Shift+E ▸ JPEG ▸ OK ▸ read bytes 13–17 of the file. Bench job 8. | JPEG JFIF density and PNG pHYs are written from the document ppi; Export dialog gains **Resolution** and **Size** (long edge / width / %). | see "Live verification" |
+| F1 | Print exports lose their resolution: an 8×10 in crop at 300 ppi exports as a JPEG with JFIF density 1:1 (unit 0, "no ppi"), so print software assumes 72 ppi (33×42 in). | bug | Open a photo ▸ Crop tool ▸ ratio *8×10 in (300 ppi)* ▸ Enter ▸ Ctrl+Shift+E ▸ JPEG ▸ OK ▸ read bytes 13–17 of the file. Bench job 8. | JPEG JFIF density and PNG pHYs are written from the document ppi; Export dialog gains **Resolution** and **Size** (long edge / width / %). | ✔ |
 | F2 | Converging verticals can't be fixed accurately: dragging the four corners of Edit ▸ Perspective by eye left the facade edges leaning 152 px over the frame. | friction (capability) | Bench job 10 (synthetic building, measured edge x at 15 % and 85 % height). | **Image ▸ Guided upright**: draw two guides along edges that should be vertical/horizontal; corrected after the second guide; Guides button in the Perspective bar. Residual lean ≤ 3 px. | ✔ |
 | F3 | Dialog sliders can't take typed values (no number box): exact values need many arrow presses or a careful drag. | friction | Open Adjust ▸ Brightness/contrast; there is no editable field for the value. | Number box beside every dialog slider; Enter applies the dialog. | ✔ |
 | F4 | Adding a layer mask leaves the foreground/background colours as they were (orange/blue by default), so the first gradient or brush stroke on the mask gives a partial grey, not hide/reveal. | friction | New photo ▸ Layer ▸ Add layer mask ▸ check the colour swatches (still the defaults). | Adding a mask sets black/white (unless both are already greys) and says so in the status bar. Bench job 11: 8 → 7 steps. | ✔ |
@@ -29,19 +29,24 @@ Severity: **bug** = wrong result; **friction** = works but costs the user extra 
 | F11 | Updates can be missed or mixed: GitHub Pages sends `max-age=600`, and the service worker fetched files through the HTTP cache, so after a deploy a user could get a new `index.html` with 10-minute-old modules, and an open tab never learnt about a new version. | bug (data safety, rare) | `curl -I` shows `cache-control: max-age=600` on every file; v1.6 `sw.js` used plain `fetch(req)` and precached with default cache mode. Simulated deploy in `v17-test` (sw.js CACHE bumped). | The service worker revalidates every request (`cache: 'no-cache'`, precache with `cache: 'reload'`), checks for updates hourly and when the tab comes back after 10 min, and shows a **Reload / Later** bar with both version numbers. Nothing reloads by itself, so unsaved work is never lost to an update. | ✔ |
 | F12 | Exclusion blend in 8-bit is off by up to 1.76/255 from the W3C formula (all other modes ≤ 1.04/255; 16-bit ≤ 0.5/65535). | minor (not fixed) | `npm run audit:math`, 3/3. | Not fixed: invisible in practice; tolerance documented. | n/a |
 
+## Live verification (v1.7.0, 2026-11-03 about 12:50–1:10 AM America/New_York)
+
+- Every fix above re-checked on the live site 3/3: bench jobs 8 and 10 (36/36 job runs pass), `audit:safety` 15/15 in each of 3 runs (F5–F8), `audit:site` (F9), and a live script for F3 (number box drives the slider), F4 (mask sets #000000/#ffffff), F7 (menu shows Ctrl+Shift+F6), F10 (button fill rgb(201,74,50)); Lighthouse colour-contrast passes 3/3. No console errors in any run.
+- **Updates reaching v1.6 visitors:** three browser profiles were opened on v1.6.0 before the deploy and reopened after it. All three ended on 1.7.0 with only the v1.7 cache left: two on the first load, one on the second (the v1.6 service worker served one stale load). v1.6 has no update bar, so the bar can only appear from v1.7 onwards; the bar itself (v1.7 → next version) was tested with a simulated deploy in `v17-test`, not on the live site.
+
 ## Site audit (live)
 
 | | v1.6.0 (before) | v1.7.0 (after) |
 |---|---|---|
-| App ready (median of 3, Chromium) | 307 ms | AFTER_READY |
-| First-load transfer | 497 KB, 117 requests | AFTER_KB |
-| Console errors / failed requests / third-party requests | 0 / 0 / 0 | AFTER_ERR |
-| Service worker, offline reload | installs; offline reload works 3/3 | AFTER_SW |
+| App ready (median of 3, Chromium) | 307 ms | 277 ms |
+| First-load transfer | 497 KB, 117 requests | 501 KB, 115 requests |
+| Console errors / failed requests / third-party requests | 0 / 0 / 0 | 0 / 0 / 0 |
+| Service worker, offline reload | installs; offline reload works 3/3 | installs; offline reload works 3/3 |
 | Installable (manifest + icons) | yes | yes |
-| Meta description / OG image / canonical / CSP / 404 page | no / no / no / no / GitHub's | AFTER_META |
-| README + user guide links | 14 checked, 0 broken | AFTER_LINKS |
-| Lighthouse desktop: Performance / Accessibility / Best practices / SEO | 71 / 89 / 100 / 91 | AFTER_LH |
-| WebKit (iPhone 13 emulation) | loads, 0 errors, offline works | AFTER_WK |
+| Meta description / OG image / canonical / CSP / 404 page | no / no / no / no / GitHub's | yes / yes / yes / yes / Tintwork 404 (status 404) |
+| README + user guide links | 14 checked, 0 broken | 16 checked, 0 broken |
+| Lighthouse desktop: Performance / Accessibility / Best practices / SEO | 71 / 89 / 100 / 91 | 71–72 / 92 / 100 / 100 (3 runs) |
+| WebKit (iPhone 13 emulation) | loads, 0 errors, offline works | loads, 0 errors, offline works |
 
 Lighthouse items deliberately not changed: `meta-viewport` (`user-scalable=no` is intentional: pinch on the canvas
 zooms the image, not the page, and iOS Safari still allows page zoom from Accessibility settings); `unminified-javascript`,
@@ -100,8 +105,9 @@ and other RAW files from Explorer through `file_handlers`. Alt/F10 menu access i
 - **Edge was not tested separately.** It is the same Chromium engine, so behaviour should match, but Edge-specific shortcuts or policies could differ.
 - **Alt/F10 were tested in headless Linux Chromium.** Real Windows Chrome/Edge could treat a lone Alt press differently (e.g. if a browser extension or IME grabs it). Not verified on a Windows machine.
 - **iPhone is WebKit emulation, not a device.** Touch gestures, memory limits and the share sheet behave differently on real iOS; the export file itself was not checked on iPhone.
-- **The update bar was tested by simulating a deploy locally** (bumping the service-worker cache name). The live check went from v1.6 to v1.7 once per run; real-world timing depends on when the browser re-checks `sw.js` (GitHub's 10-minute cache).
+- **The update bar has only been seen in a simulated deploy** (local server, bumped service-worker cache name). It will first appear for real with the next release after v1.7. The live v1.6 → v1.7 move worked 3/3 but needed a second load once; timing in the wild depends on when the browser re-checks `sw.js`.
 - **The injection probe covered a handful of places** where names are shown, not every dialog.
 - **robots.txt** can't be served for a project site under `/tintwork/` (it would have to be at the domain root), so the Lighthouse SEO "robots.txt" result reflects github.io, not Tintwork.
 - **The background-colour swatch (`#bgColor`) is smaller than Lighthouse's 24 px target size** recommendation; left as is because it overlaps the foreground swatch by design. It may still be hard to hit on touch screens.
 - Verdicts in the scorecard are mine. I defaulted to *trails* whenever I could find a documented reason; someone who weighs price, privacy (nothing leaves the browser) or "no install" more heavily would score Tintwork higher.
+- **Guided upright is scored on the two facade edges only.** In the job-10 screenshot (`screenshots/17x-wf-10.png`) the outer windows still look slightly slanted. That may come from how the synthetic building was drawn (not a true projection) or may be a residual error in the correction; I did not measure it.
