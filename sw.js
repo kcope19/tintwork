@@ -2,7 +2,11 @@
 // Network-first for app files (so updates show up immediately when online), falling
 // back to the cache when offline. All paths are relative to this file, so the app
 // can live in any sub-folder of any static host.
-const CACHE = 'tintwork-shell-v1.6.0';
+// v1.7: every network fetch revalidates with the server (cache: 'no-cache'), so a host that sends
+// max-age (GitHub Pages: 10 minutes) cannot serve a mix of old and new modules after a deploy; the
+// precache bypasses the HTTP cache too. A new worker takes over at once and the page shows a
+// "new version ready, reload" bar (see src/main.js).
+const CACHE = 'tintwork-shell-v1.7.0';
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
   './src/main.js', './src/pixels.js', './src/selection.js', './src/ops.js', './src/worker.js', './src/icons.js',
@@ -21,9 +25,13 @@ const SHELL = [
 // Cached too, but a failure does not stop the install: the decoder build for JPEG XL compressed DNG files (4.5 MB).
 const EXTRA = ['./vendor/flashraw/flashraw_simd_jxl.wasm', './vendor/flashraw/flashraw_simd_threads.wasm', './vendor/flashraw/flashraw_bindgen_threads.js', './vendor/flashraw/thread-worker.browser.js'];
 
+const fresh = (u) => new Request(u, { cache: 'reload' });
+
+self.addEventListener('message', (e) => { if (e.data && e.data.type === 'VERSION' && e.ports[0]) e.ports[0].postMessage(CACHE.replace(/^tintwork-shell-v/, '')); });
+
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE)
-    .then((c) => c.addAll(SHELL).then(() => Promise.all(EXTRA.map((u) => c.add(u).catch(() => {})))))
+    .then((c) => c.addAll(SHELL.map(fresh)).then(() => Promise.all(EXTRA.map((u) => c.add(fresh(u)).catch(() => {})))))
     .then(() => self.skipWaiting()));
 });
 
@@ -39,7 +47,8 @@ self.addEventListener('fetch', (e) => {
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
     try {
-      const res = await fetch(req);
+      // revalidate instead of trusting the HTTP cache (navigations cannot be re-initialised, so rebuild them from the URL)
+      const res = await fetch(req.mode === 'navigate' ? new Request(req.url, { cache: 'no-cache', credentials: 'same-origin' }) : new Request(req, { cache: 'no-cache' }));
       if (res.ok && res.type === 'basic') cache.put(req, res.clone());
       return res;
     } catch (err) {
