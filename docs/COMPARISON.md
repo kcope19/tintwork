@@ -6,6 +6,22 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.9: logo watermarks, upright Level / Vertical / Full, 16-bit fill (2026-11-03)
+
+Non-AI only. Same sources as v1.8. Every cell is checked against the competitor's public documentation; where
+Tintwork has a feature, the limit that remains is stated next to it.
+
+| Feature | Lightroom Classic / Camera Raw | Photoshop | Affinity Photo 2 | Pixelmator Pro | Photopea | Tintwork 1.9 |
+|---|---|---|---|---|---|---|
+| Image (logo) watermark on export | ✅ Watermark Editor: graphic (PNG/JPEG), opacity, proportional/fit/fill size, inset, 9 anchors, rotate ([help](https://helpx.adobe.com/lightroom-classic/desktop/workspace/using-watermark-editor.html)) | ❌ not in Export As (actions) | — not checked | — not checked | — not checked | ✅ **Logo image** (PNG/JPEG/WebP, transparency kept): width % of the short side, opacity, 9 positions, margin; single export, multiple sizes, batch, 16-bit PNG; presets keep their own logo. ❌ No rotation, no fit/fill sizing, no text + logo together; not on PSD. |
+| Upright modes | ✅ Auto, Level, Vertical, Full, Guided, Constrain crop ([help](https://helpx.adobe.com/lightroom-classic/desktop/help/upright-automatic-perspective-correction.html)) | ✅ via Camera Raw | 🟡 by eye | 🟡 by eye | 🟡 by eye | ✅ **Auto · Level · Vertical · Full** + Guided, crop / fill / keep. Level: sea horizon 3° → 0.01°. Full: synthetic facade ≤ 0.02°. ❌ On both real test photos Full rejects the horizontals and equals Vertical, so its two-axis correction is unproven on real photos; no rotation or aspect sliders. |
+| Fill empty corners | ✅ (Photoshop) content-aware crop fill | ✅ | 🟡 | 🟡 | 🟡 | 🟡 **8-bit and 16-bit** push-pull fill from nearby pixels. ❌ Not content-aware (smears texture over large areas). |
+| Spot healing on a real portrait | ✅ Remove tool (generative/content-aware) | ✅ Spot Healing (content-aware) | ✅ Inpainting | ✅ Repair (ML) | ✅ Spot heal | 🟡 Unchanged in v1.9: 79% of a synthetic blemish removed on a real portrait, ~0.4 s. Competitors not measured on this image. |
+
+### Summary
+v1.9 closes the logo-watermark gap and adds the Level and Full upright modes. Still missing: the ML features, Full
+working on real photos, content-aware fill, and soft proofing (not started).
+
 ## v1.8: object select, Auto upright, empty-edge crop/fill, export presets and watermark (2026-11-03)
 
 Closes the non-AI gaps from the v1.7 audit. Nothing uses machine learning. Measured on real public-domain/CC0 photos

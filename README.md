@@ -7,6 +7,20 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.9 (logo watermarks, upright modes, 16-bit fill)
+
+v1.9 keeps to non-AI tools and closes gaps from the v1.8 audit. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md) for how it was measured, including what still trails.
+
+- **Logo watermarks:** the export watermark can now be a logo image (PNG/JPEG/WebP; PNG transparency kept). You set its width as a % of the short side, its opacity, one of nine positions, and the margin. It works for single exports, Export multiple sizes, Batch process and 16-bit PNG exports. Each saved export preset keeps its own copy of the logo.
+- **Upright modes: Auto · Level · Vertical · Full.**
+  - **Level** rotates the horizontals level; a single long horizon is enough.
+  - **Vertical** is the v1.8 Auto.
+  - **Full** corrects verticals and horizontals with one perspective transform, but only when the horizontals are trustworthy (≥ 3 agreeing lines spanning half the width, a far vanishing point, a sane resulting shape). Otherwise it says so and does exactly what Vertical does. That is the case on both real test photos, so Full's horizontal correction is so far proven on a synthetic facade only.
+  - **Auto** now falls back to Level when it finds no verticals.
+- **16-bit Fill edges:** Fill empty edges, and Fill edges after an upright correction, now work on 16-bit layers. The fill is computed at 16 bits per channel and the opaque pixels are left untouched. In v1.8 this refused with a message.
+- **Healing speed, measured honestly:** the real-portrait blemish job took about 66 s in the v1.8 bench. That was the benchmark script shipping multi-MB images as number arrays, not the app. The stroke plus heal takes about 0.4 s, and the bench now reports it. Removal quality is unchanged at 79%. Nine source-search variants were tried; none improved both removal and texture fidelity on held-out spots.
+- `scripts/v19-test.mjs` joins `npm test`. The workflow bench grows to 24 jobs: Full upright on a real photo, Level on a sea horizon, and batch with a logo.
+
 ## What's new in v1.8 (object select, Auto upright, export presets and watermark)
 
 v1.8 closes the non-AI gaps from the v1.7 self-audit. Nothing here uses machine learning; see [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md) for how each one was measured on real public-domain/CC0 photos.

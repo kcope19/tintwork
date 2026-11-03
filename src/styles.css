@@ -100,7 +100,7 @@ button.link { background: none; border: none; color: var(--accent2); padding: 0;
 #modal { position: fixed; inset: 0; background: #0007; display: grid; place-items: center; z-index: 100; }
 #modal.passive { background: transparent; pointer-events: none; }
 #modal.passive .dialog { pointer-events: auto; position: absolute; right: 300px; top: 90px; }
-.dialog { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; min-width: 340px; max-width: 480px; padding: 14px 16px; box-shadow: 0 16px 48px #000a; }
+.dialog { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; min-width: 340px; max-width: 480px; padding: 14px 16px; box-shadow: 0 16px 48px #000a; max-height: calc(100vh - 32px); overflow-y: auto; }
 .dialog h3 { margin: 0 0 12px; font-size: 14px; }
 .dialog .field { display: grid; grid-template-columns: 110px 1fr 72px; align-items: center; gap: 8px; margin: 8px 0; }
 .dialog .field.two { grid-template-columns: 110px 1fr; }
