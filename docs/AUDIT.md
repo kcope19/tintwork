@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated for v1.8.0 and v1.9.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated for v1.8.0, v1.9.0 and v1.10.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,19 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.10.0 update (2026-11-03, America/New_York)
+
+v1.10 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v110-test.mjs` has 19 checks. It passed 19/19 three times on v1.10. On a v1.9.0 checkout (`TW_ROOT=<v1.9.0 worktree>`) it fails: 3 of 9 checks pass before it stops, and all 3 are guards that also pass on v1.9 (see the benchmark's test-change disclosure). The full `npm test` passed all 972 checks (953 in v1.9 + 19).
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F19 | Batch process could not use a saved export preset, so job 24 took 14 steps. | gap | job 25 fails on v1.9 3/3 | **Export preset** choice in Batch process: format, quality, size, ppi and the preset's own watermark. Remembers the last preset | v1.10.0 (7 steps; Lightroom 4) |
+| F20 | The watermark dialog showed Color for logos (unused), and logos could only be sized by the short side, so a tall logo could overflow. | UI bug / gap | v110-test on v1.9 | Type-specific rows. **Logo size**: % of short side, % of width, or fit inside | v1.10.0 |
+| F21 | Auto upright on the real high-rise left −0.50° (bar 0.5°). Cause: the line fits on the 640 px preview limit the vanishing point (full-resolution fits give VP (649.5, −710.3) against (643.5, −712.2)). | accuracy | job 17 fails on v1.9 3/3 | Each line is re-fitted on a ≤1600 px copy (sub-pixel gradient peaks, weighted least squares, outlier pass, ≤1° turn) | v1.10.0 (−0.34°; roughly neutral on 3 held-out photos) |
+| F22 | No print preview. | gap | AUDIT v1.9 ranked gap 5 | View ▸ **Proof: glossy / matte paper**: paper-white and ink-black simulation in linear light, view only | v1.10.0 (approximate; no ICC, no gamut warning) |
+
+**Not done in v1.10:** an sRGB gamut warning (meaningless in an sRGB-only editor), ICC printer profiles, and Full upright within 0.5° on real photos (jobs 27/28 fail on held-out photos).
 
 ## v1.9.0 update (2026-11-03, America/New_York)
 
@@ -106,18 +119,20 @@ and other RAW files from Explorer through `file_handlers`. Alt/F10 menu access i
 
 ## What is still missing, ranked (biggest gap first)
 
-Updated for v1.9; items 3 and 6 of the v1.7 list are done (Auto upright in v1.8, its Level/Full modes in v1.9; presets
-and text/logo watermarks in v1.8/v1.9).
+Updated for v1.10. Batch with export presets (v1.9 item 6) is done; soft proofing is partly done.
 
 1. **One-click subject / background / sky selection (ML).** Not planned until the user wants AI.
-2. **Content-aware / generative fill and remove** for real texture. Healing is at 79% removal on the real portrait, and the empty-edge fill smears.
-3. **Full upright on real photos:** its horizontal correction is rejected on both real test photos. It needs a better horizontal line detector and more real test photos.
+2. **Content-aware / generative fill and remove** for real texture. Healing removes 79% on the real portrait, and the empty-edge fill smears.
+3. **Upright Full on real photos:** on two held-out real photos it uses 4 and 9 horizontals and cuts their tilt by 75–95%, but leaves up to 1° (brick) and 2.2° on a vertical misled by a leaning ladder (library). It needs robust rejection of non-architectural lines.
 4. **AI denoise and camera-matching profiles for RAW.**
-5. **Print workflow:** soft proofing with ICC printer profiles, output sharpening, CMYK export.
-6. **Batch with export presets:** Batch process cannot use a saved export preset, so it takes 12–14 steps against Lightroom's ~6–9.
+5. **Print workflow:** ICC printer profiles, a printer gamut warning, output sharpening, CMYK export. v1.10 has only an approximate paper-white / ink-black proof.
+6. **Batch still asks for both folders every time** (7 steps against Lightroom's 4).
 7. Edge-aware local adjustment brushes (Lightroom-style masks with auto-mask).
 
 ## What I might be wrong about
+
+- **Three held-out photos are not many.** The v1.10 line re-fit helped the photo it was diagnosed on and was roughly neutral on the held-out ones (the tower's worst edge got worse, 0.07° → 0.23°). It may be overfitted to job 17; more held-out photos would settle that.
+- **Held-out reference edges were picked by me.** On the brick shop front, the window-frame "vertical" may not be truly vertical itself.
 
 - **Competitor step counts come from their documentation, not from using the apps.** A practised user may need fewer steps (shortcuts, presets) or more (dialogs the docs skip). Treat them as ±2.
 - **The test images are synthetic** (flat backgrounds, ideal edges). Jobs 3 and 4 pass partly because of that; on real photos the wand and the healing brush would do worse, and the paid editors' ML tools much better.

@@ -6,6 +6,20 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.10: batch with export presets, logo sizing, sharper upright, soft proof (2026-11-03)
+
+Non-AI only. Each cell is checked against the competitor's public documentation.
+
+| Feature | Lightroom Classic / Camera Raw | Photoshop | Affinity Photo 2 | Pixelmator Pro | Photopea | Tintwork 1.10 |
+|---|---|---|---|---|---|---|
+| Batch with a saved export preset | ✅ Export with Preset (4 steps) | ✅ Image Processor / actions (6) | ✅ Batch Job + macro (9) | ✅ Shortcuts (3) | ❌ no batch | ✅ Batch process ▸ **Export preset**, including the preset's logo (7 steps). ❌ Asks for both folders every time; no actions or macros. |
+| Logo watermark sizing | ✅ proportional / fit / fill, rotate ([help](https://helpx.adobe.com/lightroom-classic/desktop/workspace/using-watermark-editor.html)) | ❌ | — not checked | — not checked | — not checked | 🟡 % of short side / % of width / **fit inside**. ❌ No rotation, no fill. |
+| Upright Full on real photos | ✅ | ✅ via Camera Raw | 🟡 by eye | 🟡 by eye | 🟡 by eye | 🟡 Uses real horizontals on 2 held-out photos, tilt cut 75–95%, but up to 1° left (bar 0.5°). Auto on the high-rise now −0.34° (was −0.50°). |
+| Soft proof | ✅ ICC profile, intent, Simulate Paper & Ink, monitor/printer gamut warnings ([help](https://helpx.adobe.com/lightroom-classic/desktop/process-and-develop-photos/develop-module-options.html)) | ✅ Proof Setup + Gamut Warning | ✅ Soft proof adjustment | 🟡 not checked | 🟡 not checked | 🟡 **Paper white / ink black** for glossy or matte (view only). ❌ No ICC profiles, no intent, no gamut warning. |
+
+### Summary
+v1.10 halves the logo-batch steps and adds logo fit sizing and an approximate soft proof. Still missing: the ML features, ICC soft proofing, content-aware fill, and Full upright within 0.5° on real photos.
+
 ## v1.9: logo watermarks, upright Level / Vertical / Full, 16-bit fill (2026-11-03)
 
 Non-AI only. Same sources as v1.8. Every cell is checked against the competitor's public documentation; where

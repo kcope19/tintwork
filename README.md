@@ -7,6 +7,16 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.10 (batch with export presets, logo sizing, soft proof)
+
+v1.10 keeps to non-AI tools. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md) for how each change was measured, including the three held-out photos and what still trails.
+
+- **Batch with an export preset:** Batch process has an **Export preset** choice. It fills format, quality, size and ppi, and uses the preset's own watermark (including its logo). Tintwork remembers the last preset; editing a field by hand switches back to custom settings. Batching 6 photos with a logo now takes 7 steps instead of 14.
+- **Watermark dialog:** Color shows only for text watermarks. Shadow and the new **Logo size** setting show for logos. A logo can be sized as a % of the short side, a % of the image width, or **fit inside** a % of both width and height, so tall logos no longer overflow.
+- **Sharper upright lines:** Auto / Vertical / Full re-fit each detected edge on a sharper copy of the photo (up to 1600 px) before estimating the correction. The real high-rise photo now lands at −0.34° (it was −0.50°). On three new held-out photos the change is roughly neutral; see the benchmark.
+- **Soft proof (approximate):** View ▸ Proof: glossy paper / matte paper previews the photo with paper white and ink black, to show how much contrast a print loses. It only changes the screen, never the pixels or exports. There are no ICC printer profiles and no gamut warning.
+- `scripts/v110-test.mjs` joins `npm test`. The workflow bench grows to 28 jobs.
+
 ## What's new in v1.9 (logo watermarks, upright modes, 16-bit fill)
 
 v1.9 keeps to non-AI tools and closes gaps from the v1.8 audit. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md) for how it was measured, including what still trails.

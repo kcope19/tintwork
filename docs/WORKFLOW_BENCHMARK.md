@@ -1,10 +1,68 @@
-# Workflow benchmark (v1.7.0 → v1.8.0 → v1.9.0)
+# Workflow benchmark (v1.7.0 → v1.8.0 → v1.9.0 → v1.10.0)
 
 v1.8 adds nine jobs (13–21) that use **real photos** (public domain / CC0, `test-assets/real/LICENSES.md`) and the new
 features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from v1.7 (below, kept for history).
 
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
+
+## v1.10 scorecard (non-AI polish: batch with presets, logo sizing, sharper upright lines, soft proof)
+
+v1.10 adds four jobs:
+- **25:** repeat job 24 (batch 6 photos with a logo) using a saved export preset. The preset is saved during setup and not counted, as for the competitors' saved presets.
+- **26:** Auto upright on a **held-out** real tower photo.
+- **27, 28:** Upright Full on two **held-out** real photos with converging horizontals (library shelves; brick shop front). Both verticals and horizontals are measured.
+
+**Held-out method.** The three new photos (CC0, `test-assets/real/LICENSES.md`) were downloaded *after* the upright change was written and tuned on the v1.8/v1.9 photos (c4 church, c6 high-rise). Their reference edges were picked by eye and snapped to the strongest gradient before any result was seen, and were not changed afterwards. Each photo was measured once per version and nothing was tuned on it.
+
+The runs:
+- **Before:** the live site at v1.9.0, 3 runs, 2026-11-03 (`docs/audit/workflows-v110-before.json`).
+- **After (local):** the v1.10 commit served locally, 3 runs (`workflows-v110-local.json`).
+- **After (live):** the live site at v1.10.0 after deploy, 3 runs (`workflows-v110-after.json`). See *Live verification* below.
+
+| # | Job | Before (v1.9, live) | After (v1.10) | Tintwork steps excl. open | Competitors (docs) | Verdict |
+|---|-----|------|------|------|------|------|
+| 25 | Repeat job 24 with a saved export preset | fail 3/3: Batch process has no preset choice | pass 3/3: 6 files, 2048 px, logo bottom-right only | **7** (was 14 in job 24) | Lightroom Export with Preset 4, Photoshop Image Processor 6, Affinity batch job 9, Pixelmator Pro saved Shortcut 3, Photopea no batch | **trails** |
+| 17 (10R) | Auto upright, high-rise looking up | **fail** 3/3: −0.50° / 0.10° (bar 0.5°) | **pass** 3/3: −0.34° / 0.01° | 3 | as in v1.8 | **trails** |
+| 26 (held out) | Auto upright, second real tower | pass 3/3: 0.07° / 0.03° / 0.07° | pass 3/3: −0.00° / 0.06° / 0.23° (**worst edge worse**) | 3 | as job 16 | **trails** |
+| 27 (held out) | Upright Full, library shelves | fail 3/3: verticals 2.23° / −0.29°, horizontals 0.73° / 0.88° / 0.13° (from −4.15° / 4.57° / −4.33°) | fail 3/3: verticals 2.24° / −0.54°, horizontals 0.89° / 0.81° / 0.90° | 3 | Lightroom Upright Full 2, Camera Raw 4, Affinity 6, Pixelmator Pro 5, Photopea 6 | **trails** |
+| 28 (held out) | Upright Full, brick shop front | fail 3/3: verticals 0.14° / 1.03°, horizontals −0.48° / −1.02° / 0.16° (from 5.13° / 4.21° / 1.60°) | fail 3/3: verticals 0.23° / 1.15°, horizontals −0.33° / −0.97° / −0.06° | 3 | as job 27 | **trails** |
+| 16 / 22 | Auto / Full upright, church | pass: −0.23° / −0.18° / 0.12° | pass: 0.00° / −0.20° / −0.18° | 3 | as in v1.9 | trails |
+| 24, 19, 20, 18, 23, 13 | unchanged jobs | pass | pass (same results) | as in v1.9 | as in v1.9 | as in v1.9 |
+
+**Summary (v1.10): 0 beat, 2 match (18, 19), every other job trails (now 28 jobs). Job 17 now passes its 0.5° bar; jobs 27 and 28 (Full on held-out real photos) fail it.**
+
+What the held-out photos say, plainly:
+- **The job 17 fix is not clearly a general improvement.** v1.10 re-fits each detected line on a sharper copy of the photo (up to 1600 px instead of the 640 px preview). That moves job 17 from −0.50° to −0.34°. On the held-out tower it still passes, but its worst edge went from 0.07° to 0.23°. On the library it is worse on 3 of 5 edges, and on the brick front better on 3 of 5. My reading: the re-fit is roughly neutral on average, and it happened to help the photo it was diagnosed on. I kept it because it passes every bar it passed before, but this is weak evidence against overfitting.
+- **Full already used real horizontals in v1.9** on both held-out photos (4 and 9 lines). So item 4, "Full horizontals working on a real photo", was already half true before this release; v1.9's tests only showed it falling back on the church and the high-rise. On the held-out photos Full cuts the horizontal tilt by 75–95%, but it leaves up to 1° on the brick front and does not meet the 0.5° bar. On the library a leaning ladder and books pull the vertical vanishing point, leaving one vertical at 2.2°. That is a documented case for Guided upright.
+
+### Live verification (v1.10.0)
+
+LIVE_PLACEHOLDER
+
+### The case against each v1.10 verdict
+
+- **25 Batch with preset (trails):** 7 steps against Lightroom's 4 (select all, File ▸ Export with Preset ▸ preset) and Pixelmator Pro's 3. Tintwork still asks for both folders every time, because browsers do not let a page remember folder handles across sessions without a permission prompt. It beats Affinity's 9 and Photoshop's 6 on step count, but those tools also run actions and macros, which Tintwork does not. Default kept at **trails**.
+- **17 Auto upright (trails):** it now passes its own 0.5° bar, but Lightroom does this in 2 steps, and the held-out evidence above shows the fix is not clearly general.
+- **26 held-out tower (trails):** passes, but slightly worse than v1.9.
+- **27 / 28 Full (trails):** both fail the bar. Lightroom's Full applies "level, horizontal, and vertical perspective corrections" ([help](https://helpx.adobe.com/lightroom-classic/desktop/help/upright-automatic-perspective-correction.html)). Its quality on these photos was not measured.
+- **Soft proof (no bench job):** Tintwork's proof only simulates paper white and ink black (two fixed papers). Lightroom's soft proofing uses the printer's ICC profile, a rendering intent, and monitor and printer gamut warnings ([help](https://helpx.adobe.com/lightroom-classic/desktop/process-and-develop-photos/develop-module-options.html)). **Trails** clearly.
+- **Logo sizing (no bench job):** v1.10 adds three size modes (short side, width, fit inside). Lightroom's Watermark Editor also has rotation and fill ([help](https://helpx.adobe.com/lightroom-classic/desktop/workspace/using-watermark-editor.html)). **Trails.**
+
+### Not done
+
+- **sRGB gamut warning:** not built. Tintwork edits and exports sRGB only and reads no ICC profiles, so an "out of sRGB" warning would never fire. A useful printer gamut warning needs ICC printer profiles, which Tintwork does not have.
+
+### Test-change disclosure
+
+- `scripts/v110-test.mjs` (19 checks, new). Two of its upright checks also pass on v1.9.0, because v1.9 already did well on those photos:
+  - the held-out tower check;
+  - the brick Full check.
+  
+  They are regression guards and do not prove that v1.10 improved anything. The brick check is also **weaker than the 0.5° bench bar**: it asks for at least 3 horizontals and the worst horizontal tilt cut to under a third. This is stated in the test file.
+- On a v1.9.0 worktree (`TW_ROOT`), the test fails: 3 of 9 checks pass before it stops (the 2 guards above and "no page errors").
+- Bench `edgeAngle` was extended to measure horizontal edges (column scan, vertical gradient). Existing vertical measurements are unchanged: v1.9 still reads −0.50° / 0.10° on job 17.
+- No existing test or bench bar was loosened.
 
 ## v1.9 scorecard (non-AI polish: logo watermark, upright modes, 16-bit fill, healing)
 
