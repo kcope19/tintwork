@@ -46,7 +46,7 @@ for (const depth of [8, 16]) {
       }, { PAIRS, mode, depth, opacity });
       let worst = 0;
       PAIRS.forEach(([B, S], i) => { for (let ch = 0; ch < 3; ch++) { const b = B[ch] / 255, s = S[ch] / 255, ref = (1 - opacity) * b + opacity * REF[mode](b, s); worst = Math.max(worst, Math.abs(ref - got[i][ch])); } });
-      const tol = depth === 8 ? 2 / 255 : 2 / 65535 + 1e-6; // 8-bit layers blend in the browser's canvas (8-bit intermediates): ≤ 2 levels
+      const tol = depth === 8 ? 1.1 / 255 : 2 / 65535 + 1e-6; // 8-bit: the browser's canvas rounds intermediates (≤ 1.04 levels); exclusion is exact (v1.8)
       check(worst <= tol, `${depth}-bit ${mode} @ ${opacity * 100}% matches W3C formula (worst error ${(worst * (depth === 8 ? 255 : 65535)).toFixed(2)} ${depth === 8 ? '/255' : '/65535'})`);
     }
   }
