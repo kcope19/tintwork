@@ -1,11 +1,11 @@
 {
   "name": "tintwork",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Tintwork: an original browser-based layered image editor (Canvas 2D)",
   "scripts": {
     "start": "serve -l 5173 .",
     "dev": "serve -l 5173 .",
-    "test": "node scripts/smoke-test.mjs && node scripts/desktop-platform-test.mjs && node scripts/windows-test.mjs && node scripts/mobile-test.mjs && node scripts/v07-test.mjs && node scripts/v08-test.mjs && node scripts/v09-test.mjs && node scripts/v10-test.mjs && node scripts/v11-test.mjs && node scripts/v12-test.mjs && node scripts/v13-test.mjs && node scripts/v14-test.mjs && node scripts/v15-test.mjs && node scripts/v16-test.mjs && node scripts/v17-test.mjs && node scripts/v18-test.mjs && node scripts/v19-test.mjs && node scripts/v110-test.mjs && node scripts/v111-test.mjs && node scripts/v112-test.mjs && node scripts/v113-test.mjs",
+    "test": "node scripts/smoke-test.mjs && node scripts/desktop-platform-test.mjs && node scripts/windows-test.mjs && node scripts/mobile-test.mjs && node scripts/v07-test.mjs && node scripts/v08-test.mjs && node scripts/v09-test.mjs && node scripts/v10-test.mjs && node scripts/v11-test.mjs && node scripts/v12-test.mjs && node scripts/v13-test.mjs && node scripts/v14-test.mjs && node scripts/v15-test.mjs && node scripts/v16-test.mjs && node scripts/v17-test.mjs && node scripts/v18-test.mjs && node scripts/v19-test.mjs && node scripts/v110-test.mjs && node scripts/v111-test.mjs && node scripts/v112-test.mjs && node scripts/v113-test.mjs && node scripts/v114-test.mjs",
     "test:windows": "node scripts/windows-test.mjs",
     "test:platform": "node scripts/desktop-platform-test.mjs",
     "bench": "node scripts/bench.mjs all",
