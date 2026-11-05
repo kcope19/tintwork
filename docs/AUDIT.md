@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.14.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.15.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,31 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.15.0 update (2026-11-05, America/New_York)
+
+v1.15 is an **adversarial polish pass** (no AI, no heal%/Full≤0.5° cycle). Scripted Chromium audits against live v1.14 and local; every fix below was reproduced **3/3**. `scripts/v115-test.mjs` has 18 checks. Full `npm test`: **1052** (1034 + 18).
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F41 | **Done + feather** stacked a second history entry on the live “Object select” commit, so one Undo left a hard unfeathered mask. | bug | live+local audit 3/3; history tip `Object select` then `Object select + feather` | Squash consecutive tip Object select entries into one feathered commit. | v1.15.0 |
+| F42 | Export on a **16-bit** document defaulted to 8-bit PNG and dithered down unless the user picked “PNG 16-bit”. | friction | open Export after RAW develop; `#eFmt` was `image/png` | Default `#eFmt` to `image/png16` when `is16()` and no last preset. | v1.15.0 |
+| F43 | Switching tools mid Object select cleared the session with no status (selection kept). | friction | press W during objsel | Status “Object select kept.” (same end state as Done). | v1.15.0 |
+
+**Audited OK (no change):** proofOff clears filter/CMY class; Image size Escape/Tab trap; crop chips + undo; Auto/Guided upright undo; Ctrl+Z in modal; SW CACHE matches APP; Refine edge Escape; 8-bit fill edge seam; Batch Open tabs API; export last-preset hotkey present.
+
+### What I might be wrong about
+- Escape “bug” in the first audit pass was a **false positive** (`#modalOk` stays in the DOM when the modal is hidden). Other Escape checks used `modal.classList.contains('hidden')`.
+- Done+feather squash uses `/^Object select/` on tip labels — a future rename of those labels would stop the squash (test covers the current wording).
+- 16-bit Export default only applies when there is **no** last preset; a remembered JPEG/WebP preset still wins (by design). Users who always export JPEG from RAW may never see the new default.
+- Fill-edge seam check was on an 8-bit L-shape; 16-bit push-pull seams were not re-measured on a held-out photo this pass.
+- Job 14 still trails ML on steps; this pass only fixed undo after feather, not IoU or stroke count.
+
+**Not done:** ICC soft proof; heal >79%; Full ≤0.5°; one-click subject (AI).
+
+### Live verification (v1.15.0, 2026-11-05 America/New_York)
+
+- Filled after deploy.
 
 ## v1.14.0 update (2026-11-05, America/New_York)
 

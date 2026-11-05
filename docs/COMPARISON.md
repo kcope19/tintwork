@@ -1,4 +1,4 @@
-<!-- v1.14: soft-proof rag/newsprint/CMY + remember last; objsel Done+feather / sticky +Subject; crop chips; RAW top/bottom split. Scorecard: proof papers closer; job 14 still trails (no AI); crop/RAW step-adjacent polish. -->
+<!-- v1.15: adversarial polish — Done+feather one undo; Export defaults PNG 16-bit on 16-bit docs. Scorecard: undo bug fixed; job 14/heal/Full still trail. -->
 # Tintwork vs. paid editors: living comparison
 
 This document compares Tintwork with current paid editors at each milestone. It covers **functionality and general workflows only**. Tintwork copies no code, assets, icons, names or trade dress from these products. Product names are used here for comparison only, and each belongs to its owner.
@@ -6,6 +6,10 @@ This document compares Tintwork with current paid editors at each milestone. It 
 Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One / Lightroom (where relevant), and Photopea (as the closest web reference).
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
+
+## v1.15 (2026-11-05)
+
+Adversarial polish (no new AI). **Done + feather** is one undo step. **Export** on 16-bit documents defaults to PNG 16-bit when no last preset is remembered (was easy to dither to 8-bit by accident). Job 14 / heal / Full / ICC soft proof unchanged.
 
 ## v1.14 (2026-11-05)
 

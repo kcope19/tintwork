@@ -6,6 +6,25 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.15 scorecard (adversarial polish: Done+feather undo, 16-bit Export default)
+
+Local Chromium `?platform=win`, 2026-11-05 America/New_York. Audit-driven; not a feature stack.
+
+| Area | v1.14 | v1.15 | Verdict |
+|---|---|---|---|
+| Done + feather undo | two history steps; Undo left hard mask | **one** step; Undo clears selection | **match** (expected undo) — was a bug, not a competitor race |
+| Export 16-bit doc | Format defaulted to 8-bit PNG (dither) | Defaults to **PNG 16-bit** when no last preset | **match** (preserves depth) / still trails if last preset was JPEG |
+| Job 14 / heal / Full / soft-proof ICC | trails | unchanged | **trails** |
+
+**Summary (v1.15): bugfix on Done+feather undo; 16-bit Export default is a small honesty win. No trails→match on jobs 13/14/Full. npm test: 1052.**
+
+**Test-change disclosure:** `v115-test` is new (18 checks). `v112-test` APP_VERSION pin accepts through 1.15.0. No quality bars loosened.
+
+**Adversarial / why these could be wrong:**
+- “Match” on undo is against user expectation, not a paid-app step count.
+- 16-bit default is skipped when a last export preset exists — easy to miss in real use.
+- Audit did not re-bench workflow jobs 1–32; scorecard jobs stay at v1.14 verdicts unless listed above.
+
 ## v1.14 scorecard (non-AI polish: soft-proof papers/CMY/last, objsel Done+feather, crop chips, RAW splitH)
 
 Local Chromium `?platform=win`, 2026-11-05 America/New_York. No heal% or Full≤0.5° cycle this version.
