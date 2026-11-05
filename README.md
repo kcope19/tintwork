@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.12 (Full do-no-harm, Batch Open tabs, gated radial estimate)
+
+v1.12 keeps to non-AI tools. Full upright refuses corrections that would make horizontals worse (including nearly level facades and dense near-vertical diagonals). Batch process gains **Open tabs**; Batch again can repeat that subset. A radial lens estimate is computed for diagnosis but **not** applied yet (it did not beat v1.11 on the library/brick tuning photos). New held-out photo: `hongkong.jpg`. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.11 (batch remembers folders, Batch again, steadier Full upright)
 
 v1.11 keeps to non-AI tools. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md) for how each change was measured, including a new held-out photo that Full upright still makes worse.

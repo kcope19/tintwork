@@ -1,3 +1,4 @@
+<!-- v1.12: Full do-no-harm refuse; Batch Open tabs subset; radial estimate gated; job 32 hongkong held-out. Scorecard still 0 beat / 2 match / rest trail. -->
 # Tintwork vs. paid editors: living comparison
 
 This document compares Tintwork with current paid editors at each milestone. It covers **functionality and general workflows only**. Tintwork copies no code, assets, icons, names or trade dress from these products. Product names are used here for comparison only, and each belongs to its owner.
@@ -5,6 +6,10 @@ This document compares Tintwork with current paid editors at each milestone. It 
 Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One / Lightroom (where relevant), and Photopea (as the closest web reference).
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
+
+## v1.12 (2026-11-05)
+
+Full upright now refuses a correction that would raise horizontal tilt (geneva / Hong Kong held-outs keep their before angles). Batch **Open tabs** + Batch again on that subset closes part of the “export selection” gap vs Lightroom; step counts still trail. Lens-profile-style radial undistort before Full was tried and **gated off** (no win on library/brick vs v1.11). Scorecard: **0 beat / 2 match / rest trail** (32 jobs).
 
 ## v1.11: batch remembers folders, Batch again, steadier Full upright (2026-11-03)
 

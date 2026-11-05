@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated for v1.8.0, v1.9.0, v1.10.0 and v1.11.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated for v1.8.0, v1.9.0, v1.10.0, v1.11.0 and v1.12.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,20 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.12.0 update (2026-11-05, America/New_York)
+
+v1.12 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v112-test.mjs` has 16 checks and passed 16/16. The full `npm test` passed all 1003 checks (987 in v1.11 + 16).
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F29 | Full upright on nearly level facades (dual tiny-rotate V+H) sheared horizontals worse than doing nothing (hongkong). | accuracy / safety | job 32 first Tintwork run: horizontals to 1.46° | Full refuses when both V and H are rotate with |angle|<2°, and refuses when applying horizontals would raise mean/worst horizontal tilt | v1.12.0 |
+| F30 | Full on geneva-like dense near-vertical diagonals could still rotate and double hidden horizontal tilt. | accuracy / safety | job 31 | Do-no-harm: refuse tiny Vertical rotate when many near-verticals and no horizontals; Vertical fallback also refuses clear horizontal worsening | v1.12.0 (geneva: no correction; edges preserved) |
+| F31 | Batch again only repeated a whole remembered folder, not a selection / last-opened subset. | gap | AUDIT v1.11 "Not done"; Lightroom exports the selection | **Open tabs** in Batch process; Batch again repeats a files/tabs run on matching open tabs (by remembered names) | v1.12.0 |
+
+**Radial (item 1):** `estimateRadial` + mesh path exist, but applying the estimated *k* (with VP re-fit) **did not beat v1.11** on library/brick and hurt some edges, so the warp stays **gated off** (`kEst` recorded for diagnosis). Jobs 27/28 still fail the 0.5° bar at the same numbers as v1.11. New held-out `hongkong.jpg` (job 32) downloaded after the change; seeds fixed before the first Tintwork run.
+
+**Not done in v1.12:** Full within 0.5° on library/brick/geneva; enabling radial warp; ICC printer profiles / gamut warning (still N/A without ICC — soft proof stays approximate).
 
 ## v1.11.0 update (2026-11-03, America/New_York)
 
@@ -134,7 +148,7 @@ and other RAW files from Explorer through `file_handlers`. Alt/F10 menu access i
 
 ## What is still missing, ranked (biggest gap first)
 
-Updated for v1.11. Batch now remembers its folders and has Batch again (old item 6 is replaced by the narrower gap below).
+Updated for v1.12. Batch again can repeat an Open-tabs / files subset. Full refuses do-no-harm cases (geneva, hongkong). Radial warp still gated.
 
 1. **One-click subject / background / sky selection (ML).** Not planned until the user wants AI.
 2. **Content-aware / generative fill and remove** for real texture. Healing removes 79% on the real portrait, and the empty-edge fill smears.

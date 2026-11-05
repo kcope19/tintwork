@@ -1,0 +1,189 @@
+{
+  "url": "http://127.0.0.1:41661/",
+  "label": "v112-before",
+  "date": "2026-11-05T14:26:37.536Z",
+  "results": [
+    {
+      "id": 16,
+      "name": "10R: Auto upright on a real photo (church among towers, CC0)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.00° / -0.20° / -0.18° (edge support 1105/1105, 314/317, 525/525) (18 lines, cropped to 1132×1571)",
+      "steps": 5,
+      "ms": 6260,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 17,
+      "name": "10R: Auto upright on a real photo (high-rise looking up, CC0)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -9.09° / 10.91° → -0.34° / 0.01° (edge support 102/160, 110/163) (18 lines, cropped to 1046×588)",
+      "steps": 5,
+      "ms": 5719,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c6.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 22,
+      "name": "10R: Upright Full on the church photo (verticals + horizontals)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.00° / -0.20° / -0.18° (edge support 1105/1105, 314/317, 525/525) (18 lines, cropped to 1132×1571)",
+      "steps": 5,
+      "ms": 6315,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 26,
+      "name": "10R holdout: Auto upright on a second real tower photo (CC0, not used for tuning)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt 0.44° / 2.77° / 4.75° → -0.00° / 0.06° / 0.23° (edge support 253/285, 256/260, 160/191) (14 lines, cropped to 1185×596)",
+      "steps": 5,
+      "ms": 5489,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file tower.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 27,
+      "name": "10R holdout: Upright Full on a real photo with converging horizontals (library shelves, CC0; verticals and horizontals measured)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt 0.79° / -0.05° / -4.15° / 4.57° / -4.33° → 0.75° / -0.08° / 0.85° / 0.68° / 0.50° (edge support 306/344, 273/441, 252/338, 298/349, 132/182) (22 lines + 4 horizontal, cropped to 1002×668)",
+      "steps": 5,
+      "ms": 5692,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file library.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 28,
+      "name": "10R holdout: Upright Full on a second real photo with converging horizontals (shop front, CC0; verticals and horizontals measured)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt 0.05° / 0.85° / 5.13° / 4.21° / 1.60° → 0.23° / 1.15° / -0.33° / -0.97° / -0.06° (edge support 183/183, 134/160, 131/153, 93/93, 88/144) (14 lines + 9 horizontal, cropped to 971×647)",
+      "steps": 5,
+      "ms": 6041,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file brick.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 31,
+      "name": "11R holdout: Upright Full on a third real photo (office facade with diagonal fins, CC0; seeds fixed before the first run, never tuned on)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt -0.21° / 0.50° / 0.60° / 0.38° / 0.43° → -0.66° / 0.00° / 0.11° / 0.86° / 0.92° (edge support 311/514, 513/516, 694/695, 237/237, 197/197) (20 lines, cropped to 1257×838)",
+      "steps": 5,
+      "ms": 5690,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file geneva.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    }
+  ]
+}

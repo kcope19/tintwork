@@ -1,10 +1,35 @@
-# Workflow benchmark (v1.7.0 → v1.8.0 → v1.9.0 → v1.10.0 → v1.11.0)
+# Workflow benchmark (v1.7.0 → v1.8.0 → v1.9.0 → v1.10.0 → v1.11.0 → v1.12.0)
 
 v1.8 adds nine jobs (13–21) that use **real photos** (public domain / CC0, `test-assets/real/LICENSES.md`) and the new
 features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from v1.7 (below, kept for history).
 
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
+
+## v1.12 scorecard (non-AI polish: Full do-no-harm, gated radial estimate, Batch Open tabs)
+
+v1.12 adds one job:
+- **32:** Upright Full on a **new held-out** real photo (Hong Kong facade, CC0, `hongkong.jpg`). Seeds fixed before the first Tintwork run; never tuned on.
+
+**Held-out method.** `hongkong.jpg` was downloaded after the v1.12 upright do-no-harm / radial work was in progress. Its five reference edges were fixed before Tintwork ran on it. `geneva.jpg` (job 31) remains a regression check (must not worsen). Library/brick stay tuning photos.
+
+Local after (try12): jobs 16/17/22/26 pass unchanged; 27/28 fail 0.5° at v1.11 numbers; 31 and 32 **refuse** (no correction) — edges preserved.
+
+| # | Job | Before (v1.11) | After (v1.12) | Tintwork steps excl. open | Competitors (docs) | Verdict |
+|---|-----|------|------|------|------|------|
+| 27 (tuning) | Upright Full, library | fail: 0.75° / −0.08° / 0.85° / 0.68° / 0.50° | fail: **identical** (radial gated) | 3 | Lightroom Full 2 | **trails** |
+| 28 (tuning) | Upright Full, brick | fail: 0.23° / 1.15° / −0.33° / −0.97° / −0.06° | fail: **identical** | 3 | as job 27 | **trails** |
+| 31 (held out) | Upright Full, geneva fins | fail: applied and worsened (v1.11) / or same as v1.10 | fail bar: **no correction** (refuse); edges −0.21° / 0.50° / 0.60° / 0.38° / 0.43° preserved | 3 | as job 27 | **trails** (safer than v1.11 apply-and-worsen; still not a 0.5° pass) |
+| 32 (held out) | Upright Full, Hong Kong facade | n/a (new) | fail bar: **no correction** (dual tiny-rotate refuse); edges −0.40° / 0.63° / 0.13° / −0.11° / 0.21° preserved. First apply without refuse had made horizontals up to 1.46° | 3 | as job 27 | **trails** |
+| 16 / 17 / 22 / 26 | Auto / Full regression | pass | pass, identical | 3 | as before | trails |
+| Batch Open tabs / again subset | selection-style repeat | Batch again folder-only | Open tabs + again on matching open tab names | — | Lightroom exports selection | **trails** (closer) |
+
+**Summary (v1.12): 0 beat, 2 match (18, 19), every other job trails (now 32 jobs). Full still fails 0.5° on library/brick; held-outs no longer get a harmful correction.**
+
+Radial disclosure: half-angle `estimateRadial` can report e.g. kEst≈−0.05 on the library, but applying it (mesh-only or with VP re-fit) raised edges vs v1.11 on the tuning set, so **kRad stays 0**.
+
+### Test-change disclosure (v1.12)
+- `v112-test.mjs` library Full check keeps the **1.0° bar** (weaker than the bench 0.5°). Geneva/hongkong are checked for **refuse / not-worse**, not 0.5°. Church Full keeps the 0.5° bar. All disclosed here and in the test file.
 
 ## v1.11 scorecard (non-AI polish: batch remembers folders, Batch again, steadier Full upright)
 
