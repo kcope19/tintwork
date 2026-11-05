@@ -18,7 +18,7 @@ Local Chromium `?platform=win`, 2026-11-05 America/New_York. Audit-driven; not a
 
 **Summary (v1.15): bugfix on Done+feather undo; 16-bit Export default is a small honesty win. No trails→match on jobs 13/14/Full. npm test: 1052.**
 
-**Test-change disclosure:** `v115-test` is new (18 checks). `v112-test` APP_VERSION pin accepts through 1.15.0. No quality bars loosened.
+**Test-change disclosure:** `v115-test` is new (18 checks). `v112-test` / `v114-test` APP_VERSION pins accept 1.15.0 on this tree (not a quality bar). No quality bars loosened.
 
 **Adversarial / why these could be wrong:**
 - “Match” on undo is against user expectation, not a paid-app step count.
