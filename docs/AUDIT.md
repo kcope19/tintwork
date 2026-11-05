@@ -31,9 +31,11 @@ v1.15 is an **adversarial polish pass** (no AI, no heal%/Full≤0.5° cycle). Sc
 
 **Not done:** ICC soft proof; heal >79%; Full ≤0.5°; one-click subject (AI).
 
-### Live verification (v1.15.0, 2026-11-05 America/New_York)
+### Live verification (v1.15.0, 2026-11-05 about 12:23 PM America/New_York)
 
-- Filled after deploy.
+- Live site reports `tintwork-shell-v1.15.0` / `APP_VERSION` 1.15.0.
+- `v115-test` against https://kcope19.github.io/tintwork/ : **18/18 × 3**.
+- Screenshots: `115-live-done-feather.png`, `115-live-export-png16.png`.
 
 ## v1.14.0 update (2026-11-05, America/New_York)
 
