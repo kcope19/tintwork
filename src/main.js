@@ -25,7 +25,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.14.0';
+const APP_VERSION = '1.15.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -1563,7 +1563,10 @@ function setTool(id) {
   if (state.mxf && id !== state.tool) applyMeshXf();
   if (state.tool === 'crop' && id !== 'crop') state.crop = null;
   if (state.tool === 'polylasso' && id !== 'polylasso') state.poly = null;
-  if (state.tool === 'objsel' && id !== 'objsel') state.objSel = null;
+  if (state.tool === 'objsel' && id !== 'objsel' && state.objSel) {
+    state.objSel = null;
+    status('Object select kept.');
+  }
   state.tool = id;
   for (const b of document.querySelectorAll('#toolbar button')) b.classList.toggle('active', b.dataset.tool === id);
   const cursors = { move: 'move', select: 'crosshair', lasso: 'crosshair', polylasso: 'crosshair', wand: 'crosshair', objsel: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', clone: 'none', heal: 'none', spot: 'none', tone: 'none', redeye: 'none', liquify: 'none', gradient: 'crosshair', shape: 'crosshair', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
@@ -1659,15 +1662,38 @@ function objSelCompute(s) {
 }
 function objSelDone() { if (!state.objSel) return; state.objSel = null; status('Object select kept.'); buildOptionsBar(); requestRender(); }
 /** v1.14: keep the cut-out and feather it in one step (uses the remembered Feather radius). */
+/**
+ * Keep the cut-out and feather it as **one** undo step (v1.15): the live Object select
+ * commits from the box/strokes are squashed into a single “Object select + feather” entry,
+ * so Undo returns to the pre-select state instead of a hard unfeathered mask.
+ */
 async function objSelDoneFeather() {
   if (!state.objSel) return;
+  const d = doc(), sel = d?.selection;
   objSelDone();
-  const d = doc(), sel = d?.selection; if (!sel) return;
+  if (!sel || doc() !== d) return;
   const radius = Math.max(0.5, Math.min(250, +state.opts.featherRadius || 8));
   setBusy(1);
   try {
     const m = await ops.featherMask(sel.mask, sel.W, sel.H, radius);
-    if (doc() === d && d.selection === sel) setSelection(makeSelection(sel.W, sel.H, m), `Object select + feather ${radius}px`);
+    if (doc() !== d) return;
+    d.selection = makeSelection(sel.W, sel.H, m);
+    const label = `Object select + feather ${radius}px`;
+    // Squash consecutive tip “Object select…” history entries into this one feathered commit.
+    let i = history.index;
+    while (i > 0 && /^Object select/.test(history.entries[i]?.label || '')) i--;
+    if (history.index > i && /^Object select/.test(history.entries[history.index]?.label || '')) {
+      const last = history.entries[history.index];
+      last.label = label;
+      last.snap = snapshot();
+      history.entries.splice(i + 1, history.index - i, last);
+      history.index = i + 1;
+      updateHistoryPanel();
+      requestRender();
+      buildOptionsBar();
+    } else {
+      commit(label);
+    }
     status(`Object select kept and feathered ${radius}px.`);
   } finally { setBusy(-1); }
 }
@@ -4806,11 +4832,14 @@ function openExportDialog() {
   body.querySelector('#ePresetDel').addEventListener('click', () => { const id = pSel.value; if (!id) return; deleteExportPreset(id); fillPresets(''); status('Export preset deleted.'); });
   const last = allExportPresets().find((x) => x.id === localStorage.getItem(LAST_EXPORT_PRESET_KEY));
   fillPresets(last ? last.id : ''); if (last) applyPreset(last);
+  // v1.15: a 16-bit document defaults to PNG 16-bit so Export does not silently dither to 8-bit
+  else if (is16()) { fmt.value = 'image/png16'; }
   fmt.addEventListener('change', () => {
     q.disabled = fmt.value.startsWith('image/png') || fmt.value === PSD_TYPE;
     const noSize = fmt.value === 'image/png16' || fmt.value === PSD_TYPE; sizeSel.disabled = noSize; if (noSize && sizeSel.value !== 'original') { sizeSel.value = 'original'; sizeSel.dispatchEvent(new Event('change')); }
     dpiIn.disabled = fmt.value === 'image/webp' || fmt.value === PSD_TYPE; if (canShareFiles) prepare();
   });
+  fmt.dispatchEvent(new Event('change'));
   q.addEventListener('input', () => { body.querySelector('#eQv').textContent = q.value; if (canShareFiles) prepare(); });
   body.querySelector('#eName').addEventListener('input', () => { if (canShareFiles) prepare(); });
   showModal({ title: 'Export image', body, okLabel: canShareFiles ? 'Download' : 'Export', ok: () => {
