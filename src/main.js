@@ -7939,6 +7939,25 @@ async function batchSourcesFrom(dir, dest) {
   if (same) { const w = new Set(batchWritten()); list = list.filter((h) => !w.has(h.name)); }
   return list;
 }
+/** Open tabs as batch sources (original file handle when known, else a JPEG of that tab's composite). Optional name filter = last-opened subset. */
+async function sourcesFromOpenTabs(filterNames = null) {
+  const want = filterNames?.length ? new Set(filterNames) : null, out = [];
+  const home = doc();
+  for (let i = 0; i < tabs.length; i++) {
+    const d = tabs[i].doc; if (!d?.name) continue;
+    if (want && !want.has(d.name)) continue;
+    if (d.fileHandle?.kind === 'file') { out.push(d.fileHandle); continue; }
+    switchTab(i);
+    freshComp();
+    try { await compositeSettled(); } catch { /* ignore */ }
+    const blob = await new Promise((r) => comp.toBlob(r, 'image/jpeg', 0.92));
+    if (!blob) continue;
+    const base = (d.name || 'image').replace(/\.tintwork$/i, '').replace(/\.[^.]+$/, '');
+    out.push(new File([blob], `${base}.jpg`, { type: 'image/jpeg' }));
+  }
+  if (home && tabs.some((t) => t.doc === home)) switchTab(tabs.findIndex((t) => t.doc === home));
+  return out;
+}
 async function executeBatch(sources, opts, destHandle) {
   const sink = await batchDestSink(destHandle); if (!sink) { status('Batch cancelled.'); return null; }
   const ui = progressUI('Batch');
@@ -7961,26 +7980,39 @@ function batchOptsFrom(last) {
   if (!Array.isArray(last.variants) || !last.variants.length) return 'it has no outputs';
   return { actionId: last.actionId || null, lookId: last.lookId || null, intensity: last.intensity || 100, rawSettings: rawSettingsFor(last.raw || ''), variants: last.variants, pattern: last.pattern || '{name}-edited', watermark };
 }
-/** File ▸ Batch again: the last batch's settings on its source folder, into its output folder. */
+/** File ▸ Batch again: last settings on the source folder, or on the open tabs that match the last file/tabs run. */
 async function batchAgain() {
   let last = null; try { last = JSON.parse(localStorage.getItem(LAST_BATCH_KEY) || 'null'); } catch { /* ignore */ }
   lastBatchPrompts = 0;
-  const inH = last?.src === 'folder' ? await batchHandle(BATCH_IN) : null;
-  if (!last || !inH) { toast('Batch again repeats a batch run on a folder. Run Batch process on a folder once first.', 5000); openBatchDialog(); return null; }
+  if (!last) { toast('Batch again repeats the last batch. Run Batch process once first (folder, files, or open tabs).', 5000); openBatchDialog(); return null; }
   const opts = batchOptsFrom(last);
   if (typeof opts === 'string') { toast(`Can't repeat the last batch: ${opts}. Opening Batch process.`, 5000); openBatchDialog(); return null; }
-  if (!(await batchGrant(inH, 'read'))) { toast(`No permission to read “${inH.name}”.`, 4000); return null; }
-  if (!(await dirAlive(inH))) { await deleteLink(BATCH_IN); toast(`The source folder “${inH.name}” is gone (moved, renamed or deleted). Choose it again.`, 5000); openBatchDialog(); return null; }
   const outH = await batchHandle(BATCH_OUT);
-  const sources = await batchSourcesFrom(inH, outH);
-  if (!sources.length) { toast(`No images in “${inH.name}”.`, 4000); return null; }
-  status(`Batch again: ${sources.length} images from “${inH.name}”…`);
+  if (last.src === 'folder') {
+    const inH = await batchHandle(BATCH_IN);
+    if (!inH) { toast('Batch again needs the last source folder. Run Batch process on a folder once first.', 5000); openBatchDialog(); return null; }
+    if (!(await batchGrant(inH, 'read'))) { toast(`No permission to read “${inH.name}”.`, 4000); return null; }
+    if (!(await dirAlive(inH))) { await deleteLink(BATCH_IN); toast(`The source folder “${inH.name}” is gone (moved, renamed or deleted). Choose it again.`, 5000); openBatchDialog(); return null; }
+    const sources = await batchSourcesFrom(inH, outH);
+    if (!sources.length) { toast(`No images in “${inH.name}”.`, 4000); return null; }
+    status(`Batch again: ${sources.length} images from “${inH.name}”…`);
+    return executeBatch(sources, opts, outH);
+  }
+  // files / tabs: re-run on currently open tabs (filtered to the last names when remembered)
+  const sources = await sourcesFromOpenTabs(last.names || null);
+  if (!sources.length) {
+    toast(last.names?.length
+      ? `Open the last batch's images again (or their tabs), then Batch again. Looking for: ${last.names.slice(0, 4).join(', ')}${last.names.length > 4 ? '…' : ''}.`
+      : 'Open the images in tabs first, or run Batch process and choose files / Open tabs.', 6000);
+    openBatchDialog(); return null;
+  }
+  status(`Batch again: ${sources.length} open tab${sources.length === 1 ? '' : 's'}…`);
   return executeBatch(sources, opts, outH);
 }
 function openBatchDialog() {
   const list = savedVariants().slice(0, 1), body = document.createElement('div'); let sources = [], srcDir = null, destDir = null;
   const acts = allActions(), looks = allLooks(), fsa = 'showDirectoryPicker' in window;
-  body.innerHTML = `<div class="field two"><span>Source</span><span><button type="button" id="bSrcDir" ${fsa ? '' : 'disabled title="Folder access needs Chrome or Edge"'}>Choose folder…</button> <button type="button" id="bSrcFiles">Choose files…</button> <span id="bSrcInfo" class="muted">No images chosen (or drop files or a folder here)</span></span></div>` +
+  body.innerHTML = `<div class="field two"><span>Source</span><span><button type="button" id="bSrcDir" ${fsa ? '' : 'disabled title="Folder access needs Chrome or Edge"'}>Choose folder…</button> <button type="button" id="bSrcFiles">Choose files…</button> <button type="button" id="bSrcTabs" title="Use the images already open as tabs (Batch again can repeat this subset)">Open tabs</button> <span id="bSrcInfo" class="muted">No images chosen (or drop files or a folder here)</span></span></div>` +
     `<div class="field two"><span>Output folder</span><span><button type="button" id="bDestDir" ${fsa ? '' : 'disabled title="Folder access needs Chrome or Edge; a .zip is downloaded"'}>Choose folder…</button> <span id="bDestInfo" class="muted">${fsa ? 'Asked when you run' : '.zip download'}</span> <button type="button" id="bForget" class="hidden" title="Forget the remembered source and output folders">Forget folders</button></span></div>` +
     formHTML([
       { label: 'Export preset', html: `<select id="bPreset" title="Use a saved export preset for the outputs (format, quality, size, ppi and its watermark)"><option value="">(set the outputs below)</option>${allExportPresets().map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('')}</select>` },
@@ -7990,7 +8022,7 @@ function openBatchDialog() {
       { label: 'RAW files develop with', html: `<select id="bRaw" title="Develop settings for camera RAW files in the batch">${rawPresetOptions(false)}</select>` },
       { label: 'File names', html: `<input type="text" id="bPattern" value="{name}-edited" />` },
       { label: 'Watermark', html: watermarkFieldHTML('bWm') },
-    ]) + '<p class="muted small">Tokens: {name} {preset} {w} {h} {N} (file number, {N:3} padded) {date}. Tintwork remembers both folders for next time (File ▸ Batch again repeats the whole run); the browser may ask again for permission to use them.</p><b>Outputs</b>';
+    ]) + '<p class="muted small">Tokens: {name} {preset} {w} {h} {N} (file number, {N:3} padded) {date}. Tintwork remembers both folders for next time; File ▸ Batch again also repeats a files/Open-tabs run on the matching open tabs. The browser may ask again for folder permission.</p><b>Outputs</b>';
   const ve = variantEditor(list); body.append(ve);
   let presetWm = null; // the chosen export preset's own watermark (until the watermark is edited here)
   wireWatermarkField(body, 'bWm', () => {});
@@ -8021,6 +8053,10 @@ function openBatchDialog() {
   })();
   body.querySelector('#bSrcDir').onclick = async () => { try { await useDir(await window.showDirectoryPicker({ id: 'tintwork-batch-in', mode: 'read' })); } catch (err) { if (err?.name !== 'AbortError') toast(err.message, 4000); } };
   body.querySelector('#bSrcFiles').onclick = () => { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = OPEN_ACCEPT; inp.onchange = () => { picked = true; srcDir = null; sources = [...inp.files]; info(); destInfo(); }; inp.click(); };
+  body.querySelector('#bSrcTabs').onclick = async () => {
+    if (!tabs.length) { toast('Open one or more images first (each is a tab).'); return; }
+    picked = true; srcDir = null; sources = await sourcesFromOpenTabs(); info(`Open tabs: ${plural(sources.length)}`); destInfo();
+  };
   body.querySelector('#bDestDir').onclick = async () => { try { const dir = await window.showDirectoryPicker({ id: 'tintwork-export', mode: 'readwrite' }); destDir = dir; rememberedOut = null; destInfo(); await rememberBatchDir(BATCH_OUT, dir); } catch (err) { if (err?.name !== 'AbortError') toast(err.message, 4000); } };
   body.querySelector('#bForget').onclick = async () => { await forgetBatchDirs(); destDir = rememberedOut = null; if (!picked) { srcDir = null; sources = []; } destInfo(); info(); status('Batch folders forgotten.'); };
   const isImageName = (n) => /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(n) || isRawName(n) || isPsdName(n);
@@ -8037,7 +8073,10 @@ function openBatchDialog() {
     if (!sources.length && !srcDir) { toast('Choose a folder or some images first.'); return false; }
     const raw = body.querySelector('#bRaw').value, wmOn = body.querySelector('#bWm').checked;
     const opts = { actionId: body.querySelector('#bAct').value || null, lookId: body.querySelector('#bLook').value || null, intensity: +body.querySelector('#bInt').value || 100, rawSettings: rawSettingsFor(raw), variants: list, pattern: body.querySelector('#bPattern').value || '{name}-edited', watermark: wmOn ? (presetWm || watermarkSettings()) : null };
-    try { localStorage.setItem(LAST_BATCH_KEY, JSON.stringify({ src: srcDir ? 'folder' : 'files', presetId: bp.value || null, actionId: opts.actionId, lookId: opts.lookId, intensity: opts.intensity, raw, variants: list.map((v) => ({ ...v })), pattern: opts.pattern, wm: !wmOn ? 'none' : presetWm ? 'preset' : 'global' })); } catch { /* ignore */ }
+    try {
+      const srcKind = srcDir ? 'folder' : (body.querySelector('#bSrcInfo')?.textContent || '').startsWith('Open tabs') ? 'tabs' : 'files';
+      localStorage.setItem(LAST_BATCH_KEY, JSON.stringify({ src: srcKind, names: srcKind === 'folder' ? null : sources.map((x) => x.name).slice(0, 200), presetId: bp.value || null, actionId: opts.actionId, lookId: opts.lookId, intensity: opts.intensity, raw, variants: list.map((v) => ({ ...v })), pattern: opts.pattern, wm: !wmOn ? 'none' : presetWm ? 'preset' : 'global' }));
+    } catch { /* ignore */ }
     lastBatchPrompts = 0;
     const dir = srcDir, dest = destDir;
     (async () => {
@@ -8102,7 +8141,7 @@ window.tintwork = {
   setProof, get proofMode() { return proofMode; }, PROOF_PAPERS,
   batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
-  renderVariant, exportVariants, runBatch, memorySink, zipSink, formatName, variantSize, withDpi, autoOpts, saveAutoOpts, openAutoOptionsDialog,
+  renderVariant, exportVariants, runBatch, sourcesFromOpenTabs, memorySink, zipSink, formatName, variantSize, withDpi, autoOpts, saveAutoOpts, openAutoOptionsDialog,
   // v0.8
   pickLayer: (ids) => { const d = doc(); d.activeId = ids[ids.length - 1]; d.picked = new Set(ids.length > 1 ? ids : []); updateLayersPanel(); },
   pickedLayers: () => pickedLayers().map((l) => l.id), alignLayers, straightenBy, autoStraightenCmd, autoEnhanceCmd, autoWhiteBalanceCmd, wbPickAt,
