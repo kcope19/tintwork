@@ -28,6 +28,15 @@ Local after (try12): jobs 16/17/22/26 pass unchanged; 27/28 fail 0.5° at v1.11 
 
 Radial disclosure: half-angle `estimateRadial` can report e.g. kEst≈−0.05 on the library, but applying it (mesh-only or with VP re-fit) raised edges vs v1.11 on the tuning set, so **kRad stays 0**.
 
+
+### Live verification (v1.12.0)
+
+Pages finished deploying commit 34251f5 at about 10:14 AM America/New_York on 2026-11-05; the live `sw.js` reports `tintwork-shell-v1.12.0`.
+
+- `TW_URL=https://kcope19.github.io/tintwork/ node scripts/v112-test.mjs` passed **16/16 three times** (Open tabs batch + Batch again subset, library Full ≤1.0°, geneva/hongkong refuse & not-worse, church Full ≤0.5°, APP_VERSION 1.12.0).
+- Live workflow bench jobs 27/28/31/32 (`docs/audit/workflows-v112-live1.json` … `live3.json`): **identical 3/3** — library 0.75° / −0.08° / 0.85° / 0.68° / 0.50°; brick 0.23° / 1.15° / −0.33° / −0.97° / −0.06°; geneva and hongkong **no correction** (edges preserved). They still *fail* the 0.5° pass bar by design (refuse ≠ pass).
+- Screenshots: `screenshots/112-live-batch-open-tabs.png` (Batch process → Open tabs: 2 images), `screenshots/112-live-upright-hongkong-refuse.png` (Full on hongkong → mode none / status says lines already look straight).
+
 ### Test-change disclosure (v1.12)
 - `v112-test.mjs` library Full check keeps the **1.0° bar** (weaker than the bench 0.5°). Geneva/hongkong are checked for **refuse / not-worse**, not 0.5°. Church Full keeps the 0.5° bar. All disclosed here and in the test file.
 

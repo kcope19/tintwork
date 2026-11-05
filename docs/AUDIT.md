@@ -22,6 +22,13 @@ v1.12 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v112-
 
 **Radial (item 1):** `estimateRadial` + mesh path exist, but applying the estimated *k* (with VP re-fit) **did not beat v1.11** on library/brick and hurt some edges, so the warp stays **gated off** (`kEst` recorded for diagnosis). Jobs 27/28 still fail the 0.5° bar at the same numbers as v1.11. New held-out `hongkong.jpg` (job 32) downloaded after the change; seeds fixed before the first Tintwork run.
 
+
+### Live verification (v1.12.0, 2026-11-05 about 10:14–10:18 AM America/New_York)
+
+- Live site reports `tintwork-shell-v1.12.0` / `APP_VERSION` 1.12.0.
+- `v112-test` against https://kcope19.github.io/tintwork/ : **16/16 × 3**.
+- Bench jobs 27/28/31/32 live: numbers match local; 31/32 refuse (do-no-harm). Screenshots `112-live-batch-open-tabs.png`, `112-live-upright-hongkong-refuse.png`.
+
 **Not done in v1.12:** Full within 0.5° on library/brick/geneva; enabling radial warp; ICC printer profiles / gamut warning (still N/A without ICC — soft proof stays approximate).
 
 ## v1.11.0 update (2026-11-03, America/New_York)

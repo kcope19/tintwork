@@ -1,0 +1,111 @@
+{
+  "url": "https://kcope19.github.io/tintwork/",
+  "label": "v112-live3",
+  "date": "2026-11-05T15:17:31.342Z",
+  "results": [
+    {
+      "id": 27,
+      "name": "10R holdout: Upright Full on a real photo with converging horizontals (library shelves, CC0; verticals and horizontals measured)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt 0.79° / -0.05° / -4.15° / 4.57° / -4.33° → 0.75° / -0.08° / 0.85° / 0.68° / 0.50° (edge support 306/344, 273/441, 252/338, 298/349, 132/182) (22 lines + 4 horizontal, cropped to 1002×668)",
+      "steps": 5,
+      "ms": 5801,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file library.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 28,
+      "name": "10R holdout: Upright Full on a second real photo with converging horizontals (shop front, CC0; verticals and horizontals measured)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "edge tilt 0.05° / 0.85° / 5.13° / 4.21° / 1.60° → 0.23° / 1.15° / -0.33° / -0.97° / -0.06° (edge support 183/183, 134/160, 131/153, 93/93, 88/144) (14 lines + 9 horizontal, cropped to 971×647)",
+      "steps": 5,
+      "ms": 6170,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file brick.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 31,
+      "name": "11R holdout: Upright Full on a third real photo (office facade with diagonal fins, CC0; seeds fixed before the first run, never tuned on)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "no correction (none); edges before -0.21° / 0.50° / 0.60° / 0.38° / 0.43°",
+      "steps": 5,
+      "ms": 5623,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file geneva.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Full)": 2,
+        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Affinity Photo (Perspective, both directions)": 6,
+        "Pixelmator Pro (Perspective)": 5,
+        "Photopea (Perspective transform)": 6
+      }
+    },
+    {
+      "id": 32,
+      "name": "12R holdout: Upright Full on a fourth real photo (Hong Kong facade, CC0; seeds fixed before the first run, never tuned on)",
+      "run": 1,
+      "ok": false,
+      "skip": false,
+      "detail": "no correction (none); edges before -0.40° / 0.63° / 0.13° / -0.11° / 0.21°",
+      "steps": 5,
+      "ms": 5623,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file hongkong.jpg",
+        "click: Image menu",
+        "click: Image ▸ Upright: full",
+        "key: Enter"
+      ],
+      "paid": {
+        "Lightroom Classic": 2,
+        "Photoshop (Camera Raw)": 4,
+        "Affinity Photo": 6,
+        "Pixelmator Pro": 5,
+        "Photopea": 6
+      }
+    }
+  ]
+}
