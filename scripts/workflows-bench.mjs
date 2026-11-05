@@ -332,14 +332,14 @@ const JOBS = [
   { id: 10, name: 'Fix converging verticals on a building', async run(R, page, A) {
     await ctrlO(R, page, 'building.jpg', A.building);
     const ex = (y) => { const t = (y - 200) / 2100; return [600 - 300 * t, 1400 + 300 * t]; }; // the facade's true edges
-    if (await page.locator('#menus .menu-items button[data-cmd="autoUpright"]').count()) { await R.menu('Image', 'Auto upright'); await R.key('Enter'); }
+    if (await page.locator('#menus .menu-items button[data-cmd="autoUpright"]').count()) { await R.menu('Image', 'Auto upright'); await R.settle(); if (await page.evaluate(() => !!window.tintwork.mxf)) await R.key('Enter'); }
     else if (await page.locator('#menus .menu-items button[data-cmd="guidedUpright"]').count()) {
       await R.menu('Image', 'Guided upright');
       await page.waitForFunction(() => window.tintwork.mxf);
       await R.drag([{ x: ex(300)[0], y: 300 }, { x: ex(2200)[0], y: 2200 }], 'guide along the left wall');
       await R.drag([{ x: ex(300)[1], y: 300 }, { x: ex(2200)[1], y: 2200 }], 'guide along the right wall');
-      await page.waitForFunction(() => window.tintwork.mxf && !window.tintwork.mxf.guideMode, null, { timeout: 5000 }).catch(() => {});
-      await R.key('Enter');
+      await page.waitForFunction(() => !window.tintwork.mxf || !window.tintwork.mxf.guideMode, null, { timeout: 5000 }).catch(() => {});
+      await R.settle(); if (await page.evaluate(() => !!window.tintwork.mxf)) await R.key('Enter');
     } else {
       await R.menu('Edit', 'Perspective');
       await page.waitForFunction(() => window.tintwork.mxf);
@@ -515,7 +515,7 @@ const JOBS = [
       x.putImageData(im, 0, 0); const buf = new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer()); let b = ''; for (let i = 0; i < buf.length; i += 0x8000) b += String.fromCharCode(...buf.subarray(i, i + 0x8000)); return btoa(b); });
     await ctrlO(R, page, 'sea.png', Buffer.from(png, 'base64'));
     if (!(await page.locator('#menus .menu-items button[data-cmd="uprightLevel"]').count())) { R.note('no Level upright in this version'); return { ok: false, detail: 'no Level mode' }; }
-    await R.menu('Image', 'Upright: level'); await R.key('Enter'); await R.settle();
+    await R.menu('Image', 'Upright: level'); await R.settle(); if (await page.evaluate(() => !!window.tintwork.mxf)) await R.key('Enter'); await R.settle();
     const m = await page.evaluate(async () => { const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), W = c.width, H = c.height, d = c.getContext('2d').getImageData(0, 0, W, H).data;
       // horizon row at a column: the y where blue drops most (sub-pixel by threshold crossing on a 9-px column average)
       const row = (x0) => { const b = (y) => { let s = 0, n = 0; for (let x = x0 - 4; x <= x0 + 4; x++) { const i = (y * W + x) * 4; if (d[i + 3] > 250) { s += d[i + 2]; n++; } } return n ? s / n : null; };
@@ -632,9 +632,13 @@ async function realUpright(R, page, file, seeds, how) {
   } else {
     await R.menu('Image', 'Guided upright'); await page.waitForFunction(() => window.tintwork.mxf);
     for (const [a, b] of [seeds[0], seeds[seeds.length - 1]]) await R.drag([{ x: a[0], y: a[1] }, { x: b[0], y: b[1] }], 'guide along a vertical edge');
-    await page.waitForFunction(() => window.tintwork.mxf && !window.tintwork.mxf.guideMode, null, { timeout: 5000 }).catch(() => {});
+    await page.waitForFunction(() => !window.tintwork.mxf || (window.tintwork.mxf && !window.tintwork.mxf.guideMode), null, { timeout: 5000 }).catch(() => {});
   }
-  await R.key('Enter'); await R.settle();
+  // v1.13+: Auto / Level / Vertical / Full / Guided apply themselves; Enter only when a mesh is still open (older builds).
+  await page.waitForFunction(() => !window.tintwork.mxf || !!window.tintwork.lastUpright, null, { timeout: 20000 }).catch(() => {});
+  await R.settle();
+  if (await page.evaluate(() => !!window.tintwork.mxf)) await R.key('Enter');
+  await R.settle();
   const lu = await page.evaluate(() => window.tintwork.lastUpright || null);
   if (!lu?.H) return { ok: false, detail: `no correction (${lu?.mode || 'none'}); edges before ${before.map((e) => e.deg?.toFixed(2)).join('° / ')}°` };
   const mapped = []; for (const sd of seeds) mapped.push(await mapUpright(page, sd));

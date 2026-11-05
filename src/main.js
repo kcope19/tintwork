@@ -2876,9 +2876,12 @@ function autoUprightCmd(req = 'auto') {
     buildOptionsBar(); requestRender(); return lastUpright;
   }
   x.pts = next; x.upright = 'auto';
-  mxfPreview(); mxfRender().catch((err) => status(`Preview failed: ${err.message}`));
-  status(`Upright (${used}): ${msg} · adjust the corners if needed · Enter applies, Esc cancels.`);
+  mxfPreview();
+  // v1.13: Auto / Level / Vertical / Full apply at once (crop / fill / keep from the options bar), so the job is one
+  // menu choice like Lightroom's Upright — no extra Enter. Esc is unavailable after apply; Undo reverts.
+  status(`Upright (${used}): ${msg}`);
   buildOptionsBar();
+  void applyMeshXf();
   return lastUpright;
 }
 /** Downscaled alpha of the composite (≤ 800 px) for finding the empty corners. */
@@ -3033,9 +3036,11 @@ function addUprightGuide(x, g) {
   const m = mxfBounds(mxfMesh(x));
   if (!m) { x.pts = prev; status('That correction is too extreme. Try guides on longer edges.'); buildOptionsBar(); requestRender(); return; }
   x.guideMode = false; x.upright = 'guided';
-  mxfPreview(); mxfRender().catch((err) => status(`Preview failed: ${err.message}`));
-  status('Guided upright: lines straightened. Adjust the corners if needed; Enter applies, Esc cancels.');
+  mxfPreview();
+  // v1.13: Guided applies as soon as the second line is drawn (still one Undo to revert; Perspective stays for free edits).
+  status('Guided upright: lines straightened.');
   buildOptionsBar();
+  void applyMeshXf();
 }
 const mxfHandler = {
   down(p, e) {
