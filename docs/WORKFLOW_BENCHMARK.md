@@ -6,6 +6,28 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.14 scorecard (non-AI polish: soft-proof papers/CMY/last, objsel Done+feather, crop chips, RAW splitH)
+
+Local Chromium `?platform=win`, 2026-11-05 America/New_York. No heal% or Full≤0.5° cycle this version.
+
+| Job / area | What | v1.13 | v1.14 | Steps / note | Paid reference | Verdict |
+|---|---|---|---|---|---|---|
+| Soft proof | Papers + ink cue | glossy/matte + ink warning | + rag / newsprint / approx CMY + **last used** | — | Lightroom ICC Simulate Paper & Ink | **trails** (closer; still no ICC) |
+| 14 | Object select cut-out | IoU ~0.95, 5 steps (box + 2 strokes) | Same solve; **Done + feather** and sticky +Subject cut a post-cutout feather step when needed | 5 (cut-out) / −1 when feathering | Photoshop Object Selection 2 (ML) | **trails** (no AI; UX closer) |
+| Crop common ratios | Dropdown only | chips 1:1 / 4:5 / 16:9 / 8×10 / Free | 1 click vs open dropdown | — | — | **match** (common sizes) |
+| RAW before/after | Left/right split | + top/bottom (Y cycles) | — | Lightroom Y / split orientations | **match** (orientations) |
+| 13 / Full upright | heal 79%; Full fails 0.5° | unchanged (deliberately) | — | — | **trails** |
+
+**Summary (v1.14): crop common presets and RAW split orientations move toward match; soft proof and job 14 still trail (no ICC / no ML). Heal and Full untouched. npm test: see release.**
+
+**Test-change disclosure:** `v114-test` is new (21 checks). `v112-test` APP_VERSION pin accepts 1.12.0 / 1.13.0 / 1.14.0 on this tree (not a quality bar). Library Full bar stays the loosened 1.0° in `v112-test` (disclosed since v1.11). No quality bars loosened for heal or Full.
+
+**Adversarial / why these could be wrong:**
+- **Crop chips match:** only the five common sizes; the full dropdown still has banners/custom. Competitors also expose presets in one click.
+- **RAW split match:** orientation parity only — not a claim that develop quality matches Lightroom.
+- **Job 14 still trails:** Done + feather does not raise IoU or remove the need for two strokes on the USDA portrait; ML Select Subject remains 2 steps.
+- **Proof still trails:** approximate papers + greyscale CMY are not a printer profile.
+
 ## v1.13 scorecard (non-AI polish: auto-apply upright, ink warning, sRGB embed, heal/fill)
 
 Local Chromium `?platform=win`, 2026-11-05 America/New_York. Step counts below exclude the shared open-file pair (Ctrl+O + pick), matching how competitor clicks are counted from docs.

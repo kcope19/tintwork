@@ -1,4 +1,4 @@
-<!-- v1.13: auto-apply upright (Auto/Level steps match LR); ink warning; JPEG/PNG sRGB; heal search denser (still 79%); fill edges textured. Scorecard: upright Auto/Level/Guided match on steps; heal trails; Full trails. -->
+<!-- v1.14: soft-proof rag/newsprint/CMY + remember last; objsel Done+feather / sticky +Subject; crop chips; RAW top/bottom split. Scorecard: proof papers closer; job 14 still trails (no AI); crop/RAW step-adjacent polish. -->
 # Tintwork vs. paid editors: living comparison
 
 This document compares Tintwork with current paid editors at each milestone. It covers **functionality and general workflows only**. Tintwork copies no code, assets, icons, names or trade dress from these products. Product names are used here for comparison only, and each belongs to its owner.
@@ -6,6 +6,15 @@ This document compares Tintwork with current paid editors at each milestone. It 
 Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One / Lightroom (where relevant), and Photopea (as the closest web reference).
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
+
+## v1.14 (2026-11-05)
+
+| Area | Lightroom Classic | Photoshop | Affinity Photo | Pixelmator Pro | Photopea | Tintwork v1.14 |
+|---|---|---|---|---|---|---|
+| Soft-proof paper list + last used | ✅ ICC + Simulate Paper & Ink | ✅ Proof Setup | ✅ Soft proof | 🟡 | ❌ | 🟡 **Glossy / matte / photo rag / newsprint** + **Proof: last used**; approximate **CMY ink-load** greyscale (not ICC CMYK) |
+| Object select refine / feather | ✅ Select Subject + Refine Edge (ML) | ✅ Object Selection + Refine Edge (ML) | ✅ (ML) | ✅ (ML) | ✅ (ML) | 🟡 Sticky **+Subject / −Background** after the box; **Done + feather** (one step). Still graph-cut, no hair ML |
+| Crop common presets | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ Option-bar chips **1:1 · 4:5 · 16:9 · 8×10 · Free** |
+| RAW before/after split | ✅ left/right + top/bottom | ✅ via Camera Raw | 🟡 | 🟡 | ❌ | ✅ Split cycles **left/right → top/bottom** (Y key / Split button) |
 
 ## v1.13 (2026-11-05)
 

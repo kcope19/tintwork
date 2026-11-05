@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.13.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.14.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,23 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.14.0 update (2026-11-05, America/New_York)
+
+v1.14 is non-AI polish again (no heal% / Full≤0.5° cycle). Prefer trails→match on workflow. Every fix below was reproduced 3/3. `scripts/v114-test.mjs` has 21 checks and passed 21/21. The full `npm test` count is recorded in the release commit / live verification.
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F37 | Soft proof only had glossy/matte; turning proof off forgot the last paper; CMY was easy to over-claim. | gap | AUDIT v1.13 “Not done”; COMPARISON soft proof | View ▸ **photo rag / newsprint / approximate CMY** + **Proof: last used** (prefs keep the last paper when off). CMY is greyscale of approximate ink load — not ICC CMYK. | v1.14.0 |
+| F38 | Object select needed Shift/Alt for every refine stroke; feather after cutout was a separate Select ▸ Feather. | friction | job 14 trails on steps vs ML one-click | After the box, paint sticks on **+ Subject**; options bar **Done + feather** keeps and feathers in one step. | v1.14.0 |
+| F39 | Crop presets lived only in a long dropdown. | friction | workflow step cuts | Option-bar chips **1:1 · 4:5 · 16:9 · 8×10 · Free**. | v1.14.0 |
+| F40 | RAW before/after split was left/right only. | gap | COMPARISON / develop UX | Split button and **Y** cycle left/right → top/bottom → off. | v1.14.0 |
+
+**Not done in v1.14:** ICC printer profiles; heal above 79%; Full upright within 0.5°; one-click (no box) subject / hair matting (AI); job 14 still trails ML on steps.
+
+### Live verification (v1.14.0, 2026-11-05 America/New_York)
+
+- Filled in after deploy (see release commit).
 
 ## v1.13.0 update (2026-11-05, America/New_York)
 
