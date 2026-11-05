@@ -97,6 +97,9 @@ await T(() => { const t = window.tintwork; t.newDocument(2000, 2400, 'white', 'b
 const menuHas = await page.locator('#menus .menu-items button[data-cmd="guidedUpright"]').count();
 check(menuHas === 1, 'Image menu has Guided upright');
 if (menuHas) {
+  // v1.13 applies Guided immediately after the second line (Crop by default). This check measures uncropped
+  // geometry, so choose Keep *before* the guides are drawn.
+  await T(() => { window.tintwork.state.opts.uprightEdges = 'keep'; });
   await T(() => window.tintwork.run('guidedUpright'));
   const toS = (x, y) => page.evaluate(({ x, y }) => { const r = document.querySelector('#view').getBoundingClientRect(), s = window.tintwork.state; return { x: r.left + s.panX + x * s.zoom, y: r.top + s.panY + y * s.zoom }; }, { x, y });
   const drag = async (a, b) => { const s = await toS(...a), e = await toS(...b); await page.mouse.move(s.x, s.y); await page.mouse.down(); for (let k = 1; k <= 8; k++) await page.mouse.move(s.x + (e.x - s.x) * k / 8, s.y + (e.y - s.y) * k / 8); await page.mouse.up(); };
@@ -105,11 +108,8 @@ if (menuHas) {
   const mid = await T(() => ({ guides: window.tintwork.mxf?.guides?.length, bar: document.querySelector('#optionsbar').textContent }));
   check(mid.guides === 1 && /second line/i.test(mid.bar), `after one guide the options bar asks for a second (${mid.guides}, "${(mid.bar || '').slice(0, 60)}")`);
   await drag([ex(300)[1], 300], [ex(2200)[1], 2200]);
-  await page.waitForTimeout(400);
-  // v1.8 crops the empty corners by default; this check measures the uncropped geometry, so it picks Keep when offered
-  const keep = page.locator('#optionsbar [data-cmd="uprightEdges_keep"]'); if (await keep.count()) await keep.click();
-  await page.keyboard.press('Enter');
   await page.waitForFunction(() => !window.tintwork.mxf, null, { timeout: 15000 }).catch(() => {});
+  await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
   const e = await T(async () => { const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), x = c.getContext('2d'); const scan = (y, dir) => { const d = x.getImageData(0, y, c.width, 1).data; for (let k = 0; k < c.width; k++) { const i = dir > 0 ? k : c.width - 1 - k, j = i * 4; if (d[j + 3] > 200 && d[j] < 110 && d[j + 1] < 100) return i; } return -1; }; return [scan(360, 1), scan(2040, 1), scan(360, -1), scan(2040, -1)]; });
   check(e.every((v) => v > 0) && Math.abs(e[0] - e[1]) <= 6 && Math.abs(e[2] - e[3]) <= 6, `guided upright makes both walls vertical (left ${e[0]}→${e[1]}, right ${e[2]}→${e[3]})`);
   const id = await T(() => window.tintwork.uprightFromGuides([[0, 0], [100, 0], [100, 100], [0, 100]], [[[10, 0], [10, 100]], [[90, 0], [90, 100]]]));

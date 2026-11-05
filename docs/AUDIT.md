@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated for v1.8.0, v1.9.0, v1.10.0, v1.11.0 and v1.12.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.13.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,22 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.13.0 update (2026-11-05, America/New_York)
+
+v1.13 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v113-test.mjs` has 10 checks. The full `npm test` count is reported in the release commit.
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F32 | Auto / Level / Vertical / Full / Guided upright needed an extra Enter after the correction was already previewed (jobs 16/17/23 at 3 steps vs Lightroom's 2). | friction | workflow bench step counts | Corrections **apply immediately** (Crop / Fill / Keep from the edges option). Undo reverts. | v1.13.0 |
+| F33 | Soft proof had no out-of-range cue without ICC profiles. | gap | AUDIT v1.12 "Not done" | View ▸ **Proof: ink warning on/off** — magenta overlay for crush past paper white/ink black and an approximate CMY ink limit (no ICC). | v1.13.0 |
+| F34 | JPEG exports had no embedded colour profile; canvas PNG exports lacked an sRGB chunk (only `encodePNG` wrote one). | gap | byte inspection of exports | JPEG gets a compact sRGB ICC APP2; PNG gets an sRGB chunk after IHDR when missing. | v1.13.0 |
+| F35 | Spot heal still ~79% on the real portrait; Fill empty edges was a pure push-pull smear. | quality | job 13; AUDIT ranked gap | Denser polar search + skip brush-overlapping sources + high-pass grain term; Fill empty edges mirrors nearest opaque then blends with push-pull (8-bit and 16-bit). Heal % unchanged on the tuning spot (still 79%); grain guard held. | v1.13.0 |
+| F36 | New `src/srgb-icc.js` was not in the service worker shell list, so offline reload failed after the version bump. | bug (pre-release) | v12-test offline | Module added to `sw.js` SHELL. | v1.13.0 |
+
+**Not done in v1.13:** Full upright within 0.5° on library/brick; radial warp (still gated); ICC printer profiles; heal above 79% without skin blur on the USDA portrait.
+
+**Radial:** unchanged from v1.12 (estimate recorded, warp off).
 
 ## v1.12.0 update (2026-11-05, America/New_York)
 

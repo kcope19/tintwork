@@ -126,7 +126,13 @@ if (hasModes) {
   const hdeg = ([[x1, y1], [x2, y2]]) => Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
   const norm = (a) => { while (a > 90) a -= 180; while (a <= -90) a += 180; return a; };
   const maxAbs = (a) => Math.max(...a.map((v) => Math.abs(norm(v))));
-  const apply = async (cmd, edges = 'keep') => { await T((c) => window.tintwork.run(c), cmd); await page.locator(`#optionsbar [data-cmd="uprightEdges_${edges}"]`).click(); const lu = await T(() => window.tintwork.lastUpright); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle()); return { ...lu, ...(await T(() => window.tintwork.lastUpright)) }; };
+  // v1.13: upright commands apply immediately — set Crop/Fill/Keep on state.opts before running.
+  const apply = async (cmd, edges = 'keep') => {
+    await T((e) => { window.tintwork.state.opts.uprightEdges = e; }, edges);
+    await T((c) => window.tintwork.run(c), cmd);
+    await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
+    return await T(() => window.tintwork.lastUpright);
+  };
   // (a) a horizon tilted 3° with level stripes and no verticals
   const horizon = () => T(async () => {
     const t = window.tintwork; t.newDocument(1200, 800, 'white', 'horizon'); const l = t.activeLayer(), x = l.canvas.getContext('2d');
@@ -173,9 +179,10 @@ if (hasModes) {
   await facade(); await T(() => window.tintwork.run('perspective'));
   const bar = await T(() => ['autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull'].map((c) => document.querySelectorAll(`#optionsbar [data-cmd="${c}"]`).length).join(''));
   check(bar === '1111', `Perspective options bar: Auto · Level · Vertical · Full (${bar})`);
-  await page.locator('#optionsbar [data-cmd="uprightFull"]').click(); await page.waitForTimeout(100);
-  check(await T(() => window.tintwork.lastUpright?.mode === 'full' && document.querySelector('#optionsbar [data-cmd="uprightFull"]').classList.contains('on')), 'clicking Full in the options bar runs it and highlights it');
-  await page.keyboard.press('Escape');
+  // v1.13: Full applies immediately and leaves the mesh; lastUpright.mode records the correction.
+  await page.locator('#optionsbar [data-cmd="uprightFull"]').click();
+  await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
+  check(await T(() => window.tintwork.lastUpright?.mode === 'full' && !window.tintwork.mxf), 'clicking Full in the options bar runs it and applies (no Enter)');
   const menu = await T(() => ['uprightLevel', 'uprightVertical', 'uprightFull'].every((c) => document.querySelector(`#menus .menu-items button[data-cmd="${c}"]`)));
   check(menu, 'Image menu: Upright level / vertical / full');
   // (d) real photos (CC0): Full keeps the verticals within 1° (truth edges fitted to the photo, see WORKFLOW_BENCHMARK.md)
@@ -213,7 +220,8 @@ if (hasModes) {
     x.fillStyle = '#a9c4dc'; x.fillRect(0, 0, 1000, 1000); x.fillStyle = '#5a4a3a'; x.beginPath(); x.moveTo(250, 120); x.lineTo(750, 120); x.lineTo(880, 980); x.lineTo(120, 980); x.closePath(); x.fill();
     t.touch(l); t.markDirty(); t.run('mode16'); t.renderNow(); await t.compositeSettled?.(); return t.doc.depth;
   });
-  await T(() => window.tintwork.run('autoUpright')); await page.locator('#optionsbar [data-cmd="uprightEdges_fill"]').click(); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle());
+  await T(() => { window.tintwork.state.opts.uprightEdges = 'fill'; });
+  await T(() => window.tintwork.run('autoUpright')); await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
   const uf = await T(async () => { const t = window.tintwork, l = t.activeLayer(), d = t.deepOf(l); let n = 0; for (let i = 3; i < d.data.length; i += 4) if (d.data[i] < 65535) n++; return { n, w: t.doc.width, h: t.doc.height, filled: t.lastUpright?.filled, depth: t.doc.depth, mode: t.lastUpright?.mode }; });
   check(u === 16 && uf.filled && uf.n === 0 && uf.depth === 16 && uf.w === 1000, `16-bit upright with “Fill edges”: ${uf.mode}, size kept ${uf.w}×${uf.h}, ${uf.n} transparent 16-bit pixels`);
   await T(() => window.tintwork.run('mode8'));

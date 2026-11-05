@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.13 (auto-apply upright, ink warning, sRGB embed, heal/fill)
+
+v1.13 keeps to non-AI tools. Auto / Level / Vertical / Full / Guided upright **apply immediately** (no extra Enter), so Auto upright is two steps like Lightroom's. Soft proof gains an approximate **ink warning** overlay. JPEG exports embed an sRGB ICC profile; PNG exports always carry an sRGB chunk. Spot heal searches more carefully (still ~79% on the USDA portrait with the grain guard); Fill empty edges mirrors nearby pixels before smoothing. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.12 (Full do-no-harm, Batch Open tabs, gated radial estimate)
 
 v1.12 keeps to non-AI tools. Full upright refuses corrections that would make horizontals worse (including nearly level facades and dense near-vertical diagonals). Batch process gains **Open tabs**; Batch again can repeat that subset. A radial lens estimate is computed for diagnosis but **not** applied yet (it did not beat v1.11 on the library/brick tuning photos). New held-out photo: `hongkong.jpg`. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
@@ -28,7 +32,7 @@ v1.10 keeps to non-AI tools. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENC
 - **Batch with an export preset:** Batch process has an **Export preset** choice. It fills format, quality, size and ppi, and uses the preset's own watermark (including its logo). Tintwork remembers the last preset; editing a field by hand switches back to custom settings. Batching 6 photos with a logo now takes 7 steps instead of 14.
 - **Watermark dialog:** Color shows only for text watermarks. Shadow and the new **Logo size** setting show for logos. A logo can be sized as a % of the short side, a % of the image width, or **fit inside** a % of both width and height, so tall logos no longer overflow.
 - **Sharper upright lines:** Auto / Vertical / Full re-fit each detected edge on a sharper copy of the photo (up to 1600 px) before estimating the correction. The real high-rise photo now lands at −0.34° (it was −0.50°). On three new held-out photos the change is roughly neutral; see the benchmark.
-- **Soft proof (approximate):** View ▸ Proof: glossy paper / matte paper previews the photo with paper white and ink black, to show how much contrast a print loses. It only changes the screen, never the pixels or exports. There are no ICC printer profiles and no gamut warning.
+- **Soft proof (approximate):** View ▸ Proof: glossy paper / matte paper previews the photo with paper white and ink black, to show how much contrast a print loses. **Proof: ink warning** overlays magenta for crush / approximate ink limit. It only changes the screen, never the pixels or exports. There are no ICC printer profiles.
 - `scripts/v110-test.mjs` joins `npm test`. The workflow bench grows to 28 jobs.
 
 ## What's new in v1.9 (logo watermarks, upright modes, 16-bit fill)

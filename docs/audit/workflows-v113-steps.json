@@ -1,0 +1,134 @@
+{
+  "url": "http://127.0.0.1:41623/",
+  "label": "v113-steps",
+  "date": "2026-11-05T15:28:30.811Z",
+  "results": [
+    {
+      "id": 10,
+      "name": "Fix converging verticals on a building",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "left edge x at 15% / 85% height: 276 / 279; right edge 1380 / 1376; outer-window lean 0.00° / -0.07° (worst 0.06° / -0.20°, 7 rows); cropped to 1654×1984",
+      "steps": 4,
+      "ms": 6264,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file building.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 16,
+      "name": "10R: Auto upright on a real photo (church among towers, CC0)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.00° / -0.20° / -0.18° (edge support 1105/1105, 314/317, 525/525) (18 lines, cropped to 1132×1571)",
+      "steps": 4,
+      "ms": 6191,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 17,
+      "name": "10R: Auto upright on a real photo (high-rise looking up, CC0)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -9.09° / 10.91° → -0.34° / 0.01° (edge support 102/160, 110/163) (18 lines, cropped to 1046×588)",
+      "steps": 4,
+      "ms": 5645,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c6.jpg",
+        "click: Image menu",
+        "click: Image ▸ Auto upright"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Auto)": 2,
+        "Photoshop (Camera Raw filter Upright)": 4,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 18,
+      "name": "10R: Guided upright on the same real photo (two drawn guides)",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "edge tilt -4.68° / -0.46° / 3.79° → 0.02° / -0.12° / 0.04° (edge support 1121/1123, 317/320, 502/503) (2 lines, cropped to 1114×1546)",
+      "steps": 6,
+      "ms": 6202,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file c4.jpg",
+        "click: Image menu",
+        "click: Image ▸ Guided upright",
+        "drag: guide along a vertical edge",
+        "drag: guide along a vertical edge"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Guided)": 5,
+        "Photoshop (Camera Raw filter Upright Guided)": 7,
+        "Affinity Photo (Perspective)": 5,
+        "Pixelmator Pro (Perspective)": 4,
+        "Photopea (Perspective transform)": 5
+      }
+    },
+    {
+      "id": 23,
+      "name": "Level a tilted sea horizon (3°) with Upright: level",
+      "run": 1,
+      "ok": true,
+      "skip": false,
+      "detail": "horizon tilt 3.00° → 0.01° (level, 1468×918)",
+      "steps": 4,
+      "ms": 5914,
+      "errors": [],
+      "notes": [],
+      "log": [
+        "key: Ctrl+O",
+        "pick: file sea.png",
+        "click: Image menu",
+        "click: Image ▸ Upright: level"
+      ],
+      "paid": {
+        "Lightroom Classic (Upright Level)": 2,
+        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Affinity Photo (Straighten)": 3,
+        "Pixelmator Pro (Auto straighten)": 2,
+        "Photopea (ruler + rotate)": 4
+      }
+    }
+  ]
+}

@@ -149,7 +149,7 @@ const edgeAngle = (page, seeds, win = 4) => page.evaluate(async ({ seeds, win })
 const mapUpright = (page, pts) => page.evaluate((pts) => { const u = window.tintwork.lastUpright, H = u.H, c = u.crop || { x: 0, y: 0 }; return pts.map(([x, y]) => { const w = H[6] * x + H[7] * y + H[8]; return [(H[0] * x + H[1] * y + H[2]) / w - c.x, (H[3] * x + H[4] * y + H[5]) / w - c.y]; }); }, pts);
 const uprightRun = async (file, cmd, seeds) => {
   await open(file, REAL(file)); const before = await edgeAngle(page, seeds);
-  await T((c) => window.tintwork.run(c), cmd); await page.keyboard.press('Enter');
+  await T((c) => window.tintwork.run(c), cmd);
   await page.waitForFunction(() => !window.tintwork.mxf, null, { timeout: 20000 }).catch(() => {}); await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
   const lu = await T(() => window.tintwork.lastUpright); if (!lu?.H) return { before, after: [], lu };
   const mapped = []; for (const sd of seeds) mapped.push(await mapUpright(page, sd));

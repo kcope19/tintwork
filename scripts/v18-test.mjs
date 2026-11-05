@@ -142,31 +142,44 @@ const building = (legacy = false) => T(async (legacy) => {
 const leftEdge = () => T(async () => { const t = window.tintwork; await t.idle(); await t.compositeSettled?.(); const c = t.compositeCanvas(), x = c.getContext('2d'); const at = (y) => { const d = x.getImageData(0, y, c.width, 1).data; for (let i = 0; i < c.width; i++) if (d[i * 4 + 3] > 200 && d[i * 4] < 110 && d[i * 4 + 1] < 100) return i; return -1; }; return { a: at(Math.round(c.height * 0.15)), b: at(Math.round(c.height * 0.85)), w: c.width, h: c.height }; });
 const transparentCorners = () => T(async () => { const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] < 250) n++; return n; });
 if (hasAuto) {
+  // v1.13: Auto upright applies immediately using state.opts.uprightEdges (Crop by default). Edge mode must be
+  // chosen *before* the command; Crop / Fill / Keep still appear on the Perspective options bar for free edits.
   await building();
+  await T(() => window.tintwork.run('perspective'));
+  check(await page.locator('#optionsbar [data-cmd="uprightEdges_crop"]').count() === 1, 'options bar offers Crop edges / Fill edges / Keep');
+  await page.keyboard.press('Escape'); await T(() => window.tintwork.idle());
+  await building();
+  await T(() => { window.tintwork.state.opts.uprightEdges = 'crop'; });
   await T(() => window.tintwork.run('autoUpright'));
+  await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
   const lu = await T(() => window.tintwork.lastUpright);
   check(lu?.mode === 'keystone' && lu.lines >= 2, `Auto upright finds the converging walls (${lu?.mode}, ${lu?.lines} lines of ${lu?.found})`);
-  check(await page.locator('#optionsbar [data-cmd="uprightEdges_crop"]').count() === 1, 'options bar offers Crop edges / Fill edges / Keep');
-  await page.keyboard.press('Enter'); await T(() => window.tintwork.idle());
   const e = await leftEdge(), holes = await transparentCorners();
-  check(e.a > 0 && Math.abs(e.a - e.b) <= 6, `after Enter the left wall is vertical (x ${e.a} at 15%, ${e.b} at 85%)`);
+  check(e.a > 0 && Math.abs(e.a - e.b) <= 6, `after Auto upright the left wall is vertical (x ${e.a} at 15%, ${e.b} at 85%)`);
   check(holes === 0 && e.w < 1200, `default “Crop edges”: no transparent pixel left, cropped to ${e.w}×${e.h}`);
   check(await T(() => window.tintwork.history?.entries?.at?.(-1)?.label || [...document.querySelectorAll('#historyList li')].at(-1)?.textContent || '') !== '', 'the correction is one undoable step');
   // Fill edges keeps the size and leaves no hole
-  await building(); await page.locator('#menus .menu > button', { hasText: /^Image$/ }).click(); await page.locator('#menus .menu.open .menu-items button[data-cmd="autoUpright"]').click();
-  await page.locator('#optionsbar [data-cmd="uprightEdges_fill"]').click(); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle());
+  await building();
+  await T(() => { window.tintwork.state.opts.uprightEdges = 'fill'; });
+  await page.locator('#menus .menu > button', { hasText: /^Image$/ }).click(); await page.locator('#menus .menu.open .menu-items button[data-cmd="autoUpright"]').click();
+  await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
   const ef = await leftEdge(), hf = await transparentCorners();
   check(ef.w === 1200 && ef.h === 1200 && hf === 0, `“Fill edges”: size kept (${ef.w}×${ef.h}), ${hf} transparent pixels`);
   // Keep leaves the corners empty; Image › Crop away empty edges removes them afterwards
-  await building(); await T(() => window.tintwork.run('autoUpright'));
-  await page.locator('#optionsbar [data-cmd="uprightEdges_keep"]').click(); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle());
+  await building();
+  await T(() => { window.tintwork.state.opts.uprightEdges = 'keep'; });
+  await T(() => window.tintwork.run('autoUpright'));
+  await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
   const hk = await transparentCorners();
   check(hk > 1000, `“Keep”: the empty corners stay (${hk} transparent pixels)`);
   await T(() => window.tintwork.run('cropEmptyEdges'));
   const hk2 = await transparentCorners(), ek = await leftEdge();
   check(hk2 === 0 && Math.abs(ek.w / ek.h - 1) < 0.01, `Image ▸ Crop away empty edges: ${hk2} transparent pixels, aspect kept (${ek.w}×${ek.h})`);
   // Crop tool: Fit inside image
-  await building(); await T(() => window.tintwork.run('autoUpright')); await page.locator('#optionsbar [data-cmd="uprightEdges_keep"]').click(); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle());
+  await building();
+  await T(() => { window.tintwork.state.opts.uprightEdges = 'keep'; });
+  await T(() => window.tintwork.run('autoUpright'));
+  await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
   await page.click('#toolbar button[data-tool="crop"]');
   const fit = page.locator('#optionsbar [data-cmd="cropFitInside"]');
   check(await fit.count() === 1, 'Crop options bar has “Fit inside image”');
@@ -180,20 +193,29 @@ if (hasAuto) {
     const t = window.tintwork; t.newDocument(1000, 800, 'white', 'tilt'); const l = t.activeLayer(), x = l.canvas.getContext('2d');
     x.fillStyle = '#fff'; x.fillRect(0, 0, 1000, 800); x.save(); x.translate(500, 400); x.rotate(3 * Math.PI / 180); x.fillStyle = '#111'; for (const bx of [-330, -110, 110, 330]) x.fillRect(bx, -600, 30, 1200); x.restore(); t.touch(l); t.markDirty(); t.renderNow(); await t.compositeSettled?.();
   });
-  await T(() => window.tintwork.run('autoUpright')); const lr = await T(() => window.tintwork.lastUpright); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle());
+  await T(() => { window.tintwork.state.opts.uprightEdges = 'crop'; });
+  await T(() => window.tintwork.run('autoUpright')); const lr = await T(() => window.tintwork.lastUpright);
+  await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
   const tilt = await T(async () => { const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), x = c.getContext('2d'), pts = []; for (let y = Math.round(c.height * 0.2); y < c.height * 0.8; y += 4) { const d = x.getImageData(0, y, Math.round(c.width / 2), 1).data; for (let i = 0; i < d.length / 4; i++) if (d[i * 4] < 100 && d[i * 4 + 3] > 200) { pts.push([y, i]); break; } } const n = pts.length, my = pts.reduce((s, p) => s + p[0], 0) / n, mx = pts.reduce((s, p) => s + p[1], 0) / n; let a = 0, b = 0; for (const [y, xx] of pts) { a += (y - my) * (xx - mx); b += (y - my) ** 2; } return Math.atan(a / b) * 180 / Math.PI; });
   check(lr?.mode === 'rotate' && Math.abs(tilt) < 0.3, `tilted bars: ${lr?.mode} by ${lr?.angle?.toFixed(2)}°, bars now ${tilt.toFixed(2)}° from vertical`);
   // real photo (CC0): the outer edges come within 1° (Guided upright gets closer; see WORKFLOW_BENCHMARK.md)
-  await open('c6.jpg', REAL('c6.jpg')); await T(() => window.tintwork.run('autoUpright')); await page.locator('#optionsbar [data-cmd="uprightEdges_crop"]').click(); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle());
+  await open('c6.jpg', REAL('c6.jpg')); await T(() => { window.tintwork.state.opts.uprightEdges = 'crop'; });
+  await T(() => window.tintwork.run('autoUpright')); await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
   const c6 = await T(() => window.tintwork.lastUpright);
   const c6t = await transparentCorners(); check(c6?.mode === 'keystone' && !!c6.H && c6t === 0, `real photo (high-rise looking up): ${c6?.mode} from ${c6?.lines} lines, H ${!!c6?.H}, ${c6t} see-through pixels after the crop`);
   // a 16-bit layer: Fill edges explains instead of failing
-  await building(); await T(() => window.tintwork.run('mode16')); await T(() => window.tintwork.run('autoUpright')); await page.locator('#optionsbar [data-cmd="uprightEdges_keep"]').click(); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle());
+  await building(); await T(() => window.tintwork.run('mode16'));
+  await T(() => { window.tintwork.state.opts.uprightEdges = 'keep'; });
+  await T(() => window.tintwork.run('autoUpright')); await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
   // v1.9 changed this: 16-bit layers are now filled (scripts/v19-test.mjs checks the 16-bit result); v1.8 refused with a message.
   // Here only “no failure, no silent no-op” is checked, then Crop is tested on a fresh 16-bit upright.
   const f16 = await T(() => window.tintwork.fillEmptyEdges()), st16 = await T(() => document.querySelector('#status').textContent);
   check(f16 === true || (f16 === false && /16-bit/.test(st16)), `Fill empty edges on a 16-bit layer either fills (v1.9+) or says why it cannot (v1.8): ${f16}`);
-  if (f16 === true) { await building(); await T(() => window.tintwork.run('mode16')); await T(() => window.tintwork.run('autoUpright')); await page.locator('#optionsbar [data-cmd="uprightEdges_keep"]').click(); await page.keyboard.press('Enter'); await T(() => window.tintwork.idle()); }
+  if (f16 === true) {
+    await building(); await T(() => window.tintwork.run('mode16'));
+    await T(() => { window.tintwork.state.opts.uprightEdges = 'keep'; });
+    await T(() => window.tintwork.run('autoUpright')); await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
+  }
   await T(() => window.tintwork.run('cropEmptyEdges'));
   check((await transparentCorners()) === 0, 'Crop away empty edges works on a 16-bit document');
 }

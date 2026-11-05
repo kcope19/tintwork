@@ -1,4 +1,4 @@
-<!-- v1.12: Full do-no-harm refuse; Batch Open tabs subset; radial estimate gated; job 32 hongkong held-out. Scorecard still 0 beat / 2 match / rest trail. -->
+<!-- v1.13: auto-apply upright (Auto/Level steps match LR); ink warning; JPEG/PNG sRGB; heal search denser (still 79%); fill edges textured. Scorecard: upright Auto/Level/Guided match on steps; heal trails; Full trails. -->
 # Tintwork vs. paid editors: living comparison
 
 This document compares Tintwork with current paid editors at each milestone. It covers **functionality and general workflows only**. Tintwork copies no code, assets, icons, names or trade dress from these products. Product names are used here for comparison only, and each belongs to its owner.
@@ -6,6 +6,16 @@ This document compares Tintwork with current paid editors at each milestone. It 
 Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One / Lightroom (where relevant), and Photopea (as the closest web reference).
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
+
+## v1.13 (2026-11-05)
+
+| Area | Lightroom Classic | Photoshop | Affinity Photo | Pixelmator Pro | Photopea | Tintwork v1.13 |
+|---|---|---|---|---|---|---|
+| Upright Auto / Level steps | ✅ 2 | ✅ via Camera Raw ~4 | 🟡 ~5 | 🟡 ~4 | 🟡 ~5 | ✅ **2** (applies immediately; Crop/Fill/Keep from edges option) |
+| Soft-proof gamut / ink cue | ✅ ICC gamut warning | ✅ Proof Colors + gamut | ✅ Soft proof | 🟡 | ❌ | 🟡 Approximate **ink warning** (paper crush + CMY limit; no ICC) |
+| Export tagged sRGB | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ JPEG embedded sRGB ICC; PNG sRGB chunk |
+| Spot heal real portrait | ✅ content-aware / generative | ✅ | ✅ | ✅ | ✅ | 🟡 Still ~79% on the USDA tuning spot (grain guard); denser search |
+| Fill empty edges texture | ✅ content-aware | ✅ content-aware | 🟡 | 🟡 | 🟡 | 🟡 Mirror + push-pull blend (better than smear; not generative) |
 
 ## v1.12 (2026-11-05)
 

@@ -6,6 +6,25 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.13 scorecard (non-AI polish: auto-apply upright, ink warning, sRGB embed, heal/fill)
+
+Local Chromium `?platform=win`, 2026-11-05 America/New_York. Step counts below exclude the shared open-file pair (Ctrl+O + pick), matching how competitor clicks are counted from docs.
+
+| Job | What | v1.12 | v1.13 | Steps (Tintwork) | Paid reference | Verdict |
+|---|---|---|---|---|---|---|
+| 16 / 17 | Auto upright, church / high-rise | pass, **3** steps (menu + Enter) | pass, identical angles; **2** steps (apply immediate) | 2 | Lightroom Auto 2, Camera Raw 4, Affinity 5, Pixelmator Pro 4, Photopea 5 | **match** (was trails on steps) |
+| 23 | Upright Level, sea horizon | pass, 3 steps | pass; **2** steps | 2 | Lightroom Level 2 | **match** |
+| 18 | Guided upright | pass, **5** steps | pass; **4** steps (no Enter after 2nd guide) | 4 | Lightroom Guided 5, Pixelmator Pro 4 | **match** |
+| 10 | Converging verticals (Auto) | pass via Auto | pass; Auto path **2** upright steps | 2 (Auto) | Lightroom 2 | **match** |
+| 13 | Real portrait spot heal | pass 79% removed, grain ~1.39× | pass **79%** removed, grain **1.33×** (texture guard held; denser search did not raise %) | 2 | 2 in all five | **trails** (quality) |
+| 22 / 27 / 28 / 31 / 32 | Full upright | fail 0.5° / refuse held-outs | unchanged (no Full math change; auto-apply only) | 2 | Lightroom Full 2 | **trails** |
+| Soft proof ink warning | N/A | magenta crush + ~CMY limit overlay | — | Lightroom gamut warning (ICC) | **trails** (approx, no ICC) |
+| Export sRGB | PNG chunk only via encodePNG; JPEG none | JPEG ICC + PNG sRGB on all PNG exports | — | — | **match** (sRGB tagged) |
+
+**Summary (v1.13): several upright jobs move trails→match on steps (2, equal to Lightroom Auto/Level). Heal quality still trails. Full upright still fails 0.5°. No radial warp.**
+
+**Test-change disclosure:** `realUpright` and jobs 10/23 only press Enter when a mesh is still open (older builds). Job 13 pass bar unchanged (≥70% via `after < before * 0.3`, grain not part of the bench ok). `v113-test` is new (10 checks). Library Full bar stays the loosened 1.0° in `v112-test` (disclosed since v1.11).
+
 ## v1.12 scorecard (non-AI polish: Full do-no-harm, gated radial estimate, Batch Open tabs)
 
 v1.12 adds one job:
