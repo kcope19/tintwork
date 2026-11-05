@@ -28,9 +28,13 @@ v1.13 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v113-
 
 **Heal:** denser polar search + brush-overlap skip + high-pass grain term did **not** raise removal on the USDA tuning spot (still **79%**, grain 1.33×, 3/3). Same method as v1.12 / v1.9. Bar not loosened.
 
-### Live verification (v1.13.0, pending deploy)
+### Live verification (v1.13.0, 2026-11-05 about 11:33–11:35 AM America/New_York)
 
-Placeholder — filled after tag/push and Pages catch-up.
+- Live site reports `tintwork-shell-v1.13.0` / `APP_VERSION` 1.13.0.
+- `v113-test` against https://kcope19.github.io/tintwork/ : **10/10 × 3**.
+- `v112-test` live: **16/16** (do-no-harm / Open tabs unchanged; APP_VERSION 1.13.0).
+- Spot heal live: **79%** removed, grain 1.33× (same as local / v1.12).
+- Screenshots: `113-live-ink-warning.png`, `113-live-auto-upright.png`.
 
 ## v1.12.0 update (2026-11-05, America/New_York)
 
