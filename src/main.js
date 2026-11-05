@@ -16,6 +16,7 @@ import { FX_TYPES, FX_ORDER, defaultEffect, hasActiveStyles, normalizeStyles, re
 import { fsaSupported, pickOpen, pickSave, writeFile, ensurePermission, listRecent, addRecent, removeRecent, clearRecent, EXPORT_TYPES, putLink, getLink, deleteLink, newLinkId, pickRaw } from './files.js';
 import { blendIndex, createDeep, cloneDeep, deepFromImageData, deepToImageData, reconcileDeep, compositeDeep, accToDeep, runDeep, DEEP_OPS } from './deep.js';
 import { decodePNG, encodePNG, pngInfo } from './png.js';
+import { srgbIccBytes } from './srgb-icc.js';
 import { BUILTIN_PRESETS, RATIO_ONLY, allPresets, presetById, presetPixels, centredRatioRect, constrainRect, describePreset, saveCustomPreset, deleteCustomPreset, customPresets } from './presets.js';
 import { formatName, variantSize, uniqueNamer, zipFiles } from './batch.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
@@ -1384,6 +1385,16 @@ function render() {
   vctx.imageSmoothingQuality = 'high';
   vctx.drawImage(comp, sx, sy, sw, sh);
   vctx.restore();
+  if (proofMode && proofWarn) {
+    // downscale for speed; magenta overlay for crushed / over-ink pixels (approximate, no ICC)
+    const maxSide = 720, k = Math.min(1, maxSide / Math.max(d.width, d.height));
+    const tw = Math.max(1, Math.round(d.width * k)), th = Math.max(1, Math.round(d.height * k));
+    const tc = makeCanvas(tw, th), tx = tc.getContext('2d', { willReadFrequently: true });
+    tx.drawImage(comp, 0, 0, tw, th);
+    const mask = proofWarnMask(tx.getImageData(0, 0, tw, th), PROOF_PAPERS[proofMode]);
+    const ov = makeCanvas(tw, th); ov.getContext('2d').putImageData(new ImageData(mask, tw, th), 0, 0);
+    vctx.save(); vctx.imageSmoothingEnabled = false; vctx.drawImage(ov, sx, sy, sw, sh); vctx.restore();
+  }
   const toS = (x, y) => [px + x * z, py + y * z];
 
   const al = activeLayer();
@@ -3551,7 +3562,7 @@ const cmds = {
   mode8: needDoc(() => setDepth(8)),
   mode16: needDoc(() => setDepth(16)),
   engine: () => openEngineDialog(),
-  proofOff: () => setProof(null), proofGlossy: () => setProof('glossy'), proofMatte: () => setProof('matte'),
+  proofOff: () => setProof(null), proofGlossy: () => setProof('glossy'), proofMatte: () => setProof('matte'), proofWarnOn: () => setProofWarn(true), proofWarnOff: () => setProofWarn(false),
   benchmark: () => openBenchmarkDialog(),
   userGuide: () => openUserGuide(),
   perspective: needDoc(() => startMeshXf('perspective')),
@@ -3810,7 +3821,7 @@ const MENUS = [
     ['Invert', 'invert', 'Ctrl+I'], ['Grayscale', 'grayscale', 'Ctrl+Shift+U'], ['Sepia tone…', 'sepia']]],
   ['Filter', [['Convert to live layer', 'convertSmart'], '-', ['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
   ['Actions', [['Actions…', 'actions'], ['Start recording', 'actionRecord'], ['Stop recording and save…', 'actionStop'], '-', ['Batch process…', 'batch']]],
-  ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1'], '-', ['Proof: off', 'proofOff'], ['Proof: glossy paper', 'proofGlossy'], ['Proof: matte paper', 'proofMatte'], '-', ['Rendering engine…', 'engine']]],
+  ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1'], '-', ['Proof: off', 'proofOff'], ['Proof: glossy paper', 'proofGlossy'], ['Proof: matte paper', 'proofMatte'], ['Proof: ink warning on', 'proofWarnOn'], ['Proof: ink warning off', 'proofWarnOff'], '-', ['Rendering engine…', 'engine']]],
   ['Help', [['Keyboard shortcuts', 'shortcuts', '?'], ['User guide', 'userGuide', 'F1'], ['Run performance benchmark…', 'benchmark'], [`About ${APP}`, 'about']]],
 ];
 
@@ -4774,6 +4785,7 @@ async function renderExportWith(type, quality, { size = null, dpi = null, waterm
   if (size && type !== 'image/png16' && type !== PSD_TYPE) { blob = (await renderVariant({ ...size, type, quality: Math.round(quality * 100), watermark })).blob; lastExportNotes = []; }
   else blob = await renderExport(type, quality, { watermark });
   if (dpi && (blob.type === 'image/jpeg' || blob.type === 'image/png')) blob = await withDpi(blob, dpi);
+  if (blob.type === 'image/jpeg') blob = await withSrgbIcc(blob);
   return blob;
 }
 const EXPORT_EXT = { 'image/png': 'png', 'image/png16': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', [PSD_TYPE]: 'psd' };
@@ -6556,20 +6568,49 @@ labelControls(); new MutationObserver((ms) => { for (const m of ms) for (const n
  * darkest black its ink reaches (an SVG filter on the view, worked in linear light; pixels and exports are unchanged).
  * Approximate typical papers, not a printer profile: no ICC profiles are read or applied.
  */
-const PROOF_PAPERS = { glossy: { name: 'glossy paper', white: [246, 245, 240], black: [22, 22, 24] }, matte: { name: 'matte paper', white: [240, 238, 230], black: [48, 47, 46] } };
-let proofMode = null;
+const PROOF_PAPERS = { glossy: { name: 'glossy paper', white: [246, 245, 240], black: [22, 22, 24], inkLimit: 2.8 }, matte: { name: 'matte paper', white: [240, 238, 230], black: [48, 47, 46], inkLimit: 2.4 } };
+let proofMode = null, proofWarn = false;
 const srgbToLin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
 function setProof(mode) {
   proofMode = PROOF_PAPERS[mode] ? mode : null;
+  if (!proofMode) proofWarn = false;
   let svg = document.getElementById('twProofSvg');
   if (!svg) { svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.id = 'twProofSvg'; svg.setAttribute('width', '0'); svg.setAttribute('height', '0'); svg.setAttribute('aria-hidden', 'true'); svg.style.position = 'absolute'; document.body.append(svg); }
-  const view = document.getElementById('view');
-  if (!proofMode) { view.style.filter = ''; svg.innerHTML = ''; status('Proof off.'); return null; }
+  const viewEl = document.getElementById('view');
+  if (!proofMode) { viewEl.style.filter = ''; svg.innerHTML = ''; status('Proof off.'); requestRender(); return null; }
   const p = PROOF_PAPERS[proofMode], f = (i) => { const w = srgbToLin(p.white[i]), b = srgbToLin(p.black[i]); return `slope="${(w - b).toFixed(5)}" intercept="${b.toFixed(5)}"`; };
   svg.innerHTML = `<filter id="twProof" color-interpolation-filters="linearRGB"><feComponentTransfer><feFuncR type="linear" ${f(0)}/><feFuncG type="linear" ${f(1)}/><feFuncB type="linear" ${f(2)}/></feComponentTransfer></filter>`;
-  view.style.filter = 'url(#twProof)';
-  status(`Proof: ${p.name} (paper white and ink black simulated on screen only; View ▸ Proof: off to leave).`);
+  viewEl.style.filter = 'url(#twProof)';
+  status(`Proof: ${p.name}${proofWarn ? ' · ink warning on' : ''} (paper white and ink black on screen only; no ICC printer profile).`);
+  requestRender();
   return proofMode;
+}
+/** Toggle a magenta overlay for pixels that would crush to paper white/black or exceed an approximate ink limit (no ICC). */
+function setProofWarn(on) {
+  proofWarn = !!on && !!proofMode;
+  if (on && !proofMode) { status('Turn on a paper proof first (View ▸ Proof: glossy / matte), then enable the ink warning.'); return false; }
+  status(proofWarn ? `Proof ink warning on (${PROOF_PAPERS[proofMode].name}, ~${Math.round(PROOF_PAPERS[proofMode].inkLimit * 100)}% CMY limit + crushed highlights/shadows).` : 'Proof ink warning off.');
+  requestRender();
+  return proofWarn;
+}
+/**
+ * Approximate out-of-range mask for the soft-proof papers (v1.13): no ICC. Flags (1) channels that the paper
+ * white/black mapping would crush (detail lost near the ends) and (2) an ink-limit style sum of complementary CMY.
+ */
+function proofWarnMask(img, paper) {
+  const { data, width: w, height: h } = img, out = new Uint8ClampedArray(w * h * 4);
+  const wLin = paper.white.map(srgbToLin), bLin = paper.black.map(srgbToLin), lim = paper.inkLimit;
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    if (data[i + 3] < 8) continue;
+    const rl = srgbToLin(data[i]), gl = srgbToLin(data[i + 1]), bl = srgbToLin(data[i + 2]);
+    // crush: brighter than the paper can print, or darker than its ink black
+    const crush = rl > wLin[0] + 1e-4 || gl > wLin[1] + 1e-4 || bl > wLin[2] + 1e-4
+      || rl < bLin[0] - 1e-4 || gl < bLin[1] - 1e-4 || bl < bLin[2] - 1e-4;
+    // approximate CMY ink load (no undercolour removal — conservative vs a real TAC)
+    const ink = (1 - rl) + (1 - gl) + (1 - bl);
+    if (crush || ink > lim) { const o = p * 4; out[o] = 255; out[o + 1] = 0; out[o + 2] = 180; out[o + 3] = 140; }
+  }
+  return out;
 }
 function status(msg) { $('#status').textContent = platformText(msg); }
 let toastTimer = 0, toastUntil = 0;
@@ -7803,7 +7844,7 @@ async function renderVariant(v, base = null) {
   if (!blob) throw new Error(`${type} encoding is not supported in this browser`);
   if (blob.type !== type) toast(`${type.split('/')[1].toUpperCase()} is not supported here; saved as ${blob.type.split('/')[1].toUpperCase()}.`, 4000);
   const dpi = v.mode === 'preset' && presetById(v.preset)?.inW != null ? v.dpi || 300 : v.mode !== 'preset' && v.dpi ? v.dpi : d.dpi; // non-preset sizes: an export preset's ppi (v1.10)
-  if (dpi) blob = await withDpi(blob, dpi);
+  if (dpi) blob = await withDpi(blob, dpi); if (blob.type === 'image/jpeg') blob = await withSrgbIcc(blob);
   return { blob, w, h, ext: EXPORT_EXT[blob.type] || 'img' };
 }
 /** Sinks: where batch / multi-size output goes. */
@@ -8096,6 +8137,41 @@ function openBatchDialog() {
     })();
   } });
 }
+/**
+ * Embed a compact sRGB ICC profile in a JPEG (APP2 ICC_PROFILE). PNG already carries an sRGB chunk from encodePng;
+ * other types are unchanged. Skips the write when an ICC segment is already present.
+ */
+async function withSrgbIcc(blob) {
+  if (blob.type !== 'image/jpeg') return blob;
+  const b = new Uint8Array(await blob.arrayBuffer());
+  if (b[0] !== 0xff || b[1] !== 0xd8) return blob;
+  for (let i = 2; i + 4 < b.length && b[i] === 0xff;) {
+    const m = b[i + 1], len = (b[i + 2] << 8) | b[i + 3];
+    if (m === 0xda || m === 0xd9) break;
+    if (m === 0xe2) {
+      let ok = true; const tag = 'ICC_PROFILE';
+      for (let k = 0; k < tag.length; k++) if (b[i + 4 + k] !== tag.charCodeAt(k)) { ok = false; break; }
+      if (ok) return blob;
+    }
+    if (len < 2) break;
+    i += 2 + len;
+  }
+  const icc = srgbIccBytes();
+  const head = 14; // 'ICC_PROFILE\0' (12) + chunk seq + chunk count
+  if (icc.length + head > 65535) return blob; // single-segment only for this compact profile
+  const seg = new Uint8Array(2 + 2 + head + icc.length);
+  seg[0] = 0xff; seg[1] = 0xe2;
+  const len = 2 + head + icc.length; seg[2] = len >> 8; seg[3] = len & 255;
+  const tag = 'ICC_PROFILE';
+  for (let k = 0; k < tag.length; k++) seg[4 + k] = tag.charCodeAt(k);
+  seg[4 + tag.length] = 0; // NUL
+  seg[4 + tag.length + 1] = 1; // chunk sequence (1-based)
+  seg[4 + tag.length + 2] = 1; // chunk count
+  seg.set(icc, 2 + 2 + head);
+  let insertAt = 2;
+  if (b[2] === 0xff && (b[3] === 0xe0 || b[3] === 0xe1)) insertAt = 2 + 2 + ((b[4] << 8) | b[5]);
+  return new Blob([b.subarray(0, insertAt), seg, b.subarray(insertAt)], { type: blob.type });
+}
 /** Write the print resolution into PNG (pHYs) or JPEG (JFIF density) bytes. */
 async function withDpi(blob, dpi) {
   const b = new Uint8Array(await blob.arrayBuffer());
@@ -8143,10 +8219,10 @@ window.tintwork = {
     stroke: async (st) => { const s = state.objSel; if (!s) return null; s.strokes.push({ fg: st.fg !== false, r: st.r || 12, pts: st.pts }); return objSelRun(); }, settled: () => objSelJob, done: objSelDone, cancel: objSelCancel, get state() { return state.objSel; } },
   autoUprightCmd, get lastUpright() { return lastUpright; }, cropEmptyEdges, fillEmptyEdges, innerOpaqueRect, segment: seg,
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
-  setProof, get proofMode() { return proofMode; }, PROOF_PAPERS,
+  setProof, setProofWarn, get proofMode() { return proofMode; }, get proofWarn() { return proofWarn; }, PROOF_PAPERS,
   batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
-  renderVariant, exportVariants, runBatch, sourcesFromOpenTabs, memorySink, zipSink, formatName, variantSize, withDpi, autoOpts, saveAutoOpts, openAutoOptionsDialog,
+  renderVariant, exportVariants, runBatch, sourcesFromOpenTabs, memorySink, zipSink, formatName, variantSize, withDpi, withSrgbIcc, autoOpts, saveAutoOpts, openAutoOptionsDialog,
   // v0.8
   pickLayer: (ids) => { const d = doc(); d.activeId = ids[ids.length - 1]; d.picked = new Set(ids.length > 1 ? ids : []); updateLayersPanel(); },
   pickedLayers: () => pickedLayers().map((l) => l.id), alignLayers, straightenBy, autoStraightenCmd, autoEnhanceCmd, autoWhiteBalanceCmd, wbPickAt,
