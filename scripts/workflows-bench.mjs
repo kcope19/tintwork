@@ -183,7 +183,16 @@ const edgeAngle = (page, seeds, win = 4) => page.evaluate(async ({ seeds, win })
   });
 }, { seeds, win });
 /** Map points of the original photo through the last upright correction (homography, then the edge crop). */
-const mapUpright = (page, pts) => page.evaluate((pts) => { const u = window.tintwork.lastUpright, H = u.H, c = u.crop || { x: 0, y: 0 }; return pts.map(([x, y]) => { const w = H[6] * x + H[7] * y + H[8]; return [(H[0] * x + H[1] * y + H[2]) / w - c.x, (H[3] * x + H[4] * y + H[5]) / w - c.y]; }); }, pts);
+const mapUpright = (page, pts) => page.evaluate((pts) => {
+  const u = window.tintwork.lastUpright, H = u.H, c = u.crop || { x: 0, y: 0 }, k = u.k || 0;
+  const [cx, cy] = u.center || [0, 0], rNorm2 = u.rNorm2 || 1;
+  return pts.map(([x, y]) => {
+    let X = x, Y = y;
+    if (k) { const dx = x - cx, dy = y - cy, s = 1 + k * ((dx * dx + dy * dy) / rNorm2); X = cx + dx * s; Y = cy + dy * s; }
+    const w = H[6] * X + H[7] * Y + H[8];
+    return [(H[0] * X + H[1] * Y + H[2]) / w - c.x, (H[3] * X + H[4] * Y + H[5]) / w - c.y];
+  });
+}, pts);
 const REAL = (f) => readFileSync(`test-assets/real/${f}`);
 const imgDiff = (page, a, b, r) => page.evaluate(async ({ a, b, r }) => { const dec = async (u8) => { const bm = await createImageBitmap(new Blob([new Uint8Array(u8)])); const c = new OffscreenCanvas(bm.width, bm.height), x = c.getContext('2d'); x.drawImage(bm, 0, 0); return x.getImageData(r.x, r.y, r.w, r.h).data; }; const p = await dec(a), q = await dec(b); let s = 0; for (let i = 0; i < p.length; i += 4) s += (Math.abs(p[i] - q[i]) + Math.abs(p[i + 1] - q[i + 1]) + Math.abs(p[i + 2] - q[i + 2])) / 3; return s / (p.length / 4); }, { a: [...a], b: [...b], r });
 const jpegDpi = (h) => (h[2] === 0xff && h[3] === 0xe0 ? { unit: h[13], x: (h[14] << 8) | h[15] } : null);

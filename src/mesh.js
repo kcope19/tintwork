@@ -46,6 +46,31 @@ export function perspectiveMesh(w, h, pts) {
   return { pos, uv, idx: new Uint32Array([0, 1, 2, 0, 2, 3]), H };
 }
 
+/**
+ * Dense upright mesh: optional radial undistort in layer-local source, then apply the 3×3 `Hu` (doc space) and
+ * add (ox, oy). `k` uses segment.undistortPoint's convention (r = 1 at the half-diagonal). When k = 0 and Hu
+ * maps the unit rectangle onto `pts`, this matches perspectiveMesh.
+ */
+export function uprightMeshFromH(w, h, Hu, k = 0, ox = 0, oy = 0, m = 32) {
+  if (!Hu) return null;
+  if (!k) {
+    // cheap 4-vertex projective mesh
+    const pts = [[0, 0], [w, 0], [w, h], [0, h]].map(([u, v]) => { const q = applyH(Hu, u + ox, v + oy); return [q[0], q[1]]; });
+    const local = pts.map(([x, y]) => [x - ox, y - oy]);
+    const M = perspectiveMesh(w, h, local); if (!M) return null;
+    for (let i = 0; i < 4; i++) { M.pos[i * 3] += ox; M.pos[i * 3 + 1] += oy; }
+    M.H = Hu; return M;
+  }
+  const cx = w / 2, cy = h / 2, rNorm2 = cx * cx + cy * cy;
+  const M = gridMesh(m, w, h, (s, t) => {
+    let u = s * w, v = t * h;
+    const dx = u - cx, dy = v - cy, r2 = (dx * dx + dy * dy) / rNorm2, f = 1 + k * r2;
+    u = cx + dx * f; v = cy + dy * f;
+    const q = applyH(Hu, u + ox, v + oy); return [q[0], q[1]];
+  });
+  M.H = Hu; return M;
+}
+
 /** Default n×n control grid over a w×h rectangle placed at (ox, oy). */
 export function gridPoints(n, w, h, ox = 0, oy = 0) {
   const p = []; for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) p.push([ox + (w * i) / (n - 1), oy + (h * j) / (n - 1)]);

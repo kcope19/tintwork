@@ -404,7 +404,7 @@ export function cropRGBA(img, x0, y0, w, h) {
  * Hough detection of near-vertical (|angle| ≤ maxDeg from vertical) or near-horizontal straight segments.
  * Returns [{ x1, y1, x2, y2, len, angle }] in image pixels (angle in degrees from the axis).
  */
-export function detectLines(img, { orient = 'v', maxDeg = 25, minLenFrac = 0.12, maxLines = 30 } = {}) {
+export function detectLines(img, { orient = 'v', maxDeg = 25, minLenFrac = 0.12, maxLines = 30, thrFrac = 0.88 } = {}) {
   const W = img.width, H = img.height, d = img.data, L = new Float32Array(W * H);
   for (let i = 0; i < W * H; i++) L[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
   const gx = new Float32Array(W * H), gy = new Float32Array(W * H), mag = new Float32Array(W * H);
@@ -414,7 +414,7 @@ export function detectLines(img, { orient = 'v', maxDeg = 25, minLenFrac = 0.12,
     gx[i] = (c + 2 * f + k) - (a + 2 * e + g); gy[i] = (g + 2 * h + k) - (a + 2 * b + c); mag[i] = Math.hypot(gx[i], gy[i]);
   }
   // threshold: strong edges only (≥ 24 levels·8 Sobel units and the top 12 % of gradient magnitudes)
-  const sorted = Float32Array.from(mag).sort(), thr = Math.max(24 * 4, sorted[Math.floor(sorted.length * 0.88)]);
+  const sorted = Float32Array.from(mag).sort(), thr = Math.max(24 * 4, sorted[Math.floor(sorted.length * Math.min(0.95, Math.max(0.5, thrFrac)))]);
   const vert = orient === 'v', step = 0.25, nT = Math.round((2 * maxDeg) / step) + 1, diag = Math.ceil(Math.hypot(W, H)), nR = 2 * diag + 1;
   const acc = new Float32Array(nT * nR), cosT = new Float32Array(nT), sinT = new Float32Array(nT);
   // line direction at angle a from the axis; normal n = (cos φ, sin φ). For verticals the normal is ≈ x-axis.
@@ -527,6 +527,89 @@ export function refineLines(lines, img, s, orient = 'v') {
     return { ...l, x1: X1, y1: Y1, x2: X2, y2: Y2, len: Math.hypot(X2 - X1, Y2 - Y1), angle: ang, refined: true };
   });
 }
+/**
+ * Radial (barrel/pincushion) model used by Upright: r = 1 at the half-diagonal, output = centre + (p−centre)·(1+k·r²).
+ * Negative k pulls mid-edge points inward (straightens barrel); positive k straightens pincushion. Matches the sign of
+ * the RAW develop "Distortion" slider after scaling (see raw.DISTORTION_K).
+ */
+export function undistortPoint(x, y, cx, cy, k, rNorm2) {
+  if (!k) return [x, y];
+  const dx = x - cx, dy = y - cy, r2 = (dx * dx + dy * dy) / rNorm2;
+  const s = 1 + k * r2; return [cx + dx * s, cy + dy * s];
+}
+/** Map a list of segments through the radial model (endpoints only; good enough for the VP fit). */
+export function undistortLines(lines, W, H, k) {
+  if (!k || !lines.length) return lines;
+  const cx = W / 2, cy = H / 2, rNorm2 = cx * cx + cy * cy;
+  return lines.map((l) => {
+    const [x1, y1] = undistortPoint(l.x1, l.y1, cx, cy, k, rNorm2);
+    const [x2, y2] = undistortPoint(l.x2, l.y2, cx, cy, k, rNorm2);
+    const ang = Math.abs(x2 - x1) >= Math.abs(y2 - y1)
+      ? Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI
+      : Math.atan2(x2 - x1, y2 - y1) * 180 / Math.PI;
+    return { ...l, x1, y1, x2, y2, len: Math.hypot(x2 - x1, y2 - y1), angle: ang };
+  });
+}
+/**
+ * Estimate a single radial term from long near-horizontal edges.
+ * A straight world line stays straight under perspective, so a left/right half-angle gap on one edge is
+ * lens bend. We sample the ridge, then pick the k ∈ [−0.4, 0.4] that minimises the mean |left−right|
+ * half-angle across those edges (and does not raise the mid-line RMS). Returns 0 when nothing clear.
+ */
+export function estimateRadial(lines, img) {
+  const W = img.width, H = img.height, d = img.data;
+  const long = (lines || []).filter((l) => l.len >= 0.18 * Math.max(W, H) && Math.abs(l.x2 - l.x1) >= Math.abs(l.y2 - l.y1));
+  if (long.length < 1) return 0;
+  const lum = (x, y) => { const i = (y * W + x) * 4; return 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; };
+  const cx = W / 2, cy = H / 2, rNorm2 = cx * cx + cy * cy;
+  const samples = [];
+  for (const l of long) {
+    const pts = [];
+    for (let t = 0.04; t <= 0.961; t += 0.04) {
+      const x0 = l.x1 + (l.x2 - l.x1) * t, y0 = l.y1 + (l.y2 - l.y1) * t;
+      let best = 0, bv = 0; const c = Math.round(y0), u = Math.round(x0);
+      if (u < 2 || u >= W - 2) continue;
+      for (let v = c - 5; v <= c + 5; v++) {
+        if (v < 1 || v >= H - 1) continue;
+        const g = Math.abs(lum(u, v + 1) - lum(u, v - 1));
+        if (g > best) { best = g; bv = v; }
+      }
+      if (best < 16) continue;
+      pts.push([u, bv]);
+    }
+    if (pts.length >= 10) samples.push(pts);
+  }
+  if (!samples.length) return 0;
+  const und = (x, y, k) => { const dx = x - cx, dy = y - cy, s = 1 + k * ((dx * dx + dy * dy) / rNorm2); return [cx + dx * s, cy + dy * s]; };
+  const halfGap = (pts, k) => {
+    const U = pts.map(([x, y]) => und(x, y, k));
+    const mid = U.length >> 1;
+    const ang = (a, b) => {
+      const xs = U.slice(a, b); if (xs.length < 4) return null;
+      const mx = xs.reduce((q, p) => q + p[0], 0) / xs.length, my = xs.reduce((q, p) => q + p[1], 0) / xs.length;
+      let sxy = 0, sxx = 0; for (const p of xs) { sxy += (p[0] - mx) * (p[1] - my); sxx += (p[0] - mx) * (p[0] - mx); }
+      if (sxx < 1) return null; return Math.atan(sxy / sxx) * 180 / Math.PI;
+    };
+    const L = ang(0, mid), R = ang(mid, U.length); if (L == null || R == null) return null;
+    return Math.abs(L - R);
+  };
+  const score = (k) => {
+    let s = 0, n = 0; for (const pts of samples) { const g = halfGap(pts, k); if (g == null) continue; s += g; n++; }
+    return n ? s / n : Infinity;
+  };
+  const base = score(0);
+  if (!(base > 0.3)) return 0; // already consistent halves — nothing for radial to fix
+  let bestK = 0, best = base;
+  for (let ki = -40; ki <= 40; ki++) {
+    const k = ki / 100, e = score(k);
+    if (e < best - 1e-4) { best = e; bestK = k; }
+  }
+  if (!(base - best > 0.15) || Math.abs(bestK) < 0.04) return 0;
+  return bestK;
+}
+
+
+
 /**
  * Fit a vanishing point to near-vertical segments (RANSAC over pairs, weighted by length, then least squares).
  * Returns { mode: 'none' | 'rotate' | 'keystone', angle (deg, for 'rotate'), vp: [x, y] (for 'keystone'), inliers, lines }.

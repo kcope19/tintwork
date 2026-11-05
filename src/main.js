@@ -2594,8 +2594,13 @@ function startMeshXf(mode) {
 function mxfResetPoints(x) {
   const { w, h, ox, oy } = x;
   x.pts = x.mode === 'perspective' ? [[ox, oy], [ox + w, oy], [ox + w, oy + h], [ox, oy + h]] : mesh.gridPoints(x.n, w, h, ox, oy);
+  x.uprightHu = null; x.radialK = 0;
 }
-function mxfMesh(x) { return x.mode === 'perspective' ? mesh.perspectiveMesh(x.w, x.h, x.pts) : mesh.warpMesh(x.pts, x.n, x.w, x.h, 32); }
+function mxfMesh(x) {
+  if (x.mode !== 'perspective') return mesh.warpMesh(x.pts, x.n, x.w, x.h, 32);
+  if (x.uprightHu) return mesh.uprightMeshFromH(x.w, x.h, x.uprightHu, x.radialK || 0, x.ox, x.oy);
+  return mesh.perspectiveMesh(x.w, x.h, x.pts);
+}
 /** Output rectangle of the mesh, limited to 3× the document so a near-degenerate quad cannot explode. */
 function mxfBounds(m) {
   const d = doc(), b = mesh.meshBounds(m);
@@ -2654,7 +2659,7 @@ async function applyMeshXf() {
   commit(x.upright ? 'Upright' : x.mode === 'warp' ? 'Warp' : 'Perspective');
   status(`${x.upright ? 'Upright' : x.mode === 'warp' ? 'Warp' : 'Perspective'} applied (${gfx.lastWarpPath === 'cpu' ? 'CPU' : gfx.lastWarpPath === 'webgpu' ? 'WebGPU' : 'WebGL2'})`);
   if (x.upright) {
-    lastUpright = { ...(lastUpright || {}), H: mesh.homography([[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]], x.pts), kind: x.upright, crop: null, filled: false };
+    lastUpright = { ...(lastUpright || {}), H: x.uprightHu || mesh.homography([[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]], x.pts), k: x.radialK || 0, center: [x.ox + x.w / 2, x.oy + x.h / 2], rNorm2: (x.w / 2) ** 2 + (x.h / 2) ** 2, kind: x.upright, crop: null, filled: false };
     const how = state.opts.uprightEdges;
     if (how === 'crop') { const r = cropEmptyEdges({ label: 'Crop empty edges (upright)', quiet: true }); if (r) { lastUpright.crop = r; status(`Upright applied and cropped to ${r.w} × ${r.h} px so no empty corners show.`); } }
     else if (how === 'fill') { if (fillEmptyEdges({ quiet: true })) { lastUpright.filled = true; status('Upright applied; empty corners filled from nearby pixels.'); } }
@@ -2666,13 +2671,14 @@ async function applyMeshXf() {
  * they converge (RANSAC vanishing point) and hand two lines through that point to the same solver Guided upright uses.
  * Lines that are parallel but tilted give a plain rotation instead.
  */
-let lastUpright = null;
+let lastUpright = null, lastUprightKEst = 0;
 /**
  * v1.9 modes: 'vertical' (the v1.8 Auto: verticals made upright and parallel, or a rotation when they are parallel
  * already), 'level' (a rotation that levels the horizontals), 'full' (one homography that straightens both families)
  * and 'auto' (vertical; level when no verticals agree).
  */
 function autoUprightCmd(req = 'auto') {
+  lastUprightKEst = 0;
   if (!doc()) return null;
   if (state.mxf && state.mxf.mode !== 'perspective') { status('Finish the warp first (Enter applies).'); return null; }
   if (!state.mxf) startMeshXf('perspective');
@@ -2692,17 +2698,20 @@ function autoUprightCmd(req = 'auto') {
       cc.drawImage(putInto(null, x.src), 0, 0, sw, sh); sharp = cc.getImageData(0, 0, sw, sh); }
     return seg.refineLines(ls, sharp, sharp.width / img.width, orient);
   };
-  const lines = wantV ? sharpen(seg.detectLines(img, { orient: 'v' }), 'v') : [], u = wantV ? seg.estimateUpright(lines, img.width, img.height) : { mode: 'none', inliers: [] };
+  let lines = wantV ? sharpen(seg.detectLines(img, { orient: 'v' }), 'v') : [];
+  let u = wantV ? seg.estimateUpright(lines, img.width, img.height) : { mode: 'none', inliers: [] };
   let hl = [], uh = { mode: 'none', inliers: [] };
+  const filterHoriz = () => {
+    if (uh.mode === 'none') return;
+    const len = uh.inliers.reduce((q, i) => q + hl[i].len, 0), S = Math.max(img.width, img.height);
+    const far = !uh.vp || Math.hypot(uh.vp[0] - img.width / 2, uh.vp[1] - img.height / 2) >= 1.5 * S;
+    if (uh.inliers.length < 3 || len < 0.5 * img.width || !far) uh = { ...uh, mode: 'none', weak: true };
+  };
   const horiz = () => {
     hl = sharpen(seg.detectLines(img, { orient: 'h' }), 'h'); uh = seg.estimateUpright(hl, img.width, img.height);
     // trust the horizontals only with ≥ 3 agreeing lines covering half the width, converging no faster than a vanishing
     // point 1.5 frame-sizes from the centre (closer ones come from two stray edges, e.g. a roof line and a shadow)
-    if (uh.mode !== 'none') {
-      const len = uh.inliers.reduce((q, i) => q + hl[i].len, 0), S = Math.max(img.width, img.height);
-      const far = !uh.vp || Math.hypot(uh.vp[0] - img.width / 2, uh.vp[1] - img.height / 2) >= 1.5 * S;
-      if (uh.inliers.length < 3 || len < 0.5 * img.width || !far) uh = { ...uh, mode: 'none', weak: true };
-    }
+    filterHoriz();
     // a lone horizon (sea, plain) is one long line: for a rotation that is enough when it spans 60 % of the width
     if (uh.mode === 'none' && req !== 'full') {
       let b = -1; hl.forEach((l, i) => { if (l.len >= 0.6 * img.width && (b < 0 || l.len > hl[b].len)) b = i; });
@@ -2710,7 +2719,32 @@ function autoUprightCmd(req = 'auto') {
     }
   };
   if (wantH || (req === 'auto' && u.mode === 'none')) horiz();
-  let next = null, used = req, msg = '';
+  // v1.12: estimate radial from half-angle gap on long horizontals; undistort lines, re-fit VPs, and apply the
+  // same k in the mesh so geometry and warp stay consistent (profile-style correction before Upright).
+  let kRad = 0;
+  if (req === 'full') {
+    if (!sharp && (lines.length || hl.length)) { sharpen(lines.length ? lines : hl, lines.length ? 'v' : 'h'); }
+    if (sharp) {
+      const sc = sharp.width / img.width;
+      const scaled = (ls) => ls.map((l) => ({ ...l, x1: l.x1 * sc, y1: l.y1 * sc, x2: l.x2 * sc, y2: l.y2 * sc, len: l.len * sc }));
+      kRad = seg.estimateRadial([...scaled(hl || []), ...scaled(lines || [])], sharp);
+    } else kRad = seg.estimateRadial([...(hl || []), ...(lines || [])], img);
+    if (kRad > 0.08) kRad = 0; // pincushion hits from trapezoid halves; only barrel has helped real photos
+    if (Math.abs(kRad) > 0.16) kRad = Math.sign(kRad) * 0.16;
+    // Radial warp is gated: on the library/brick tuning photos, applying the estimated k (with a consistent
+    // VP re-fit) raised some edges above the v1.11 result, so the warp is left off until a held-out win is shown.
+    // The estimate is still recorded on lastUpright.kEst for diagnosis; kRad stays 0 for the mesh.
+    const kEst = kRad; kRad = 0;
+    if (kEst) { /* keep lines/uh as detected — no undistort re-fit while the warp is gated */ }
+    lastUprightKEst = kEst;
+  }
+  let next = null, used = req, msg = '', Hu = null;
+  const undoc = (a, b) => { // radial undistort of a document point about the layer centre
+    if (!kRad) return [a, b];
+    const rNorm2 = (x.w / 2) ** 2 + (x.h / 2) ** 2;
+    return seg.undistortPoint(a, b, cx, cy, kRad, rNorm2);
+  };
+  const mapHu = (H, a, b) => { const [u0, v0] = undoc(a, b); return mesh.applyH(H, u0, v0); };
   const level = () => { // rotate so the horizontals are level at the centre of the frame
     if (uh.mode === 'none') return null;
     const a = seg.directionAt(toDocH(uh.vh), cx, cy, 'h');
@@ -2727,9 +2761,9 @@ function autoUprightCmd(req = 'auto') {
     const vv = u.mode === 'none' ? null : toDocH(u.vh);
     const area = (P) => Math.abs(P.reduce((s, p, i) => { const n = P[(i + 1) % P.length]; return s + p[0] * n[1] - n[0] * p[1]; }, 0)) / 2;
     const tryH = (vh) => {
-      const H = (vv || vh) && seg.uprightHomography(vv, vh, cx, cy); if (!H) return null;
-      const ws = x.pts.map(([a, b]) => mesh.applyH(H, a, b)[2]); if (!ws.every((w) => w > 0.2 && w < 5)) return null;
-      let q = x.pts.map(([a, b]) => mesh.applyH(H, a, b));
+      const H0 = (vv || vh) && seg.uprightHomography(vv, vh, cx, cy); if (!H0) return null;
+      const ws = x.pts.map(([a, b]) => mapHu(H0, a, b)[2]); if (!ws.every((w) => w > 0.2 && w < 5)) return null;
+      let q = x.pts.map(([a, b]) => { const p = mapHu(H0, a, b); return [p[0], p[1]]; });
       const f = Math.sqrt(area(x.pts) / Math.max(1e-9, area(q))); // same pixel count as before
       q = q.map(([a, b]) => [cx + (a - cx) * f, cy + (b - cy) * f]);
       // refuse shapes no lens makes: a corner under 50° or over 130°, or opposite sides more than 2.5× apart
@@ -2737,23 +2771,83 @@ function autoUprightCmd(req = 'auto') {
       const ang = (i) => { const p = q[(i + 3) % 4], c = q[i], n = q[(i + 1) % 4], a1 = Math.atan2(p[1] - c[1], p[0] - c[0]), a2 = Math.atan2(n[1] - c[1], n[0] - c[0]); let d = Math.abs(a1 - a2) * 180 / Math.PI; if (d > 180) d = 360 - d; return d; };
       if (vh && [0, 1, 2, 3].some((i) => ang(i) < 50 || ang(i) > 130)) return null; // (verticals alone: as trusted as Vertical)
       if (vh && (Math.max(sideL(0), sideL(2)) > 2.5 * Math.min(sideL(0), sideL(2)) || Math.max(sideL(1), sideL(3)) > 2.5 * Math.min(sideL(1), sideL(3)))) return null;
-      return q;
+      // Hu maps undistorted document points → upright (including the scale-about-centre)
+      const Hu2 = mesh.homography(x.pts.map(([a, b]) => undoc(a, b)), q); if (!Hu2) return null;
+      return { q, Hu: Hu2 };
     };
-    let hUsed = uh.mode !== 'none';
-    next = hUsed ? tryH(toDocH(uh.vh)) : null;
-    if (!next && vv) { // horizontals unusable: exactly what Vertical does, so the two modes never disagree on the same verticals
-      if (hUsed) uh = { ...uh, mode: 'none', weak: true }; hUsed = false;
-      next = u.mode === 'keystone' ? uprightFromGuides(x.pts, seg.guidesFromVP(u.vp, img.width, img.height).map((g) => g.map(toDoc))) : rotateBy(u.angle);
+    // mean |tilt| of detected horizontals (even weak ones) after a candidate map — used to refuse a "correction" that makes them worse
+    // when the main detector found no horizontals (strong vertical textures steal the top-12% budget), try a
+    // weaker pass just for the do-no-harm check so Full cannot silently worsen a facade like geneva.jpg
+    let harmLines = hl.filter((l) => Math.abs(l.angle) <= 12);
+    if (!harmLines.length) {
+      harmLines = sharpen(seg.detectLines(img, { orient: 'h', maxDeg: 15, minLenFrac: 0.08, maxLines: 25, thrFrac: 0.72 }), 'h')
+        .filter((l) => Math.abs(l.angle) <= 12 && l.len >= 0.1 * img.width);
     }
+    const meanAbsH = (mapPt) => {
+      const src = harmLines.length ? harmLines : [];
+      if (!src.length) return null;
+      let s = 0, n = 0;
+      for (const l of src) {
+        if (l.len < 0.12 * img.width) continue;
+        const a = toDoc([l.x1, l.y1]), b = toDoc([l.x2, l.y2]);
+        const a2 = mapPt(a[0], a[1]), b2 = mapPt(b[0], b[1]);
+        if (!a2 || !b2) continue;
+        let ang = Math.atan2(b2[1] - a2[1], b2[0] - a2[0]) * 180 / Math.PI;
+        while (ang > 90) ang -= 180; while (ang <= -90) ang += 180;
+        s += Math.abs(ang); n++;
+      }
+      return n ? s / n : null;
+    };
+    const idMap = (a, b) => [a, b];
+    const beforeH = meanAbsH(idMap);
+    let hUsed = uh.mode !== 'none';
+    // score a candidate: lower is better. Prefer not raising horizontal tilt vs the uncorrected photo.
+    const scoreCand = (c) => {
+      if (!c) return Infinity;
+      if (beforeH == null) return 0;
+      const after = meanAbsH((a, b) => { const p = mapHu(c.Hu, a, b); return [p[0], p[1]]; });
+      if (after == null) return 0;
+      return after - beforeH; // positive = harm
+    };
+    let cand = hUsed ? tryH(toDocH(uh.vh)) : null;
+    if (cand && scoreCand(cand) > 0.05) { cand = null; hUsed = false; uh = { ...uh, mode: 'none', weak: true, harm: true }; }
+    if (cand) {
+      next = cand.q;
+      Hu = kRad ? cand.Hu : null; // classic perspectiveMesh(pts) when no radial
+    } else if (vv) {
+      // Vertical fallback must match the Vertical mode path (guides / rotate), not uprightHomography alone —
+      // the two differ enough to crop a measured edge on the church photo (job 22).
+      if (hUsed) uh = { ...uh, mode: 'none', weak: true }; hUsed = false;
+      let vnext = u.mode === 'keystone'
+        ? uprightFromGuides(x.pts, seg.guidesFromVP(u.vp, img.width, img.height).map((g) => g.map(toDoc)))
+        : rotateBy(u.angle);
+      if (vnext && beforeH != null) {
+        const Hv = mesh.homography(x.pts, vnext);
+        const after = meanAbsH((a, b) => { const p = mesh.applyH(Hv, a, b); return [p[0], p[1]]; });
+        // refuse only a clear worsening (geneva: ~0.4° → ~0.9°). Tiny bumps from weak false horizontals
+        // must not abort Full on photos like the church (job 22).
+        if (after != null && after > beforeH + 0.2 && after > 0.65) vnext = null;
+      }
+      // no horizontals found at all: a tiny rotate with many near-vertical votes is often diagonal facade
+      // texture (geneva fins), not a tilted camera — refuse rather than double the hidden horizontals' tilt
+      if (vnext && beforeH == null && u.mode === 'rotate' && Math.abs(u.angle) < 1.2 && lines.length >= 12) vnext = null;
+      if (vnext) next = vnext;
+      else uh = { ...uh, mode: 'none', weak: true, harm: true };
+    }
+
+    // if still nothing and we have horizontals to protect, refuse rather than make them worse
     msg = hUsed ? `${vv ? `${u.inliers.length} vertical and ` : ''}${uh.inliers.length} horizontal lines straightened${vv ? '' : ' (no vertical lines found)'}`
-      : `${u.inliers.length} vertical lines straightened (${uh.weak ? 'the horizontal lines were too few or too uncertain to use' : 'no horizontal lines found'})`;
+      : `${u.inliers.length} vertical lines straightened (${uh.harm ? 'using the horizontals would have made them worse' : uh.weak ? 'the horizontal lines were too few or too uncertain to use' : 'no horizontal lines found'})`;
+    if (kRad) msg += `; lens ${kRad > 0 ? '+' : ''}${kRad.toFixed(2)}`;
   }
   lastUpright = { req, mode: next ? used : 'none', vkind: u.mode, vp: u.vp ? toDoc(u.vp) : null, angle: u.angle ?? null, lines: (u.inliers || []).length, found: lines.length,
-    hkind: uh.mode, hweak: !!uh.weak, hvp: uh.vp ? toDoc(uh.vp) : null, hangle: uh.angle ?? null, hlines: uh.mode === 'none' ? 0 : (uh.inliers || []).length, hfound: hl.length, ms: Math.round(performance.now() - t0) };
+    hkind: uh.mode, hweak: !!uh.weak, hvp: uh.vp ? toDoc(uh.vp) : null, hangle: uh.angle ?? null, hlines: uh.mode === 'none' ? 0 : (uh.inliers || []).length, hfound: hl.length, k: kRad, kEst: lastUprightKEst || 0, ms: Math.round(performance.now() - t0) };
   { const D = (l) => [...toDoc([l.x1, l.y1]), ...toDoc([l.x2, l.y2])].map((t) => Math.round(t * 10) / 10); lastUpright.debug = { v: lines.map(D), vin: [...(u.inliers || [])], h: hl.map(D), hin: uh.mode === 'none' ? [] : [...(uh.inliers || [])] }; } // detected lines (document pixels), for diagnosis
   if (used === 'vertical' && next) lastUpright.mode = u.mode; // 'keystone' | 'rotate' (v1.8 values)
-  if (!next || !mesh.perspectiveMesh(x.w, x.h, next) || !mxfBounds(mxfMesh({ ...x, pts: next }))) {
-    lastUpright.mode = 'none';
+  x.uprightHu = Hu; x.radialK = kRad || 0;
+  const meshOk = next && (Hu ? mesh.uprightMeshFromH(x.w, x.h, Hu, kRad || 0, x.ox, x.oy) : mesh.perspectiveMesh(x.w, x.h, next));
+  if (!next || !meshOk || !mxfBounds(mxfMesh({ ...x, pts: next, uprightHu: Hu, radialK: kRad || 0 }))) {
+    lastUpright.mode = 'none'; x.uprightHu = null; x.radialK = 0;
     const what = req === 'level' ? 'horizontal' : req === 'full' ? 'vertical or horizontal' : 'vertical';
     const none = req === 'level' ? hl.length < 2 : req === 'full' ? lines.length < 2 && hl.length < 2 : lines.length < 2 && (req !== 'auto' || hl.length < 2);
     status(none ? `Auto upright found no long straight ${what} lines. Try Guides and draw two edges yourself.` : `Auto upright: the ${what} lines already look straight (or disagree). Try Guides.`);
