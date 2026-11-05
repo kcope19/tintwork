@@ -25,7 +25,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.13.0';
+const APP_VERSION = '1.14.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -1652,12 +1652,25 @@ function objSelCompute(s) {
   s.ms = Math.round(performance.now() - t0);
   const sel = combine(s.base, W, H, m, s.mode), n = s.strokes.length;
   setSelection(sel, sel ? `Object select${n ? ` (refined ×${n})` : ''}${MODE_LABEL[s.mode]}` : 'Deselect');
-  status(sel ? `Object select: ${sel.w} × ${sel.h} px in ${s.ms} ms · Shift-paint missed parts, Alt-paint extra background · Enter keeps`
-    : 'Object select found nothing: draw a larger box, or Shift-paint over the subject.');
+  status(sel ? `Object select: ${sel.w} × ${sel.h} px in ${s.ms} ms · +Subject / −Background (or Shift / Alt) · Enter keeps · Done + feather softens the edge`
+    : 'Object select found nothing: draw a larger box, or paint +Subject over the subject.');
   buildOptionsBar(); requestRender();
   return { sel, ms: s.ms };
 }
 function objSelDone() { if (!state.objSel) return; state.objSel = null; status('Object select kept.'); buildOptionsBar(); requestRender(); }
+/** v1.14: keep the cut-out and feather it in one step (uses the remembered Feather radius). */
+async function objSelDoneFeather() {
+  if (!state.objSel) return;
+  objSelDone();
+  const d = doc(), sel = d?.selection; if (!sel) return;
+  const radius = Math.max(0.5, Math.min(250, +state.opts.featherRadius || 8));
+  setBusy(1);
+  try {
+    const m = await ops.featherMask(sel.mask, sel.W, sel.H, radius);
+    if (doc() === d && d.selection === sel) setSelection(makeSelection(sel.W, sel.H, m), `Object select + feather ${radius}px`);
+    status(`Object select kept and feathered ${radius}px.`);
+  } finally { setBusy(-1); }
+}
 function objSelCancel() {
   const s = state.objSel; if (!s) return; state.objSel = null;
   if (doc() === s.doc && doc().selection !== s.prev) setSelection(s.prev, 'Cancel object select');
@@ -1776,6 +1789,9 @@ const toolHandlers = {
       if (!drag?.moved || !r || r.w * state.zoom < 6 || r.h * state.zoom < 6) { requestRender(); status('Object select: drag a box around the subject.'); return; }
       const d = doc();
       state.objSel = { doc: d, rect: r, strokes: [], base: drag.mode === 'new' ? null : d.selection, prev: d.selection, mode: drag.mode };
+      // v1.14: after the box, sticky “+ Subject” so mouse users refine without holding Shift
+      if (state.opts.objPaint === 'box') state.opts.objPaint = 'fg';
+      buildOptionsBar();
       objSelRun();
     },
   },
@@ -3586,7 +3602,7 @@ const cmds = {
   mode8: needDoc(() => setDepth(8)),
   mode16: needDoc(() => setDepth(16)),
   engine: () => openEngineDialog(),
-  proofOff: () => setProof(null), proofGlossy: () => setProof('glossy'), proofMatte: () => setProof('matte'), proofWarnOn: () => setProofWarn(true), proofWarnOff: () => setProofWarn(false),
+  proofOff: () => setProof(null), proofLast: () => { try { const j = JSON.parse(localStorage.getItem(PROOF_LAST_KEY) || 'null'); if (j?.mode && PROOF_PAPERS[j.mode]) { setProof(j.mode); if (j.warn) setProofWarn(true); } else status('No remembered proof yet: pick a paper under View ▸ Proof.'); } catch { status('No remembered proof yet.'); } }, proofGlossy: () => setProof('glossy'), proofMatte: () => setProof('matte'), proofRag: () => setProof('rag'), proofNews: () => setProof('newsprint'), proofCmy: () => setProof('cmy'), proofWarnOn: () => setProofWarn(true), proofWarnOff: () => setProofWarn(false),
   benchmark: () => openBenchmarkDialog(),
   userGuide: () => openUserGuide(),
   perspective: needDoc(() => startMeshXf('perspective')),
@@ -3623,7 +3639,7 @@ const cmds = {
     let r = r0; if (a) { const t = a.w / a.h; r = r0.w / r0.h > t ? { x: Math.round(r0.x + (r0.w - r0.h * t) / 2), y: r0.y, w: Math.floor(r0.h * t), h: r0.h } : { x: r0.x, y: Math.round(r0.y + (r0.h - r0.w / t) / 2), w: r0.w, h: Math.floor(r0.w / t) }; }
     if (state.tool !== 'crop') setTool('crop'); state.crop = { x: r.x, y: r.y, w: r.w, h: r.h }; buildOptionsBar(); requestRender(); status(`Crop fitted inside the image: ${r.w} × ${r.h} px · Enter applies.`); }),
   objectSelectTool: needDoc(() => { setTool('objsel'); status('Object select: drag a box around the subject.'); }),
-  objSelDone: () => objSelDone(), objSelUndo: () => objSelUndoStroke(),
+  objSelDone: () => objSelDone(), objSelDoneFeather: () => { void objSelDoneFeather(); }, objSelUndo: () => objSelUndoStroke(),
   straightenTool: needDoc(() => setTool('straighten')),
   wbPicker: needDoc(() => setTool('wbpick')),
   whiteBalance: needDoc(() => openAdjust(ADJ.whiteBalance)),
@@ -3845,7 +3861,7 @@ const MENUS = [
     ['Invert', 'invert', 'Ctrl+I'], ['Grayscale', 'grayscale', 'Ctrl+Shift+U'], ['Sepia tone…', 'sepia']]],
   ['Filter', [['Convert to live layer', 'convertSmart'], '-', ['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
   ['Actions', [['Actions…', 'actions'], ['Start recording', 'actionRecord'], ['Stop recording and save…', 'actionStop'], '-', ['Batch process…', 'batch']]],
-  ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1'], '-', ['Proof: off', 'proofOff'], ['Proof: glossy paper', 'proofGlossy'], ['Proof: matte paper', 'proofMatte'], ['Proof: ink warning on', 'proofWarnOn'], ['Proof: ink warning off', 'proofWarnOff'], '-', ['Rendering engine…', 'engine']]],
+  ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1'], '-', ['Proof: off', 'proofOff'], ['Proof: last used', 'proofLast'], ['Proof: glossy paper', 'proofGlossy'], ['Proof: matte paper', 'proofMatte'], ['Proof: photo rag', 'proofRag'], ['Proof: newsprint', 'proofNews'], ['Proof: approximate CMY', 'proofCmy'], ['Proof: ink warning on', 'proofWarnOn'], ['Proof: ink warning off', 'proofWarnOff'], '-', ['Rendering engine…', 'engine']]],
   ['Help', [['Keyboard shortcuts', 'shortcuts', '?'], ['User guide', 'userGuide', 'F1'], ['Run performance benchmark…', 'benchmark'], [`About ${APP}`, 'about']]],
 ];
 
@@ -4870,7 +4886,7 @@ function download(blob, filename) {
 function openShortcutsDialog() {
   const K = (cmd, spec) => keyLabel(shortcutFor(cmd, spec));
   const rows = [
-    ['V / M / C', 'Move / Rectangle select / Crop'], ['L / P / W', 'Lasso / Polygonal lasso / Magic wand'], ['W again', 'Object select (drag a box; Shift-paint adds, Alt-paint removes)'], ['B / E / S', 'Brush / Eraser / Clone stamp'], ['G (again: Fill) / U', 'Gradient / Shapes'], ['O again / J again', 'Dodge-burn / Red eye'], ['T / I', 'Text / Color picker'],
+    ['V / M / C', 'Move / Rectangle select / Crop'], ['L / P / W', 'Lasso / Polygonal lasso / Magic wand'], ['W again', 'Object select (box, then +Subject / −Background; Done + feather softens)'], ['B / E / S', 'Brush / Eraser / Clone stamp'], ['G (again: Fill) / U', 'Gradient / Shapes'], ['O again / J again', 'Dodge-burn / Red eye'], ['T / I', 'Text / Color picker'],
     [platformText('Shift / Alt / Shift+Alt (selecting)'), 'Add / subtract / intersect'], [`${K('invertSelection', 'Ctrl+Shift+I')}, ${keyLabel('Shift+F6')}`, 'Invert selection / feather'], ['Enter, double-click / Esc', 'Close / cancel polygon'],
     ['R / J', 'Healing brush / Spot healing'], [platformText('Alt+click (clone, healing)'), 'Set source point'], ['\\', 'Toggle editing mask / pixels'],
     ['H, hold Space', 'Pan'], ['Z, mouse wheel', platformText('Zoom (Shift+wheel pans)')], ['[ and ]', 'Brush size'], [platformText('Shift+click'), 'Straight brush line'], [platformText('Alt+click (brush)'), 'Pick color'],
@@ -5448,7 +5464,7 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
     const beforeWhat = opt.initial ? 'the settings it was developed with' : 'the default settings';
     body.innerHTML = `<div class="raw-view"><div class="raw-canvas-wrap" id="rawWrap"><canvas id="rawCanvas" aria-label="Develop preview"></canvas><canvas id="rawOverlay" class="raw-overlay" aria-hidden="true"></canvas><span class="raw-ba hidden" id="rawBaTag">Before</span><span class="raw-ba raw-ba-r hidden" id="rawAfterTag">After</span>
           <div class="raw-split hidden" id="rawSplit" role="slider" tabindex="0" aria-label="Before / after divider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" title="Drag to compare before (left) and after (right)"><span class="raw-split-grip"></span></div></div>
-        <div class="raw-viewbar"><span class="raw-meta muted small">${escapeHtml(info.describe || info.format)}</span><span class="spacer"></span><button type="button" id="rawSplitBtn" aria-pressed="false" title="Split view: before on the left, after on the right; drag the divider (Y key)">Split</button><button type="button" id="rawBefore" aria-pressed="false" title="Show the image with ${beforeWhat} (\\ key)">Before / after</button></div></div>
+        <div class="raw-viewbar"><span class="raw-meta muted small">${escapeHtml(info.describe || info.format)}</span><span class="spacer"></span><button type="button" id="rawSplitBtn" aria-pressed="false" title="Split view: click to cycle left/right then top/bottom (Y key); drag the divider">Split</button><button type="button" id="rawBefore" aria-pressed="false" title="Show the image with ${beforeWhat} (\\ key)">Before / after</button></div></div>
       <div class="raw-controls">
         <div class="raw-sec">Presets</div>
         <label class="field two"><span>Apply</span><select id="rawPreset" aria-label="Apply develop preset">${rawPresetOptions(true)}</select></label>
@@ -5540,10 +5556,24 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       const w = cv.width * k, h = cv.height * k; return { x: cv.offsetLeft + (W - w) / 2, y: cv.offsetTop + (H - h) / 2, w, h };
     };
     const placeDivider = () => {
-      const on = view === 'split'; divider.classList.toggle('hidden', !on); $q('#rawAfterTag').classList.toggle('hidden', !on);
+      const on = view === 'split' || view === 'splitH';
+      divider.classList.toggle('hidden', !on);
+      divider.classList.toggle('horiz', view === 'splitH');
+      $q('#rawAfterTag').classList.toggle('hidden', !on);
       $q('#rawBaTag').classList.toggle('hidden', view === 'after');
       if (!on) return;
-      const r = contentRect(); divider.style.left = `${r.x + r.w * splitF}px`; divider.style.top = `${r.y}px`; divider.style.height = `${r.h}px`;
+      const r = contentRect();
+      if (view === 'splitH') {
+        divider.style.left = `${r.x}px`; divider.style.top = `${r.y + r.h * splitF}px`;
+        divider.style.width = `${r.w}px`; divider.style.height = '0';
+        divider.setAttribute('aria-orientation', 'horizontal');
+        divider.title = 'Drag to compare before (top) and after (bottom)';
+      } else {
+        divider.style.left = `${r.x + r.w * splitF}px`; divider.style.top = `${r.y}px`;
+        divider.style.width = ''; divider.style.height = `${r.h}px`;
+        divider.setAttribute('aria-orientation', 'vertical');
+        divider.title = 'Drag to compare before (left) and after (right)';
+      }
       divider.setAttribute('aria-valuenow', String(Math.round(splitF * 100)));
     };
     const compose = () => { // synchronous: used while dragging
@@ -5552,7 +5582,12 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       else if (lastImg) {
         paintImg(lastImg);
         if (beforeImg.width === cv.width && beforeImg.height === cv.height) {
-          const sx = Math.round(splitF * cv.width); if (sx > 0) cv.getContext('2d').putImageData(beforeImg, 0, 0, 0, 0, sx, cv.height);
+          const g = cv.getContext('2d');
+          if (view === 'splitH') {
+            const sy = Math.round(splitF * cv.height); if (sy > 0) g.putImageData(beforeImg, 0, 0, 0, 0, cv.width, sy);
+          } else {
+            const sx = Math.round(splitF * cv.width); if (sx > 0) g.putImageData(beforeImg, 0, 0, 0, 0, sx, cv.height);
+          }
         }
       }
       placeDivider(); drawOverlay();
@@ -5593,9 +5628,16 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
     };
     const setView = async (v) => {
       view = v;
-      for (const [id, on] of [['#rawBefore', v === 'before'], ['#rawSplitBtn', v === 'split']]) { $q(id).setAttribute('aria-pressed', String(on)); $q(id).classList.toggle('on', on); }
+      const splitOn = v === 'split' || v === 'splitH';
+      for (const [id, on] of [['#rawBefore', v === 'before'], ['#rawSplitBtn', splitOn]]) { $q(id).setAttribute('aria-pressed', String(on)); $q(id).classList.toggle('on', on); }
+      $q('#rawSplitBtn').textContent = v === 'splitH' ? 'Split ⊟' : v === 'split' ? 'Split ⊞' : 'Split';
       await render();
       if (view === v) { ui.beforeShown = v === 'before'; ui.view = v; }
+    };
+    const cycleSplit = () => { // after → left/right → top/bottom → after
+      if (view === 'after' || view === 'before') setView('split');
+      else if (view === 'split') setView('splitH');
+      else setView('after');
     };
     const setBefore = (on) => setView(on ? 'before' : 'after');
     const setSplit = (f) => { splitF = Math.min(1, Math.max(0, f)); ui.split = splitF; compose(); };
@@ -5984,12 +6026,12 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
     });
     if (!opt.onApply && opt.handle) { try { if (localStorage.getItem(RAW_LINK_KEY) === '1') $q('#rawStore').value = 'link'; } catch { /* private mode */ } }
     $q('#rawBefore').onclick = () => setView(view === 'before' ? 'after' : 'before');
-    $q('#rawSplitBtn').onclick = () => setView(view === 'split' ? 'after' : 'split');
+    $q('#rawSplitBtn').onclick = () => cycleSplit();
     body.addEventListener('keyup', (e) => { if (e.key === 'Alt') { e.preventDefault(); if (hover) { hover.erase = eraseMode; drawOverlay(); } } });
     body.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' && /text|number/.test(e.target.type)) return;
       if (e.key === '\\') { e.preventDefault(); setView(view === 'before' ? 'after' : 'before'); }
-      else if (e.key === 'y' || e.key === 'Y') { e.preventDefault(); setView(view === 'split' ? 'after' : 'split'); }
+      else if (e.key === 'y' || e.key === 'Y') { e.preventDefault(); cycleSplit(); }
       else if (e.key === 'g' || e.key === 'G') { e.preventDefault(); showGrid = !showGrid; $q('#rawGrid').checked = showGrid; drawOverlay(); }
       else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); $q('#rawFringePick').click(); }
       else if (e.key === 'o' || e.key === 'O') { e.preventDefault(); setMaskOn(!maskOn); }
@@ -5998,12 +6040,17 @@ function rawDialog(file, sess, timing, t0, opt = {}) {
       else if (e.key === 'Alt') { e.preventDefault(); if (hover) { hover.erase = true; drawOverlay(); } }
       else if ((e.key === 'Delete' || e.key === 'Backspace') && localSel >= 0 && e.target.tagName !== 'SELECT') { e.preventDefault(); deleteLocal(); }
       else if (e.key === 'Escape' && (picking || rangePick || brushMode || localSel >= 0)) { e.preventDefault(); e.stopPropagation(); setPicking(false); if (rangePick) setRangePick(null); else if (brushMode) setBrushMode(false); else { localSel = -1; syncLocal(); if (maskOn) changed(); } }
-      else if (e.target === divider && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setSplit(splitF + (e.key === 'ArrowLeft' ? -0.02 : 0.02)); }
+      else if (e.target === divider && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && view === 'split') { e.preventDefault(); setSplit(splitF + (e.key === 'ArrowLeft' ? -0.02 : 0.02)); }
+      else if (e.target === divider && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && view === 'splitH') { e.preventDefault(); setSplit(splitF + (e.key === 'ArrowUp' ? -0.02 : 0.02)); }
     });
     // drag the divider (or click anywhere on the image) in split view
     let dragging = false;
-    const toFrac = (e) => { const r = contentRect(), b = wrap.getBoundingClientRect(); return (e.clientX - b.left - r.x) / (r.w || 1); };
-    wrap.addEventListener('pointerdown', (e) => { if (view !== 'split' || e.button !== 0) return; dragging = true; wrap.setPointerCapture(e.pointerId); setSplit(toFrac(e)); e.preventDefault(); });
+    const toFrac = (e) => {
+      const r = contentRect(), b = wrap.getBoundingClientRect();
+      if (view === 'splitH') return (e.clientY - b.top - r.y) / (r.h || 1);
+      return (e.clientX - b.left - r.x) / (r.w || 1);
+    };
+    wrap.addEventListener('pointerdown', (e) => { if ((view !== 'split' && view !== 'splitH') || e.button !== 0) return; dragging = true; wrap.setPointerCapture(e.pointerId); setSplit(toFrac(e)); e.preventDefault(); });
     wrap.addEventListener('pointermove', (e) => { if (dragging) setSplit(toFrac(e)); });
     const endDrag = () => { dragging = false; };
     wrap.addEventListener('pointerup', endDrag); wrap.addEventListener('pointercancel', endDrag);
@@ -6593,28 +6640,66 @@ labelControls(); new MutationObserver((ms) => { for (const m of ms) for (const n
  * darkest black its ink reaches (an SVG filter on the view, worked in linear light; pixels and exports are unchanged).
  * Approximate typical papers, not a printer profile: no ICC profiles are read or applied.
  */
-const PROOF_PAPERS = { glossy: { name: 'glossy paper', white: [246, 245, 240], black: [22, 22, 24], inkLimit: 2.8 }, matte: { name: 'matte paper', white: [240, 238, 230], black: [48, 47, 46], inkLimit: 2.4 } };
+/**
+ * Soft-proof paper list (v1.14): typical stocks only — no ICC. Last paper + ink-warning preference are remembered.
+ * `cmy` is an approximate CMY ink-load view (desaturated), not a printer CMYK conversion.
+ */
+const PROOF_PAPERS = {
+  glossy: { name: 'glossy paper', white: [246, 245, 240], black: [22, 22, 24], inkLimit: 2.8 },
+  matte: { name: 'matte paper', white: [240, 238, 230], black: [48, 47, 46], inkLimit: 2.4 },
+  rag: { name: 'photo rag / fine art', white: [245, 242, 235], black: [42, 40, 38], inkLimit: 2.6 },
+  newsprint: { name: 'newsprint', white: [232, 228, 214], black: [55, 52, 48], inkLimit: 2.2 },
+  cmy: { name: 'approximate CMY ink load', white: [255, 255, 255], black: [0, 0, 0], inkLimit: 3.0, cmyView: true },
+};
+const PROOF_LAST_KEY = 'tintwork.proofLast';
 let proofMode = null, proofWarn = false;
 const srgbToLin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
-function setProof(mode) {
+function saveProofPrefs() {
+  try { localStorage.setItem(PROOF_LAST_KEY, JSON.stringify({ mode: proofMode, warn: !!proofWarn })); } catch { /* private */ }
+}
+function loadProofPrefs() {
+  try {
+    const j = JSON.parse(localStorage.getItem(PROOF_LAST_KEY) || 'null');
+    if (!j || !j.mode || !PROOF_PAPERS[j.mode]) return;
+    setProof(j.mode, { quiet: true, skipSave: true });
+    if (j.warn) setProofWarn(true, { quiet: true, skipSave: true });
+  } catch { /* ignore */ }
+}
+function setProof(mode, { quiet = false, skipSave = false } = {}) {
   proofMode = PROOF_PAPERS[mode] ? mode : null;
   if (!proofMode) proofWarn = false;
   let svg = document.getElementById('twProofSvg');
   if (!svg) { svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.id = 'twProofSvg'; svg.setAttribute('width', '0'); svg.setAttribute('height', '0'); svg.setAttribute('aria-hidden', 'true'); svg.style.position = 'absolute'; document.body.append(svg); }
   const viewEl = document.getElementById('view');
-  if (!proofMode) { viewEl.style.filter = ''; svg.innerHTML = ''; status('Proof off.'); requestRender(); return null; }
-  const p = PROOF_PAPERS[proofMode], f = (i) => { const w = srgbToLin(p.white[i]), b = srgbToLin(p.black[i]); return `slope="${(w - b).toFixed(5)}" intercept="${b.toFixed(5)}"`; };
-  svg.innerHTML = `<filter id="twProof" color-interpolation-filters="linearRGB"><feComponentTransfer><feFuncR type="linear" ${f(0)}/><feFuncG type="linear" ${f(1)}/><feFuncB type="linear" ${f(2)}/></feComponentTransfer></filter>`;
-  viewEl.style.filter = 'url(#twProof)';
-  status(`Proof: ${p.name}${proofWarn ? ' · ink warning on' : ''} (paper white and ink black on screen only; no ICC printer profile).`);
+  if (!proofMode) {
+    viewEl.style.filter = ''; svg.innerHTML = ''; viewEl.classList.remove('tw-cmy-proof');
+    if (!quiet) status('Proof off.');
+    if (!skipSave) saveProofPrefs();
+    requestRender(); return null;
+  }
+  const p = PROOF_PAPERS[proofMode];
+  viewEl.classList.toggle('tw-cmy-proof', !!p.cmyView);
+  if (p.cmyView) {
+    // Honest approximate CMY: show ink load as grey (C+M+Y), not a fake printer profile.
+    svg.innerHTML = '';
+    viewEl.style.filter = 'grayscale(1) contrast(1.05)';
+    if (!quiet) status(`Proof: ${p.name} (view only — greyscale of approximate CMY ink; not ICC CMYK).${proofWarn ? ' · ink warning on' : ''}`);
+  } else {
+    const f = (i) => { const w = srgbToLin(p.white[i]), b = srgbToLin(p.black[i]); return `slope="${(w - b).toFixed(5)}" intercept="${b.toFixed(5)}"`; };
+    svg.innerHTML = `<filter id="twProof" color-interpolation-filters="linearRGB"><feComponentTransfer><feFuncR type="linear" ${f(0)}/><feFuncG type="linear" ${f(1)}/><feFuncB type="linear" ${f(2)}/></feComponentTransfer></filter>`;
+    viewEl.style.filter = 'url(#twProof)';
+    if (!quiet) status(`Proof: ${p.name}${proofWarn ? ' · ink warning on' : ''} (paper white and ink black on screen only; no ICC printer profile).`);
+  }
+  if (!skipSave) saveProofPrefs();
   requestRender();
   return proofMode;
 }
 /** Toggle a magenta overlay for pixels that would crush to paper white/black or exceed an approximate ink limit (no ICC). */
-function setProofWarn(on) {
+function setProofWarn(on, { quiet = false, skipSave = false } = {}) {
   proofWarn = !!on && !!proofMode;
-  if (on && !proofMode) { status('Turn on a paper proof first (View ▸ Proof: glossy / matte), then enable the ink warning.'); return false; }
-  status(proofWarn ? `Proof ink warning on (${PROOF_PAPERS[proofMode].name}, ~${Math.round(PROOF_PAPERS[proofMode].inkLimit * 100)}% CMY limit + crushed highlights/shadows).` : 'Proof ink warning off.');
+  if (on && !proofMode) { if (!quiet) status('Turn on a paper proof first (View ▸ Proof…), then enable the ink warning.'); return false; }
+  if (!quiet) status(proofWarn ? `Proof ink warning on (${PROOF_PAPERS[proofMode].name}, ~${Math.round(PROOF_PAPERS[proofMode].inkLimit * 100)}% CMY limit + crushed highlights/shadows).` : 'Proof ink warning off.');
+  if (!skipSave) saveProofPrefs();
   requestRender();
   return proofWarn;
 }
@@ -6776,8 +6861,8 @@ function buildOptionsBar() {
         `<span class="seg" title="What dragging does once there is an object">${[['box', 'Box'], ['fg', '+ Subject'], ['bg', '− Background']].map(([k, n]) => `<button data-objpaint="${k}" class="${o.objPaint === k ? 'on' : ''}">${n}</button>`).join('')}</span>`,
         range('objBrush', 'Brush', 2, 400, 'px'),
         `<label title="Soften the outline along fine edges such as hair"><input type="checkbox" data-opt="objRefine" ${o.objRefine !== false ? 'checked' : ''}/> Refine edges</label>`,
-        `<span class="muted">${s ? platformText(`${s.strokes.length} stroke${s.strokes.length === 1 ? '' : 's'} · Shift-paint missed parts · Alt-paint extra background · Enter keeps · Esc cancels`) : 'Drag a box around the subject'}${sl ? ` · ${sl.w} × ${sl.h} px` : ''}</span>`);
-      if (s) parts.push(`<button data-cmd="objSelUndo" ${s.strokes.length ? '' : 'disabled'}>Undo stroke</button>`, `<button data-cmd="objSelDone" class="primary">Done</button>`);
+        `<span class="muted">${s ? platformText(`${s.strokes.length} stroke${s.strokes.length === 1 ? '' : 's'} · +Subject / −Background (or Shift / Alt) · Enter keeps · Esc cancels`) : 'Drag a box around the subject'}${sl ? ` · ${sl.w} × ${sl.h} px` : ''}</span>`);
+      if (s) parts.push(`<button data-cmd="objSelUndo" ${s.strokes.length ? '' : 'disabled'}>Undo stroke</button>`, `<button data-cmd="objSelDone" class="primary">Done</button>`, `<button data-cmd="objSelDoneFeather" title="Keep the selection and feather it by the current Feather radius (${o.featherRadius} px)">Done + feather</button>`);
       parts.push(`<button data-cmd="invertSelection">Invert</button>`, `<button data-cmd="deselect">Deselect</button>`);
       break;
     }
@@ -6813,7 +6898,10 @@ function buildOptionsBar() {
     case 'crop': {
       const c = state.crop;
       const cp = o.cropPreset && o.cropPreset !== 'orig' ? presetById(o.cropPreset) : null;
-      parts.push(`<label>Ratio <select data-croppreset title="Crop presets: social, banner and print sizes">${presetOptionsHTML(o.cropPreset)}</select></label>`,
+      // v1.14: one-click chips for common jobs (Instagram 4:5, square, 16:9, 8×10 print)
+      const chips = [['sq', '1:1'], ['portrait45', '4:5'], ['land169', '16:9'], ['p8x10', '8×10'], ['orig', 'Free']];
+      parts.push(`<span class="seg" title="Common crop presets">${chips.map(([id, lab]) => `<button type="button" data-cropchip="${id}" class="${o.cropPreset === id ? 'on' : ''}">${lab}</button>`).join('')}</span>`,
+        `<label>Ratio <select data-croppreset title="Crop presets: social, banner and print sizes">${presetOptionsHTML(o.cropPreset)}</select></label>`,
         `<button data-cropswap title="Swap orientation" ${cropAspect() ? '' : 'disabled'}>⇄</button>`,
         `<label title="Lock the current crop's aspect ratio"><input type="checkbox" data-croplock ${o.cropLockRatio ? 'checked' : ''} ${c || o.cropLockRatio ? '' : 'disabled'}/> Lock</label>`);
       if (cp && cp.inW != null) parts.push(`<label>DPI <input type="number" data-opt="cropDpi" min="72" max="1200" value="${o.cropDpi}" style="width:60px"/></label>`);
@@ -6839,6 +6927,7 @@ function buildOptionsBar() {
   bar.querySelectorAll('[data-objpaint]').forEach((b) => b.addEventListener('click', () => { o.objPaint = b.dataset.objpaint; buildOptionsBar(); }));
   bar.querySelectorAll('[data-seg]').forEach((b) => b.addEventListener('click', () => { o[b.dataset.seg] = b.dataset.val; buildOptionsBar(); }));
   bar.querySelector('[data-croppreset]')?.addEventListener('change', (e) => setCropPreset(e.target.value));
+  bar.querySelectorAll('[data-cropchip]').forEach((b) => b.addEventListener('click', () => setCropPreset(b.dataset.cropchip)));
   bar.querySelector('[data-cropswap]')?.addEventListener('click', () => {
     const d = doc(), a = cropAspect(); if (!a) return;
     if (o.cropLockRatio) o.cropLockRatio = { w: a.h, h: a.w }; else { const land = a.w > a.h; o.cropOrient = land ? 'portrait' : 'landscape'; if (o.cropPreset === 'orig' || presetById(o.cropPreset)?.rw != null) o.cropLockRatio = { w: a.h, h: a.w }; }

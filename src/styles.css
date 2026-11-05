@@ -423,6 +423,10 @@ table.variants td { padding: 2px 3px; }
 .raw-split-grip { position: absolute; top: 50%; left: -10px; width: 18px; height: 28px; margin-top: -14px; border-radius: 9px; background: #fff; box-shadow: 0 1px 4px #0008; }
 .raw-split:focus-visible .raw-split-grip { outline: 2px solid var(--accent, #e8553a); }
 .raw-canvas-wrap.splitting, .raw-canvas-wrap:has(.raw-split:not(.hidden)) canvas { cursor: ew-resize; }
+.raw-split.horiz { width: auto; height: 0; border-left: none; border-top: 2px solid #fff; transform: translateY(-1px); cursor: ns-resize; }
+.raw-split.horiz::before { inset: -8px 0; }
+.raw-split.horiz .raw-split-grip { top: -14px; left: 50%; margin-top: 0; margin-left: -9px; width: 28px; height: 18px; border-radius: 9px; }
+.raw-canvas-wrap:has(.raw-split.horiz:not(.hidden)) canvas { cursor: ns-resize; }
 /* v1.4: develop overlay (grid, local adjustment handles, defringe eyedropper) */
 .raw-view canvas.raw-overlay { position: absolute; width: auto; max-height: none; background: transparent; border-radius: 0; pointer-events: none; z-index: 1; }
 .raw-view canvas.raw-overlay.active { pointer-events: auto; }
