@@ -12,7 +12,7 @@ Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, 
 
 ## v1.14.0 update (2026-11-05, America/New_York)
 
-v1.14 is non-AI polish again (no heal% / Full≤0.5° cycle). Prefer trails→match on workflow. Every fix below was reproduced 3/3. `scripts/v114-test.mjs` has 21 checks and passed 21/21. The full `npm test` count is recorded in the release commit / live verification.
+v1.14 is non-AI polish again (no heal% / Full≤0.5° cycle). Prefer trails→match on workflow. Every fix below was reproduced 3/3. `scripts/v114-test.mjs` has 21 checks and passed 21/21. The full `npm test` passed all **1034** checks (1013 in v1.13 + 21).
 
 | # | Finding | Severity | Evidence | Fix | Status |
 |---|---|---|---|---|---|
@@ -25,7 +25,7 @@ v1.14 is non-AI polish again (no heal% / Full≤0.5° cycle). Prefer trails→ma
 
 ### Live verification (v1.14.0, 2026-11-05 America/New_York)
 
-- Filled in after deploy (see release commit).
+- See release commit after Pages deploy (`v114-test` live 21/21 × 3).
 
 ## v1.13.0 update (2026-11-05, America/New_York)
 

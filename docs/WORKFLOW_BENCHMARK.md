@@ -18,7 +18,7 @@ Local Chromium `?platform=win`, 2026-11-05 America/New_York. No heal% or Full≤
 | RAW before/after | Left/right split | + top/bottom (Y cycles) | — | Lightroom Y / split orientations | **match** (orientations) |
 | 13 / Full upright | heal 79%; Full fails 0.5° | unchanged (deliberately) | — | — | **trails** |
 
-**Summary (v1.14): crop common presets and RAW split orientations move toward match; soft proof and job 14 still trail (no ICC / no ML). Heal and Full untouched. npm test: see release.**
+**Summary (v1.14): crop common presets and RAW split orientations move toward match; soft proof and job 14 still trail (no ICC / no ML). Heal and Full untouched. npm test: **1034** checks.**
 
 **Test-change disclosure:** `v114-test` is new (21 checks). `v112-test` APP_VERSION pin accepts 1.12.0 / 1.13.0 / 1.14.0 on this tree (not a quality bar). Library Full bar stays the loosened 1.0° in `v112-test` (disclosed since v1.11). No quality bars loosened for heal or Full. `v13-test` Split leave: Y must be pressed twice (cycle includes top/bottom); adapted to the new cycle, not a weaker quality bar.
 
