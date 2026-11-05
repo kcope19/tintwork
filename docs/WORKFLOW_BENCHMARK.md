@@ -21,9 +21,15 @@ Local Chromium `?platform=win`, 2026-11-05 America/New_York. Step counts below e
 | Soft proof ink warning | N/A | magenta crush + ~CMY limit overlay | — | Lightroom gamut warning (ICC) | **trails** (approx, no ICC) |
 | Export sRGB | PNG chunk only via encodePNG; JPEG none | JPEG ICC + PNG sRGB on all PNG exports | — | — | **match** (sRGB tagged) |
 
-**Summary (v1.13): several upright jobs move trails→match on steps (2, equal to Lightroom Auto/Level). Heal quality still trails. Full upright still fails 0.5°. No radial warp.**
+**Summary (v1.13): several upright jobs move trails→match on steps (2, equal to Lightroom Auto/Level). Heal quality still trails (79%→79%). Full upright still fails 0.5°. No radial warp. npm test: 1013 checks.**
 
-**Test-change disclosure:** `realUpright` and jobs 10/23 only press Enter when a mesh is still open (older builds). Job 13 pass bar unchanged (≥70% via `after < before * 0.3`, grain not part of the bench ok). `v113-test` is new (10 checks). Library Full bar stays the loosened 1.0° in `v112-test` (disclosed since v1.11).
+**Test-change disclosure:** `realUpright` and jobs 10/23 only press Enter when a mesh is still open (older builds). Job 13 pass bar unchanged (≥70% via `after < before * 0.3`, grain not part of the bench ok). `v113-test` is new (10 checks). `v112-test` APP_VERSION pin accepts 1.12.0 or 1.13.0 on this tree (not a quality bar). Library Full bar stays the loosened 1.0° in `v112-test` (disclosed since v1.11).
+
+**Adversarial / why these matches could be wrong:**
+- **Auto / Level match on steps:** Lightroom also offers Constrain Crop as a separate toggle and Upright often follows lens-profile correction ([help](https://helpx.adobe.com/lightroom-classic/desktop/help/upright-automatic-perspective-correction.html)). Tintwork's Crop/Fill/Keep is chosen *before* the menu click (or left at the Crop default); changing it after apply needs Undo + reset. Step count ties only when the default Crop is fine. Competitors' step counts still come from docs (±2). Default kept: **match** when Crop is already selected (the default).
+- **Guided match (4 vs Lightroom 5 / Pixelmator 4):** Tintwork takes two drawn lines then applies; Lightroom Guided allows up to four guides. On jobs that need a horizontal + two verticals, Tintwork still trails on *quality*, not counted here. Default: **match** on the two-vertical case.
+- **Heal still trails:** 79% removed, identical to v1.12/v1.9 on the same USDA spot (3/3). Texture guard held (grain 1.33×). Paid Remove / Spot Healing were not re-measured; assumed better on real skin. **trails**.
+- **Ink warning trails:** no ICC, approximate CMY sum — not a substitute for a printer profile gamut warning.
 
 ## v1.12 scorecard (non-AI polish: Full do-no-harm, gated radial estimate, Batch Open tabs)
 

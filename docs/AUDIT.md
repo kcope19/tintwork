@@ -12,7 +12,7 @@ Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, 
 
 ## v1.13.0 update (2026-11-05, America/New_York)
 
-v1.13 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v113-test.mjs` has 10 checks. The full `npm test` count is reported in the release commit.
+v1.13 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v113-test.mjs` has 10 checks and passed 10/10 three times. The full `npm test` passed all **1013** checks (1003 in v1.12 + 10).
 
 | # | Finding | Severity | Evidence | Fix | Status |
 |---|---|---|---|---|---|
@@ -25,6 +25,12 @@ v1.13 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v113-
 **Not done in v1.13:** Full upright within 0.5° on library/brick; radial warp (still gated); ICC printer profiles; heal above 79% without skin blur on the USDA portrait.
 
 **Radial:** unchanged from v1.12 (estimate recorded, warp off).
+
+**Heal:** denser polar search + brush-overlap skip + high-pass grain term did **not** raise removal on the USDA tuning spot (still **79%**, grain 1.33×, 3/3). Same method as v1.12 / v1.9. Bar not loosened.
+
+### Live verification (v1.13.0, pending deploy)
+
+Placeholder — filled after tag/push and Pages catch-up.
 
 ## v1.12.0 update (2026-11-05, America/New_York)
 

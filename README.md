@@ -9,7 +9,7 @@ any third-party branding, assets or proprietary code.
 
 ## What's new in v1.13 (auto-apply upright, ink warning, sRGB embed, heal/fill)
 
-v1.13 keeps to non-AI tools. Auto / Level / Vertical / Full / Guided upright **apply immediately** (no extra Enter), so Auto upright is two steps like Lightroom's. Soft proof gains an approximate **ink warning** overlay. JPEG exports embed an sRGB ICC profile; PNG exports always carry an sRGB chunk. Spot heal searches more carefully (still ~79% on the USDA portrait with the grain guard); Fill empty edges mirrors nearby pixels before smoothing. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+v1.13 keeps to non-AI tools. Auto / Level / Vertical / Full / Guided upright **apply immediately** (no extra Enter), so Auto upright is two steps like Lightroom's. Soft proof gains an approximate **ink warning** overlay. JPEG exports embed an sRGB ICC profile; PNG exports always carry an sRGB chunk. Spot heal searches more carefully (still **79%** on the USDA portrait with the grain guard — same as v1.12); Fill empty edges mirrors nearby pixels before smoothing. `npm test`: **1013** checks. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
 
 ## What's new in v1.12 (Full do-no-harm, Batch Open tabs, gated radial estimate)
 
