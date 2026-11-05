@@ -2801,6 +2801,10 @@ function autoUprightCmd(req = 'auto') {
     const idMap = (a, b) => [a, b];
     const beforeH = meanAbsH(idMap);
     let hUsed = uh.mode !== 'none';
+    // Both V and H far (rotate) with tiny angles: photo is already nearly upright. A combined Full
+    // homography still shears (hongkong facade: seed horizontals rose from ~0.2° to ~1.5°). Refuse.
+    const dualTinyRotate = u.mode === 'rotate' && uh.mode === 'rotate'
+      && Math.abs(u.angle || 0) < 2 && Math.abs(uh.angle || 0) < 2;
     // score a candidate: lower is better. Prefer not raising horizontal tilt vs the uncorrected photo.
     const scoreCand = (c) => {
       if (!c) return Infinity;
@@ -2809,12 +2813,30 @@ function autoUprightCmd(req = 'auto') {
       if (after == null) return 0;
       return after - beforeH; // positive = harm
     };
-    let cand = hUsed ? tryH(toDocH(uh.vh)) : null;
+    let cand = hUsed && !dualTinyRotate ? tryH(toDocH(uh.vh)) : null;
     if (cand && scoreCand(cand) > 0.05) { cand = null; hUsed = false; uh = { ...uh, mode: 'none', weak: true, harm: true }; }
+    // also refuse when any horizontal inlier's |tilt| rises (mean can look fine while a long ledge worsens)
+    if (cand && uh.inliers?.length) {
+      const tilt = (mapPt) => {
+        let worst = 0;
+        for (const i of uh.inliers) {
+          const l = hl[i], a = toDoc([l.x1, l.y1]), b = toDoc([l.x2, l.y2]);
+          const a2 = mapPt(a[0], a[1]), b2 = mapPt(b[0], b[1]);
+          let ang = Math.atan2(b2[1] - a2[1], b2[0] - a2[0]) * 180 / Math.PI;
+          while (ang > 90) ang -= 180; while (ang <= -90) ang += 180;
+          worst = Math.max(worst, Math.abs(ang));
+        }
+        return worst;
+      };
+      const before = tilt((a, b) => [a, b]);
+      const after = tilt((a, b) => { const p = mapHu(cand.Hu, a, b); return [p[0], p[1]]; });
+      if (after > before + 0.15) { cand = null; hUsed = false; uh = { ...uh, mode: 'none', weak: true, harm: true }; }
+    }
+    if (dualTinyRotate) { cand = null; hUsed = false; uh = { ...uh, mode: 'none', weak: true, harm: true }; }
     if (cand) {
       next = cand.q;
       Hu = kRad ? cand.Hu : null; // classic perspectiveMesh(pts) when no radial
-    } else if (vv) {
+    } else if (vv && !dualTinyRotate) {
       // Vertical fallback must match the Vertical mode path (guides / rotate), not uprightHomography alone —
       // the two differ enough to crop a measured edge on the church photo (job 22).
       if (hUsed) uh = { ...uh, mode: 'none', weak: true }; hUsed = false;
