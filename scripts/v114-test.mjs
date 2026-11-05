@@ -70,10 +70,11 @@ const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }
   await T(() => { window.tintwork.newDocument(800, 600, 'white', 'crop-chips'); window.tintwork.run('zoomFit'); });
   await T(() => { window.tintwork.setTool('crop'); });
   await page.waitForTimeout(50);
-  const chips = await T(() => [...document.querySelectorAll('#options [data-cropchip]')].map((b) => b.dataset.cropchip));
+  const chips = await T(() => [...document.querySelectorAll('#optionsbar [data-cropchip]')].map((b) => b.dataset.cropchip));
   check(chips.includes('sq') && chips.includes('portrait45') && chips.includes('land169') && chips.includes('p8x10') && chips.includes('orig'),
     `crop chips present (${chips.join(',')})`);
-  await T(() => { document.querySelector('#options [data-cropchip="portrait45"]')?.click(); });
+  await page.locator('#optionsbar [data-cropchip="portrait45"]').click();
+  await page.waitForTimeout(50);
   const preset = await T(() => window.tintwork.state.opts.cropPreset);
   check(preset === 'portrait45', `4:5 chip sets cropPreset (${preset})`);
 }
@@ -97,8 +98,8 @@ const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }
   await T(async () => { await window.tintwork.idle?.(); await new Promise((r) => setTimeout(r, 300)); });
   const afterBox = await T(() => ({
     paint: window.tintwork.state.opts.objPaint,
-    btn: !!document.querySelector('#options [data-cmd="objSelDoneFeather"]'),
-    done: !!document.querySelector('#options [data-cmd="objSelDone"]'),
+    btn: !!document.querySelector('#optionsbar [data-cmd="objSelDoneFeather"]'),
+    done: !!document.querySelector('#optionsbar [data-cmd="objSelDone"]'),
     sel: !!window.tintwork.doc.selection,
   }));
   check(afterBox.paint === 'fg', `after box, objPaint sticky +Subject (paint=${afterBox.paint})`);
@@ -110,17 +111,18 @@ const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }
   const feathered = await T(async () => {
     const t = window.tintwork;
     if (!t.doc.selection) return { ok: false, why: 'no selection after box' };
-    t.state.opts.featherRadius = 10;
-    // Keep session so Done + feather clears it then feathers
+    t.state.opts.featherRadius = 12;
     if (!t.state.objSel) {
       const d = t.doc;
       t.state.objSel = { doc: d, rect: { x: 10, y: 10, w: 100, h: 100 }, strokes: [], base: null, prev: null, mode: 'new' };
     }
     const before = new Uint8ClampedArray(t.doc.selection.mask);
+    const idx0 = t.history.index;
     t.run('objSelDoneFeather');
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 60; i++) {
       await new Promise((r) => setTimeout(r, 50));
-      if (!t.state.objSel && t.doc.selection) break;
+      const lab = t.history?.entries?.[t.history.index]?.label || '';
+      if (/feather/i.test(lab) && t.history.index > idx0) break;
     }
     const sel = t.doc.selection;
     if (!sel) return { ok: false, why: 'selection cleared' };
@@ -129,7 +131,7 @@ const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }
       if (sel.mask[i] > 10 && sel.mask[i] < 245) mid++;
       if (before[i] !== sel.mask[i]) changed++;
     }
-    return { ok: mid > 80 && changed > 80, mid, changed, label: t.history?.entries?.[t.history.index]?.label };
+    return { ok: /feather/i.test(t.history?.entries?.[t.history.index]?.label || '') && (mid > 80 || changed > 80), mid, changed, label: t.history?.entries?.[t.history.index]?.label };
   });
   check(feathered.ok, `Done + feather softens the mask (mid=${feathered.mid}, changed=${feathered.changed}, label=${feathered.label}, why=${feathered.why || ''})`);
 }

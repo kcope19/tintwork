@@ -6655,6 +6655,8 @@ const PROOF_LAST_KEY = 'tintwork.proofLast';
 let proofMode = null, proofWarn = false;
 const srgbToLin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
 function saveProofPrefs() {
+  // Remember the last *paper* (and its ink-warning), not "off" — so View ▸ Proof: last used works after turning proof off.
+  if (!proofMode) return;
   try { localStorage.setItem(PROOF_LAST_KEY, JSON.stringify({ mode: proofMode, warn: !!proofWarn })); } catch { /* private */ }
 }
 function loadProofPrefs() {
