@@ -5,6 +5,7 @@
 //  * detectLines() / estimateUpright(): Hough line detection and a vanishing-point fit for Auto upright.
 //  * largestInnerRect(): the biggest axis-aligned (optionally fixed-ratio) rectangle inside the opaque area.
 //  * pushPullFill(): smooth fill of transparent pixels from their surroundings (a pyramid "push-pull").
+//  * edgeCloneFill(): mirror nearest opaque pixels into gaps (keeps texture; used by Fill empty edges).
 // Images are { width, height, data } with RGBA bytes (ImageData-compatible).
 
 // ------------------------------------------------------------------------------------------------ max-flow
@@ -741,6 +742,41 @@ export function largestInnerRect(alpha, W, H, { ratio = null, thr = 250 } = {}) 
   return res;
 }
 /** Fill pixels with alpha < 255 from their opaque surroundings (push-pull pyramid). Mutates and returns img. */
+/**
+ * Fill transparent pixels by mirroring the nearest opaque pixel across the gap boundary (v1.13).
+ * Preserves grain/texture far better than a pure push-pull smear on edges after an upright crop-fill.
+ * Falls back to leaving a pixel alone when no opaque source exists.
+ */
+export function edgeCloneFill(img, { max = 255 } = {}) {
+  const W = img.width, H = img.height, d = img.data, N = W * H;
+  const dist = new Int32Array(N).fill(-1), src = new Int32Array(N).fill(-1), q = new Int32Array(N);
+  let qh = 0, qt = 0;
+  for (let i = 0; i < N; i++) if (d[i * 4 + 3] >= max * 0.98) { dist[i] = 0; src[i] = i; q[qt++] = i; }
+  const step = [1, -1, W, -W];
+  while (qh < qt) {
+    const p = q[qh++], x = p % W, y = (p / W) | 0;
+    for (let s = 0; s < 4; s++) {
+      const n = p + step[s];
+      if (s < 2) { const nx = x + (s === 0 ? 1 : -1); if (nx < 0 || nx >= W) continue; }
+      else { const ny = y + (s === 2 ? 1 : -1); if (ny < 0 || ny >= H) continue; }
+      if (dist[n] >= 0) continue;
+      dist[n] = dist[p] + 1; src[n] = src[p]; q[qt++] = n;
+    }
+  }
+  for (let i = 0; i < N; i++) {
+    if (d[i * 4 + 3] === max) continue;
+    const s = src[i]; if (s < 0) continue;
+    const sx = s % W, sy = (s / W) | 0, x = i % W, y = (i / W) | 0;
+    // mirror across the opaque boundary so structure continues into the gap
+    let mx = sx - (x - sx), my = sy - (y - sy);
+    if (mx < 0) mx = 0; else if (mx >= W) mx = W - 1;
+    if (my < 0) my = 0; else if (my >= H) my = H - 1;
+    let take = my * W + mx;
+    if (d[take * 4 + 3] < max * 0.98) take = s;
+    d[i * 4] = d[take * 4]; d[i * 4 + 1] = d[take * 4 + 1]; d[i * 4 + 2] = d[take * 4 + 2]; d[i * 4 + 3] = max;
+  }
+  return img;
+}
 export function pushPullFill(img, { max = 255 } = {}) {
   const W = img.width, H = img.height, d = img.data, M = max, round = max !== 255 || !(d instanceof Uint8ClampedArray);
   const levels = []; let cur = { W, H, c: new Float32Array(W * H * 4) };

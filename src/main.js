@@ -2933,11 +2933,24 @@ function fillEmptyEdges({ quiet = false } = {}) {
   const sm = makeCanvas(sw, sh), sx = sm.getContext('2d', { willReadFrequently: true }); sx.imageSmoothingQuality = 'high'; sx.drawImage(full, 0, 0, sw, sh);
   const img = sx.getImageData(0, 0, sw, sh); let empty = 0; for (let i = 3; i < img.data.length; i += 4) if (img.data[i] < 255) empty++;
   if (!empty) { if (!quiet) status('There are no empty edges to fill.'); return false; }
-  sx.putImageData(seg.pushPullFill(img), 0, 0);
+  // v1.13: mirror nearest opaque (keeps texture) and blend with a push-pull of the *original* gaps (softens seams).
+  const wasEmpty = new Uint8Array(sw * sh), id0 = img.data;
+  for (let i = 0; i < wasEmpty.length; i++) if (id0[i * 4 + 3] < 255) wasEmpty[i] = 1;
+  const soft = { width: sw, height: sh, data: new Uint8ClampedArray(id0) };
+  seg.pushPullFill(soft);
+  seg.edgeCloneFill(img);
+  const id = img.data, sd = soft.data;
+  for (let i = 0; i < wasEmpty.length; i++) if (wasEmpty[i]) {
+    const j = i * 4;
+    id[j] = (id[j] * 0.65 + sd[j] * 0.35 + 0.5) | 0;
+    id[j + 1] = (id[j + 1] * 0.65 + sd[j + 1] * 0.35 + 0.5) | 0;
+    id[j + 2] = (id[j + 2] * 0.65 + sd[j + 2] * 0.35 + 0.5) | 0;
+  }
+  sx.putImageData(img, 0, 0);
   const out = makeCanvas(W, H), ox = out.getContext('2d'); ox.imageSmoothingQuality = 'high';
   ox.drawImage(sm, 0, 0, W, H); ox.drawImage(full, 0, 0); // the original pixels stay on top; only the gaps take the fill
   l.canvas = out; l.x = 0; l.y = 0; touch(l); compDirty = true;
-  commit('Fill empty edges'); if (!quiet) status('Empty edges filled from nearby pixels (best for sky, walls and other plain areas).');
+  commit('Fill empty edges'); if (!quiet) status('Empty edges filled from nearby pixels (mirror + smooth; best for sky, walls and plain areas).');
   updateLayersPanel(); requestRender(); return true;
 }
 /**
@@ -2955,8 +2968,19 @@ function fillEmptyEdgesDeep(l, { quiet = false } = {}) {
   for (let y = 0; y < H; y++) { const sy = Math.min(sh - 1, Math.floor(y * sh / H)); for (let x = 0; x < W; x++) { const sx = Math.min(sw - 1, Math.floor(x * sw / W)), i = (y * W + x) * 4, o = (sy * sw + sx) * 5, a = F[i + 3]; acc[o] += F[i] * a; acc[o + 1] += F[i + 1] * a; acc[o + 2] += F[i + 2] * a; acc[o + 3] += a; acc[o + 4]++; } }
   const small = { width: sw, height: sh, data: new Uint16Array(sw * sh * 4) };
   for (let j = 0; j < sw * sh; j++) { const o = j * 5, a = acc[o + 3]; if (a > 0) { small.data[j * 4] = Math.round(acc[o] / a); small.data[j * 4 + 1] = Math.round(acc[o + 1] / a); small.data[j * 4 + 2] = Math.round(acc[o + 2] / a); } small.data[j * 4 + 3] = acc[o + 4] ? Math.round(a / acc[o + 4]) : 0; }
-  seg.pushPullFill(small, { max: 65535 });
-  const T = small.data;
+  // v1.13: mirror + push-pull blend on the ≤1024 preview (same idea as 8-bit)
+  const wasEmpty16 = new Uint8Array(sw * sh), S0 = small.data;
+  for (let i = 0; i < wasEmpty16.length; i++) if (S0[i * 4 + 3] < 65535) wasEmpty16[i] = 1;
+  const soft16 = { width: sw, height: sh, data: new Uint16Array(S0) };
+  seg.pushPullFill(soft16, { max: 65535 });
+  seg.edgeCloneFill(small, { max: 65535 });
+  const T = small.data, Sd = soft16.data;
+  for (let i = 0; i < wasEmpty16.length; i++) if (wasEmpty16[i]) {
+    const j = i * 4;
+    T[j] = (T[j] * 0.65 + Sd[j] * 0.35 + 0.5) | 0;
+    T[j + 1] = (T[j + 1] * 0.65 + Sd[j + 1] * 0.35 + 0.5) | 0;
+    T[j + 2] = (T[j + 2] * 0.65 + Sd[j + 2] * 0.35 + 0.5) | 0;
+  }
   for (let y = 0; y < H; y++) {
     const gy = (y + 0.5) * sh / H - 0.5, y0 = Math.max(0, Math.floor(gy)), y1 = Math.min(sh - 1, y0 + 1), fy = Math.min(1, Math.max(0, gy - y0));
     for (let x = 0; x < W; x++) {

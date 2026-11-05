@@ -537,18 +537,35 @@ export function spotHeal(img, cover, w, h) {
   if (bx1 < 0) return { data: new Uint8ClampedArray(img), offset: null };
   const { ring } = ringOf(cover, w, h);
   const size = Math.max(bx1 - bx0, by1 - by0) + 4;
+  const Lum = (i) => 0.299 * img[i * 4] + 0.587 * img[i * 4 + 1] + 0.114 * img[i * 4 + 2];
+  const hpAt = (i) => {
+    const x = i % w, y = (i / w) | 0;
+    if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) return 0;
+    return Lum(i) - (Lum(i - 1) + Lum(i + 1) + Lum(i - w) + Lum(i + w)) / 4;
+  };
+  // v1.13: denser polar search + skip offsets whose source lands on the brush (would copy the blemish)
+  // + high-pass match so similar skin grain beats a smoother but flatter neighbour.
   let best = null;
-  for (const f of [1.05, 1.4, 1.9, 2.5]) for (let a = 0; a < 16; a++) {
-    const ang = (a / 16) * Math.PI * 2, dx = Math.round(Math.cos(ang) * size * f), dy = Math.round(Math.sin(ang) * size * f);
+  const radii = [0.85, 1.1, 1.4, 1.75, 2.2, 2.8];
+  const nAng = 24;
+  for (const f of radii) for (let a = 0; a < nAng; a++) {
+    const ang = (a / nAng) * Math.PI * 2, dx = Math.round(Math.cos(ang) * size * f), dy = Math.round(Math.sin(ang) * size * f);
     if (bx0 - 1 + dx < 0 || by0 - 1 + dy < 0 || bx1 + 1 + dx >= w || by1 + 1 + dy >= h) continue;
-    // variance of (dst - src) along the edge: a smooth correction can remove the mean, not the variance
-    let s = [0, 0, 0], s2 = 0;
+    let hitBrush = false;
+    for (let y = by0; y <= by1 && !hitBrush; y++) for (let x = bx0; x <= bx1; x++) {
+      if (!cover[y * w + x]) continue;
+      const sx = x + dx, sy = y + dy;
+      if (sx < 0 || sy < 0 || sx >= w || sy >= h || cover[sy * w + sx]) { hitBrush = true; break; }
+    }
+    if (hitBrush) continue;
+    let s = [0, 0, 0], s2 = 0, tex = 0;
     for (const i of ring) {
       const j = i + dy * w + dx;
       for (let c = 0; c < 3; c++) { const dd = img[i * 4 + c] - img[j * 4 + c]; s[c] += dd; s2 += dd * dd; }
+      const dhp = hpAt(i) - hpAt(j); tex += dhp * dhp;
     }
     const n = ring.length || 1;
-    const score = s2 / n - (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]) / (n * n) + 0.02 * Math.hypot(dx, dy);
+    const score = s2 / n - (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]) / (n * n) + 0.35 * (tex / n) + 0.015 * Math.hypot(dx, dy);
     if (!best || score < best.score) best = { score, dx, dy };
   }
   const src = new Uint8ClampedArray(img.length);
@@ -556,7 +573,8 @@ export function spotHeal(img, cover, w, h) {
     const off = (best.dy * w + best.dx) * 4;
     for (let i = 0; i < img.length; i++) { const j = i + off; src[i] = j >= 0 && j < img.length ? img[j] : img[i]; }
   } // otherwise src stays black and the result is a pure smooth fill
-  return { data: healRegion(img, src, cover, w, h), offset: best && { dx: best.dx, dy: best.dy } };
+  // a few more membrane iterations for a cleaner colour match (texture still comes from src)
+  return { data: healRegion(img, src, cover, w, h, best ? 80 : 60), offset: best && { dx: best.dx, dy: best.dy } };
 }
 
 /** Per-channel histograms (luminance + R, G, B) for the curves editor. */
