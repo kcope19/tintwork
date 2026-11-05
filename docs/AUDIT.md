@@ -23,9 +23,11 @@ v1.14 is non-AI polish again (no heal% / Full≤0.5° cycle). Prefer trails→ma
 
 **Not done in v1.14:** ICC printer profiles; heal above 79%; Full upright within 0.5°; one-click (no box) subject / hair matting (AI); job 14 still trails ML on steps.
 
-### Live verification (v1.14.0, 2026-11-05 America/New_York)
+### Live verification (v1.14.0, 2026-11-05 about 12:00 PM America/New_York)
 
-- See release commit after Pages deploy (`v114-test` live 21/21 × 3).
+- Live site reports `tintwork-shell-v1.14.0` / `APP_VERSION` 1.14.0.
+- `v114-test` against https://kcope19.github.io/tintwork/ : **21/21 × 3**.
+- Screenshots: `114-live-proof-rag.png`, `114-live-objsel.png`.
 
 ## v1.13.0 update (2026-11-05, America/New_York)
 
