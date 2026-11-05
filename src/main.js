@@ -25,7 +25,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.12.0';
+const APP_VERSION = '1.13.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -4810,6 +4810,7 @@ async function renderExportWith(type, quality, { size = null, dpi = null, waterm
   else blob = await renderExport(type, quality, { watermark });
   if (dpi && (blob.type === 'image/jpeg' || blob.type === 'image/png')) blob = await withDpi(blob, dpi);
   if (blob.type === 'image/jpeg') blob = await withSrgbIcc(blob);
+  if (blob.type === 'image/png') blob = await withPngSrgb(blob);
   return blob;
 }
 const EXPORT_EXT = { 'image/png': 'png', 'image/png16': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', [PSD_TYPE]: 'psd' };
@@ -7868,7 +7869,7 @@ async function renderVariant(v, base = null) {
   if (!blob) throw new Error(`${type} encoding is not supported in this browser`);
   if (blob.type !== type) toast(`${type.split('/')[1].toUpperCase()} is not supported here; saved as ${blob.type.split('/')[1].toUpperCase()}.`, 4000);
   const dpi = v.mode === 'preset' && presetById(v.preset)?.inW != null ? v.dpi || 300 : v.mode !== 'preset' && v.dpi ? v.dpi : d.dpi; // non-preset sizes: an export preset's ppi (v1.10)
-  if (dpi) blob = await withDpi(blob, dpi); if (blob.type === 'image/jpeg') blob = await withSrgbIcc(blob);
+  if (dpi) blob = await withDpi(blob, dpi); if (blob.type === 'image/jpeg') blob = await withSrgbIcc(blob); if (blob.type === 'image/png') blob = await withPngSrgb(blob);
   return { blob, w, h, ext: EXPORT_EXT[blob.type] || 'img' };
 }
 /** Sinks: where batch / multi-size output goes. */
@@ -8196,6 +8197,28 @@ async function withSrgbIcc(blob) {
   if (b[2] === 0xff && (b[3] === 0xe0 || b[3] === 0xe1)) insertAt = 2 + 2 + ((b[4] << 8) | b[5]);
   return new Blob([b.subarray(0, insertAt), seg, b.subarray(insertAt)], { type: blob.type });
 }
+/** Insert a PNG sRGB chunk after IHDR when the encoder (canvas toBlob) omitted one. encodePNG already writes it. */
+async function withPngSrgb(blob) {
+  if (blob.type !== 'image/png') return blob;
+  const b = new Uint8Array(await blob.arrayBuffer());
+  if (b[0] !== 0x89 || b[1] !== 0x50) return blob;
+  for (let i = 8; i + 8 < b.length;) {
+    const len = ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
+    const type = String.fromCharCode(b[i + 4], b[i + 5], b[i + 6], b[i + 7]);
+    if (type === 'sRGB' || type === 'iCCP') return blob;
+    if (type === 'IHDR') {
+      const data = new Uint8Array([0]); // perceptual
+      const chunk = new Uint8Array(12 + 1), dv = new DataView(chunk.buffer);
+      dv.setUint32(0, 1); chunk.set([0x73, 0x52, 0x47, 0x42], 4); chunk[8] = 0;
+      dv.setUint32(9, crc32(chunk.subarray(4, 9)));
+      const at = i + 12 + len;
+      return new Blob([b.subarray(0, at), chunk, b.subarray(at)], { type: blob.type });
+    }
+    if (type === 'IEND') break;
+    i += 12 + len;
+  }
+  return blob;
+}
 /** Write the print resolution into PNG (pHYs) or JPEG (JFIF density) bytes. */
 async function withDpi(blob, dpi) {
   const b = new Uint8Array(await blob.arrayBuffer());
@@ -8246,7 +8269,7 @@ window.tintwork = {
   setProof, setProofWarn, get proofMode() { return proofMode; }, get proofWarn() { return proofWarn; }, PROOF_PAPERS,
   batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
-  renderVariant, exportVariants, runBatch, sourcesFromOpenTabs, memorySink, zipSink, formatName, variantSize, withDpi, withSrgbIcc, autoOpts, saveAutoOpts, openAutoOptionsDialog,
+  renderVariant, exportVariants, runBatch, sourcesFromOpenTabs, memorySink, zipSink, formatName, variantSize, withDpi, withSrgbIcc, withPngSrgb, autoOpts, saveAutoOpts, openAutoOptionsDialog,
   // v0.8
   pickLayer: (ids) => { const d = doc(); d.activeId = ids[ids.length - 1]; d.picked = new Set(ids.length > 1 ? ids : []); updateLayersPanel(); },
   pickedLayers: () => pickedLayers().map((l) => l.id), alignLayers, straightenBy, autoStraightenCmd, autoEnhanceCmd, autoWhiteBalanceCmd, wbPickAt,
