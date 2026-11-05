@@ -249,23 +249,27 @@ if (hasModes) {
 
 // --- 5. Level with a single horizon line; Full with unusable horizontals = Vertical
 {
+  // v1.13: upright applies immediately; read lastUpright.H after idle (mxf is gone). Keep edges so size stays put.
   const r = await T(async () => {
     const t = window.tintwork; t.newDocument(1600, 1000, 'white', 'sea'); const l = t.activeLayer(), x = l.canvas.getContext('2d'), im = x.createImageData(1600, 1000), tn = Math.tan(-2.5 * Math.PI / 180);
     let s = 3; const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * 12;
     for (let y = 0; y < 1000; y++) for (let xx = 0; xx < 1600; xx++) { const sea = y > 480 + (xx - 800) * tn, i = (y * 1600 + xx) * 4, n = rnd(); im.data[i] = (sea ? 30 : 160) + n; im.data[i + 1] = (sea ? 70 : 195) + n; im.data[i + 2] = (sea ? 110 : 235) + n; im.data[i + 3] = 255; }
     x.putImageData(im, 0, 0); t.touch(l); t.markDirty(); t.commit('sea'); t.renderNow();
-    t.run('uprightLevel'); const lu = t.lastUpright; const st = document.querySelector('#status').textContent;
-    return { hkind: lu?.hkind, mode: lu?.mode, hangle: lu?.hangle, pts: t.mxf?.pts?.map((p) => [...p]), st };
+    t.state.opts.uprightEdges = 'keep';
+    t.run('uprightLevel'); await t.idle(); await t.compositeSettled?.();
+    const lu = t.lastUpright, H = lu?.H; let rot = null;
+    if (H) { const map = (x, y) => { const w = H[6] * x + H[7] * y + H[8]; return [(H[0] * x + H[1] * y + H[2]) / w, (H[3] * x + H[4] * y + H[5]) / w]; }; const a = map(0, 0), b = map(1600, 0); rot = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI; }
+    return { hkind: lu?.hkind, mode: lu?.mode, rot, st: document.querySelector('#status').textContent };
   });
-  await page.keyboard.press('Escape');
-  // rotation needed: the horizon falls 2.5° to the right, so Level rotates by +2.5° (sign checked on the corners)
-  const rot = r.pts ? Math.atan2(r.pts[1][1] - r.pts[0][1], r.pts[1][0] - r.pts[0][0]) * 180 / Math.PI : null;
-  check(r.mode === 'level' && r.hkind === 'single' && rot != null && Math.abs(Math.abs(rot) - 2.5) < 0.15, `Level on a lone sea horizon (one line): ${r.hkind}, rotation ${rot?.toFixed(2)}° for a 2.5° tilt (${r.st})`);
+  // rotation needed: the horizon falls 2.5° to the right, so Level rotates by +2.5° (sign checked on the mapped top edge)
+  check(r.mode === 'level' && r.hkind === 'single' && r.rot != null && Math.abs(Math.abs(r.rot) - 2.5) < 0.15, `Level on a lone sea horizon (one line): ${r.hkind}, rotation ${r.rot?.toFixed(2)}° for a 2.5° tilt (${r.st})`);
   await open('c4.jpg', REAL('c4.jpg'));
-  const pv = await T(() => { const t = window.tintwork; t.run('uprightVertical'); return t.mxf?.pts?.map((p) => [...p]); }); await page.keyboard.press('Escape');
-  const pf = await T(() => { const t = window.tintwork; t.run('uprightFull'); return { pts: t.mxf?.pts?.map((p) => [...p]), hweak: t.lastUpright?.hweak }; }); await page.keyboard.press('Escape');
-  const dmax = pv && pf.pts ? Math.max(...pv.flatMap((p, i) => [Math.abs(p[0] - pf.pts[i][0]), Math.abs(p[1] - pf.pts[i][1])])) : null;
-  check(pf.hweak && dmax != null && dmax < 0.01, `Full on the church photo, horizontals rejected: same corners as Vertical (max difference ${dmax?.toFixed(3)} px)`);
+  await T(() => { window.tintwork.state.opts.uprightEdges = 'keep'; });
+  const pv = await T(async () => { const t = window.tintwork; t.run('uprightVertical'); await t.idle(); await t.compositeSettled?.(); return t.lastUpright?.H && [...t.lastUpright.H]; });
+  await T(() => window.tintwork.undo()); await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
+  const pf = await T(async () => { const t = window.tintwork; t.run('uprightFull'); await t.idle(); await t.compositeSettled?.(); return { H: t.lastUpright?.H && [...t.lastUpright.H], hweak: t.lastUpright?.hweak }; });
+  const dmax = pv && pf.H ? Math.max(...pv.map((v, i) => Math.abs(v - pf.H[i]))) : null;
+  check(pf.hweak && dmax != null && dmax < 1e-6, `Full on the church photo, horizontals rejected: same corners as Vertical (max difference ${dmax?.toFixed(3)} px)`);
 }
 
 // --- wording, errors
