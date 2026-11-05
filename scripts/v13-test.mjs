@@ -152,8 +152,10 @@ const colsSpread = (f0, f1) => page.evaluate(([f0, f1]) => { // mean colour spre
   await setSlider('saturation', -100); await waitPreview(4);
   await page.evaluate(() => window.tintwork.rawUI.setSplit(0.5)); await settle(); await page.waitForTimeout(100);
   await page.screenshot({ path: 'screenshots/13x-raw-split-view.png' });
+  // v1.14: Y cycles after → left/right → top/bottom → after (was a binary toggle)
+  await page.keyboard.press('y'); await page.waitForFunction(() => window.tintwork.rawUI.view === 'splitH');
   await page.keyboard.press('y'); await page.waitForFunction(() => window.tintwork.rawUI.view === 'after');
-  check(await page.evaluate(() => document.querySelector('#rawSplit').classList.contains('hidden')) && await colsSpread(0.02, 0.4) < 3, 'Y (or the Split button) leaves split view');
+  check(await page.evaluate(() => document.querySelector('#rawSplit').classList.contains('hidden')) && await colsSpread(0.02, 0.4) < 3, 'Y cycles through top/bottom then leaves split view');
 }
 
 // --- preset export / import --------------------------------------------------------------------------------

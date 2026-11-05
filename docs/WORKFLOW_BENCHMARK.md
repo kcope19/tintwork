@@ -20,7 +20,7 @@ Local Chromium `?platform=win`, 2026-11-05 America/New_York. No heal% or Full≤
 
 **Summary (v1.14): crop common presets and RAW split orientations move toward match; soft proof and job 14 still trail (no ICC / no ML). Heal and Full untouched. npm test: see release.**
 
-**Test-change disclosure:** `v114-test` is new (21 checks). `v112-test` APP_VERSION pin accepts 1.12.0 / 1.13.0 / 1.14.0 on this tree (not a quality bar). Library Full bar stays the loosened 1.0° in `v112-test` (disclosed since v1.11). No quality bars loosened for heal or Full.
+**Test-change disclosure:** `v114-test` is new (21 checks). `v112-test` APP_VERSION pin accepts 1.12.0 / 1.13.0 / 1.14.0 on this tree (not a quality bar). Library Full bar stays the loosened 1.0° in `v112-test` (disclosed since v1.11). No quality bars loosened for heal or Full. `v13-test` Split leave: Y must be pressed twice (cycle includes top/bottom); adapted to the new cycle, not a weaker quality bar.
 
 **Adversarial / why these could be wrong:**
 - **Crop chips match:** only the five common sizes; the full dropdown still has banners/custom. Competitors also expose presets in one click.
