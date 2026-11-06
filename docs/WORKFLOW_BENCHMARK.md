@@ -18,7 +18,7 @@ v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York):
 | c4 Full | 0.23° | 0.23° | **match** ≤0.5° |
 | geneva / hongkong Full | refuse | refuse | **match** |
 | Steps vs LR Distortion + Upright | — | Apply Lens + Full = **2** after open (same); Plumb adds draws | **match** (manual path) |
-| Full npm test / WebKit | 1121 | **1121+15** (recount in live) | pending |
+| Full npm test / WebKit | 1121 | **1136** ok, WebKit green | **match** (infra) |
 
 **Lens disclosure:** Force-auto radial still hurts library (v1.20). Mild Distortion (+10, k≈−0.015) then Full is the best measured safe gain on library fixed seeds. Plumb can set Distortion; strong |k| still worsens Full — prefer mild values and check the preview.
 

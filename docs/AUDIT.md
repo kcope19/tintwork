@@ -32,7 +32,8 @@ Manual Lens distortion + Plumb line (no AI). Auto Full radial stays gated.
 ### Live verification (v1.21.0, pending deploy)
 
 - Local `v121-test`: **15/15**.
-- Full npm test / live 3× / `121-live-*.png` after push.
+- Local full `npm test` (WebKit on): **1136** ok (1121 + 15).
+- Live 3× / `121-live-*.png` after push.
 
 ## v1.20.0 update (2026-11-06, America/New_York)
 
