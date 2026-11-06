@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.18.0';
+const APP_VERSION = '1.19.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -3279,8 +3279,26 @@ function suggestUprightGuides(x, { max = 4 } = {}) {
     for (let i = 0; i < takeV; i++) pick.push(vd[i]);
     for (let i = 0; i < takeH; i++) pick.push(hd[i]);
   } else if (vd.length >= 2) {
-    // Pure vertical: 2 guides are enough (4V over-constrained the flat facade held-out).
+    // Pure vertical (v1.19): diversify top-2 by default; swap to ranked pair only if ≥0.5° better.
     for (let i = 0; i < Math.min(2, vd.length); i++) pick.push(vd[i]);
+    const base = (x.pts0 || x.pts).map((p) => [...p]);
+    const top2docs = pick.map(toDoc);
+    const ranked = bestVerticalPairGuides(x, { minSepFrac: 0.12, maxLines: 8 });
+    if (ranked.length >= 2 && uprightFromGuides(base, ranked, x.w, x.h)) {
+      const probeV = (() => {
+        try {
+          const vv = seg.detectLines(img, { orient: 'v', maxDeg: 22, minLenFrac: 0.1, maxLines: 12, thrFrac: 0.72 });
+          return vv.slice(0, 8).map(toDoc);
+        } catch { return top2docs; }
+      })();
+      const nTop = uprightFromGuides(base, top2docs, x.w, x.h);
+      const nRk = uprightFromGuides(base, ranked, x.w, x.h);
+      if (nTop && nRk) {
+        const sTop = scoreSegmentsAfter(base, probeV, nTop);
+        const sRk = scoreSegmentsAfter(base, probeV, nRk);
+        if (Number.isFinite(sRk) && Number.isFinite(sTop) && sRk <= sTop - 0.5) return ranked;
+      }
+    }
   } else if (hd.length >= 2) {
     for (let i = 0; i < Math.min(2, hd.length); i++) pick.push(hd[i]);
   }
@@ -3317,6 +3335,98 @@ function scoreSegmentsAfter(basePts, segs, next) {
   return nOk ? worst : Infinity;
 }
 
+
+/**
+ * Rank pure-vertical guide pairs (v1.19). Scores each well-separated pair by the
+ * residual of ALL long vertical probe lines after correction; prefers wider separation.
+ * Returns document-space [[p0,p1],…] for the best pair, or [].
+ */
+/** Doc-space ImageData for upright line detection (v1.19): prefer full composite so
+ * Suggest's diversify top-2 matches the hand/measure path; fall back to mesh small. */
+function uprightDetectImage(x) {
+  try {
+    freshComp();
+    if (comp && comp.width >= 32 && comp.height >= 32) {
+      return { img: compCtx.getImageData(0, 0, comp.width, comp.height), toDoc: (l) => [[l.x1, l.y1], [l.x2, l.y2]], W: comp.width, H: comp.height, full: true };
+    }
+  } catch { /* fall through */ }
+  const img = x?.small; if (!img) return null;
+  const k = x.k || 1;
+  return {
+    img, W: img.width, H: img.height, full: false,
+    toDoc: (l) => [[x.ox + l.x1 / k, x.oy + l.y1 / k], [x.ox + l.x2 / k, x.oy + l.y2 / k]],
+  };
+}
+
+/**
+ * Rank pure-vertical guide pairs (v1.19). Scores each well-separated pair by the
+ * residual of ALL long vertical probe lines after correction; prefers wider separation;
+ * rejects a short partner (<40% of the longer guide). Returns document-space segments.
+ */
+function bestVerticalPairGuides(x, { probe = null, minSepFrac = 0.12, maxLines = 10 } = {}) {
+  const det = uprightDetectImage(x); if (!det) return [];
+  const { img, toDoc, W, H: Hgt } = det;
+  const midX = (g) => (g[0][0] + g[1][0]) / 2;
+  const glen = (g) => Math.hypot(g[1][0] - g[0][0], g[1][1] - g[0][1]);
+  let v = seg.detectLines(img, { orient: 'v', maxDeg: 25, minLenFrac: 0.12, maxLines: 28, thrFrac: 0.7 });
+  v.sort((a, b) => b.len - a.len);
+  const uv = v.length >= 2 ? seg.estimateUpright(v, W, Hgt) : { mode: 'none', inliers: [] };
+  if (uv.mode !== 'none' && (uv.inliers || []).length >= 2) {
+    const inl = uv.inliers.map((i) => v[i]).sort((a, b) => b.len - a.len);
+    v = [...inl, ...v.filter((l) => !inl.includes(l))];
+  }
+  const docs = [];
+  for (const l of v) {
+    const d = toDoc(l);
+    const m = midX(d);
+    if (docs.every((o) => Math.abs(midX(o) - m) >= minSepFrac * (x.w || W))) docs.push(d);
+    if (docs.length >= maxLines) break;
+  }
+  if (docs.length < 2) return docs;
+  const base = (x.pts0 || x.pts).map((p) => [...p]);
+  const longDocs = docs.filter((g) => glen(g) >= 0.4 * glen(docs[0]));
+  const pool = longDocs.length >= 2 ? longDocs : docs;
+  const vProbe = (probe && probe.length >= 2)
+    ? probe.filter((g) => Math.abs(g[1][1] - g[0][1]) >= Math.abs(g[1][0] - g[0][0]))
+    : pool.slice(0, Math.min(8, pool.length));
+  const span = x.w || W;
+  let best = null;
+  const n = pool.length;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = pool[i], b = pool[j];
+      const la = glen(a), lb = glen(b);
+      if (Math.min(la, lb) < 0.4 * Math.max(la, lb)) continue; // reject short partner
+      const sep = Math.abs(midX(a) - midX(b));
+      if (sep < minSepFrac * span) continue;
+      const g = [a, b];
+      const next = uprightFromGuides(base, g, x.w, x.h);
+      if (!next || !mesh.perspectiveMesh(x.w, x.h, next)) continue;
+      const score = scoreSegmentsAfter(base, vProbe.length >= 2 ? vProbe : g, next);
+      if (!Number.isFinite(score)) continue;
+      const sepFrac = Math.min(1, sep / (0.4 * span));
+      const adj = score - 0.25 * sepFrac;
+      if (!best || adj < best.adj || (adj === best.adj && sep > best.sep)) best = { guides: g, next, score, adj, sep };
+    }
+  }
+  return best ? best.guides : pool.slice(0, 2);
+}
+
+/** Diversify top-2 verticals in document space (same recipe as measure hand top-2). */
+function diversifyTop2Verticals(x) {
+  const det = uprightDetectImage(x); if (!det) return [];
+  const { img, toDoc, W } = det;
+  const v = seg.detectLines(img, { orient: 'v', maxDeg: 25, minLenFrac: 0.12, maxLines: 20, thrFrac: 0.7 });
+  v.sort((a, b) => b.len - a.len);
+  const out = [];
+  for (const l of v) {
+    const d = toDoc(l); const m = (d[0][0] + d[1][0]) / 2;
+    if (out.every((o) => Math.abs(((o[0][0] + o[1][0]) / 2) - m) > (x.w || W) * 0.12)) out.push(d);
+    if (out.length >= 2) break;
+  }
+  return out;
+}
+
 /** Apply suggested guides into the current guided-upright session (editable; Enter finishes). */
 function applySuggestedGuides(x) {
   if (!x || x.mode !== 'perspective') return false;
@@ -3330,28 +3440,39 @@ function applySuggestedGuides(x) {
   // Broad probe: many detected edges in document space (not only the suggested subset).
   let probe = full.slice();
   try {
-    const img = x.small, k = x.k || 1;
-    const toDoc = (l) => [[x.ox + l.x1 / k, x.oy + l.y1 / k], [x.ox + l.x2 / k, x.oy + l.y2 / k]];
-    const vv = seg.detectLines(img, { orient: 'v', maxDeg: 22, minLenFrac: 0.1, maxLines: 12, thrFrac: 0.72 });
-    const hh = seg.detectLines(img, { orient: 'h', maxDeg: 18, minLenFrac: 0.1, maxLines: 12, thrFrac: 0.72 });
-    probe = [...vv.slice(0, 6).map(toDoc), ...hh.slice(0, 6).map(toDoc)];
+    const det = uprightDetectImage(x);
+    if (det) {
+      const vv = seg.detectLines(det.img, { orient: 'v', maxDeg: 25, minLenFrac: 0.12, maxLines: 12, thrFrac: 0.7 });
+      const hh = seg.detectLines(det.img, { orient: 'h', maxDeg: 20, minLenFrac: 0.12, maxLines: 12, thrFrac: 0.7 });
+      vv.sort((a, b) => b.len - a.len); hh.sort((a, b) => b.len - a.len);
+      probe = [...vv.slice(0, 6).map(det.toDoc), ...hh.slice(0, 6).map(det.toDoc)];
+    }
     if (probe.length < 2) probe = full.slice();
   } catch { /* keep full */ }
   // Candidates: full mix, 3, 2; also a pure-vertical pair when ≥2 V exist (safe fallback).
   const cands = [];
-  const consider = (g) => {
+  const consider = (g, source = 'sug') => {
     if (g.length < 2) return;
     const next = uprightFromGuides(base, g, x.w, x.h);
     if (!next || !mesh.perspectiveMesh(x.w, x.h, next)) return;
     const score = scoreSegmentsAfter(base, probe, next);
     const nv = g.filter(isV).length, nh = g.length - nv;
-    cands.push({ guides: g, next, score, mixed: nv > 0 && nh > 0, nv, nh });
+    cands.push({ guides: g, next, score, mixed: nv > 0 && nh > 0, nv, nh, source });
   };
-  for (const n of [full.length, Math.min(3, full.length), 2]) consider(full.slice(0, n));
+  for (const n of [full.length, Math.min(3, full.length), 2]) consider(full.slice(0, n), 'sug');
   const onlyV = full.filter(isV);
-  if (onlyV.length >= 2) consider(onlyV.slice(0, 2));
+  if (onlyV.length >= 2) consider(onlyV.slice(0, 2), 'sugV');
   const onlyH = full.filter((g) => !isV(g));
-  if (onlyH.length >= 2) consider(onlyH.slice(0, 2));
+  if (onlyH.length >= 2) consider(onlyH.slice(0, 2), 'sugH');
+  // v1.19: ranked pure-V pairs + diversify top-2 (hand-style). Prefer top-2 unless ranked
+  // beats it by ≥0.5° on the V-only probe (protects flat held-out from clever-but-wrong pairs).
+  try {
+    const vProbeOnly = probe.filter(isV);
+    const ranked = bestVerticalPairGuides(x, { probe: vProbeOnly, minSepFrac: 0.12, maxLines: 8 });
+    if (ranked.length >= 2) consider(ranked, 'ranked');
+    const top2 = diversifyTop2Verticals(x);
+    if (top2.length >= 2) consider(top2, 'top2');
+  } catch { /* keep existing cands */ }
   if (!cands.length) {
     x.guides = [];
     status('Suggest guides: those edges cannot be straightened together. Draw guides yourself.');
@@ -3361,7 +3482,17 @@ function applySuggestedGuides(x) {
   // score is within 0.35° of the best pure-vertical pair (brick/low-angle horizontals looked
   // "good" alone but worsened vertical seeds). Never pick pure-horizontal when verticals exist.
   const finite = cands.filter((c) => Number.isFinite(c.score));
-  const v2 = finite.filter((c) => c.nv >= 2 && c.nh === 0).sort((a, b) => a.score - b.score)[0];
+  const vPure = finite.filter((c) => c.nv >= 2 && c.nh === 0);
+  const top2Pref = vPure.find((c) => c.source === 'top2') || null;
+  const rankedPref = vPure.filter((c) => c.source === 'ranked').sort((a, b) => a.score - b.score)[0] || null;
+  let v2 = top2Pref || vPure.sort((a, b) => a.score - b.score)[0];
+  // Accept a ranked/other pure-V pair only when it beats diversify top-2 by ≥0.5° on the
+  // full probe AND does not worsen the diversify-top-2 edges themselves (geneva held-out).
+  if (top2Pref && rankedPref && rankedPref.score <= top2Pref.score - 0.5) {
+    const onTop2R = scoreSegmentsAfter(base, top2Pref.guides, rankedPref.next);
+    const onTop2T = scoreSegmentsAfter(base, top2Pref.guides, top2Pref.next);
+    if (Number.isFinite(onTop2R) && Number.isFinite(onTop2T) && onTop2R <= onTop2T + 0.15) v2 = rankedPref;
+  }
   const mixed = finite.filter((c) => c.mixed).sort((a, b) => a.score - b.score || b.guides.length - a.guides.length)[0];
   let best = null;
   // Accept mixed only when it beats pure-V by ≥0.25° on the full probe, does not worsen
@@ -3377,7 +3508,16 @@ function applySuggestedGuides(x) {
     const vOk = !(Number.isFinite(mV) && Number.isFinite(vv) && mV > vv + 0.5);
     const vBetter = Number.isFinite(mV) && Number.isFinite(vv) && mV <= vv - 0.15;
     const hBetter = Number.isFinite(mH) && Number.isFinite(vH) && mH <= vH - 2.0;
-    best = (vOk && (vBetter || hBetter)) ? mixed : v2;
+    // Require mixed not to worsen diversify-top-2 edges (geneva), unless H improves by ≥5°
+    // (c4: keystone horizontals — small V-guide regression is OK when H collapses).
+    let top2Safe = true;
+    if (v2.source === 'top2') {
+      const onMix = scoreSegmentsAfter(base, v2.guides, mixed.next);
+      const onV2 = scoreSegmentsAfter(base, v2.guides, v2.next);
+      const bigH = Number.isFinite(mH) && Number.isFinite(vH) && mH <= vH - 5.0;
+      top2Safe = bigH || !(Number.isFinite(onMix) && Number.isFinite(onV2) && onMix > onV2 + 0.25);
+    }
+    best = (vOk && top2Safe && (vBetter || hBetter)) ? mixed : v2;
   } else if (v2) best = v2;
   else if (mixed) best = mixed;
   else best = finite.sort((a, b) => a.score - b.score)[0] || cands[0];
@@ -8712,7 +8852,7 @@ window.tintwork = {
   autoUprightCmd, get lastUpright() { return lastUpright; }, cropEmptyEdges, fillEmptyEdges, innerOpaqueRect, segment: seg,
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
   exportSharpen: { apply: applyExportSharpen, optionsHTML: exportSharpOptionsHTML, label: exportSharpLabel, presets: EXPORT_SHARP_PRESETS, scaledSharpParams },
-  finishGuidedUpright, uprightFromGuides, snapUprightGuide, suggestUprightGuides, applySuggestedGuides, scoreSegmentsAfter,
+  finishGuidedUpright, uprightFromGuides, snapUprightGuide, suggestUprightGuides, applySuggestedGuides, scoreSegmentsAfter, bestVerticalPairGuides, diversifyTop2Verticals,
   setProof, setProofWarn, get proofMode() { return proofMode; }, get proofWarn() { return proofWarn; }, PROOF_PAPERS,
   batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,

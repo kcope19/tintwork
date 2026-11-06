@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.19 (Suggest pure-V ranking; brick/c4 clarified)
+
+v1.19 keeps to non-AI tools. **Suggest guides** now detects on the full composite (same recipe as hand top-2), ranks well-separated vertical pairs, rejects short partners, and falls back to diversify top-2 unless a ranked pair clearly wins without hurting those edges. Held-out flat / lowangle / geneva no longer lose to hand top-2. The old brick/c4 "~17°" scorecard number was mostly **horizontal-seed residual** after good verticals (brick: non-level feature; c4: real keystone — Suggest mixed now cuts H to ~2°). Lens-aware Full radial stays gated (do-no-harm). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.18 (Suggest guides, mixed V+H Guided quality)
 
 v1.18 keeps to non-AI tools. **Suggest guides** picks 2–4 diverse vertical/horizontal edges for Guided upright (Enter applies; editable). Mixed V+H is accepted only when a probe says it beats a pure-vertical pair without hurting verticals — gated so held-out interiors stay safe. Suggest path is **2 actions** after open (vs Lightroom Guided hand path ~5). Lens-aware Full was **not** shipped (do-no-harm gate unchanged). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).

@@ -6,6 +6,36 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.19 scorecard (Suggest pure-V ranking; brick/c4 V/H split)
+
+Tune: library / c4. Validate held-out: v117-* + geneva / brick / hongkong. Measure: worst residual of hand seeds after top-2 vs Suggest (`docs/audit/workflows-v119-suggest.json`).
+
+| Photo | top-2 | Suggest | Δ | Notes |
+|---|---:|---:|---:|---|
+| v117-flat | 0.10 | 0.10 | **0.00** | pure-V ≡ top-2 |
+| v117-interior | 1.00 | 1.00 | 0.00 | pure-V |
+| v117-cathedral | 1.09 | 1.09 | 0.00 | pure-V (mixed not accepted on probe) |
+| v117-frame | 1.20 | 1.20 | 0.00 | pure-V |
+| library | 4.65 | 0.78 | **−3.87** | 2V+2H |
+| c4 | 18.17 | 2.07 | **−16.10** | 2V+1H; H was the 18° |
+| brick | 16.90 | 16.90 | 0.00 | V≈0.3°; H≈17° is a non-level seed (artifact) |
+| v117-lowangle | 1.90 | 1.90 | **0.00** | was +1.25° in v1.18 |
+| geneva | 4.28 | 4.28 | **0.00** | was +0.43° in v1.18 |
+| hongkong | 1.03 | 1.03 | 0.00 | pure-V |
+
+| Area | v1.18 | v1.19 | Verdict |
+|---|---|---|---|
+| Suggest vs hand top-2 (flat/lowangle/geneva) | +0.14 / +1.25 / +0.43 | **0 / 0 / 0** | **match** |
+| c4 H residual | ~18° (V-only Suggest) | ~2° (mixed) | **closer** |
+| brick ~17° | looked like Guided fail | V OK; H seed not level | **explained** |
+| Full ≤0.5° / lens radial | trails; gated | still gated (disclose) | **trails** |
+
+**Brick/c4 sanity:** After 2V Guided, brick verticals are ≤0.5°; the 16.9° figure is one horizontal seed (~17° before and after) that is not a level architectural edge. c4’s ~18° was real keystone horizontals; Suggest mixed (2V+1H) brings H to ~2.1°. Report V-worst and H-worst separately going forward.
+
+**Lens-aware Full:** estimate still recorded as `kEst`; apply path keeps `kRad = 0`. geneva Full refuses. No held-out win to ungating this release.
+
+**Test-change disclosure:** `v119-test` new (15). Pins accept 1.19.0. No quality bars loosened.
+
 ## v1.18 scorecard (Suggest guides + mixed V+H Guided quality)
 
 Tune subset: `library.jpg`, `v117-cathedral.jpg`. Validate / held-out: `v117-*` + `geneva` / `brick` / `c4` / `hongkong`. Measure: worst residual tilt (°) of hand-picked V/H seeds after **top-2 hand guides** vs **Suggest** (`docs/audit/workflows-v118-suggest.json`, `v118-suggest-remeasure.log`).

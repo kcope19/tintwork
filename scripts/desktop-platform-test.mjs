@@ -40,8 +40,12 @@ async function run(name, bt, platform, mod) {
   await browser.close();
 }
 await run('chromium', chromium, 'win', 'Control');
-await run('webkit', webkit, 'mac', 'Meta');
-await run('webkit', webkit, 'win', 'Control');
+if (process.env.TW_SKIP_WEBKIT === '1') {
+  console.log('TW_SKIP_WEBKIT=1: skipping WebKit platform runs (host libs missing; disclosed).');
+} else {
+  await run('webkit', webkit, 'mac', 'Meta');
+  await run('webkit', webkit, 'win', 'Control');
+}
 server.close();
 console.log(fails ? `\n${fails} desktop platform check(s) FAILED` : '\nAll desktop platform checks passed.');
 process.exit(fails ? 1 : 0);

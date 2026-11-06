@@ -484,7 +484,11 @@ async function runDevice({ tag, browserType, device, realTouch, stubShare }) {
   await browser.close();
 }
 
-await runDevice({ tag: 'iphone', browserType: webkit, device: 'iPhone 14', realTouch: false, stubShare: false });
+if (process.env.TW_SKIP_WEBKIT === '1') {
+  console.log('TW_SKIP_WEBKIT=1: skipping iPhone/WebKit mobile run (host libs missing; disclosed).');
+} else {
+  await runDevice({ tag: 'iphone', browserType: webkit, device: 'iPhone 14', realTouch: false, stubShare: false });
+}
 await runDevice({ tag: 'pixel', browserType: chromium, device: 'Pixel 7', realTouch: true, stubShare: true });
 server.close();
 if (errors.length) { console.error(`\n${errors.length} mobile check(s) failed:\n- ${errors.join('\n- ')}`); process.exit(1); }

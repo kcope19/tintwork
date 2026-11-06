@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.18.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.19.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,29 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.19.0 update (2026-11-06, America/New_York)
+
+Suggest pure-V ranking + brick/c4 measurement clarification. Lens-aware Full radial **not** ungated.
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F53 | Suggest pure-V lagged hand diversify top-2 on flat (+0.14°), lowangle (+1.25°), geneva (+0.43°) — detection used mesh `small`, pairs could pick short partners. | quality | v1.18 scorecard | `uprightDetectImage` (full composite), `diversifyTop2Verticals`, `bestVerticalPairGuides` (sep + length ratio); prefer top-2 unless ranked beats by ≥0.5° without worsening top-2 edges; mixed needs top2Safe unless H improves ≥5° (c4). | v1.19.0 |
+| F54 | brick/c4 "~17–18°" looked like Guided failure. | audit / docs | edgeAngle before/after split V/H | brick: V≤0.5° after 2V; 17° is non-level H seed. c4: H keystone real; Suggest mixed → ~2°. | v1.19.0 |
+
+### What I might be wrong about
+- Preferring diversify top-2 can skip a ranked pair that would help a third vertical not in the top-2 seeds.
+- cathedral no longer takes mixed (Δ0 vs v1.18 −0.44°); probe did not clear the mixed gate after full-res detect.
+- Ungating radial without a new held-out suite could re-break geneva/hongkong do-no-harm.
+
+**Not done:** lens-aware Full apply (`kRad` still forced 0); Full ≤0.5° on library/brick auto path; Adaptive Wide Angle–style freehand.
+
+**Test-change disclosure:** `v119-test` new (15). Pins accept 1.19.0. No bars loosened. Radial ungating deferred (disclose).
+
+### Live verification (v1.19.0, pending deploy)
+
+- Local `npm test` with `TW_SKIP_WEBKIT=1`: **1024** ok checks (v119 adds 15; WebKit desktop ×2 + iPhone mobile skipped). **Disclosed:** after `node_modules` reinstall, Playwright 1.64 WebKit needs host libs apt could not install (mirror 500). `TW_SKIP_WEBKIT=1` is opt-in only; Chromium path green.
+- Live 3× / `119-live-*.png` after push.
 
 ## v1.18.0 update (2026-11-06, America/New_York)
 
