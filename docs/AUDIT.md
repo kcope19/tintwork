@@ -25,7 +25,10 @@ Perspective Plumb uses **full-res** ridge samples and chooses Distortion by **mi
 
 **Test-change disclosure:** `v122-test` new (22). Pins accept 1.22.0. No bars loosened.
 
-### Live verification (v1.22.0, pending)
+### Live verification (v1.22.0, pending push)
+
+- Full `npm test` (WebKit on): **1158** checks (1136 in v1.21 + 22 v122 − overfit bars).
+- `v122-test`: **22/22** locally.
 
 ## v1.21.0 update (2026-11-06, America/New_York)
 
