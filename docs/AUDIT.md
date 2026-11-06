@@ -29,10 +29,12 @@ Guided upright quality + **Suggest guides** (no AI). Tuned on library/cathedral;
 
 **Test-change disclosure:** `v118-test` new (17). Pins accept 1.18.0. No quality bars loosened. Lens-aware Full not enabled (disclose: would need held-out proof it never hurts geneva/brick).
 
-### Live verification (v1.18.0, 2026-11-06 America/New_York)
+### Live verification (v1.18.0, 2026-11-06 about 12:02 PM America/New_York)
 
+- Live site reports `tintwork-shell-v1.18.0` / `APP_VERSION` 1.18.0 (Pages build `d7b5731`, status built).
+- `v118-test` against https://kcope19.github.io/tintwork/ : **17/17 × 3**.
+- Screenshots: `screenshots/118-live-suggest-library.png`, `118-live-suggest-interior.png`, `118-live-suggest-cathedral-applied.png`.
 - Local `npm test`: **1096** checks (1079 in v1.17 + 17 v118).
-- Live site / 3× `v118-test` / screenshots filled after deploy.
 
 
 ## v1.17.0 update (2026-11-06, America/New_York)
