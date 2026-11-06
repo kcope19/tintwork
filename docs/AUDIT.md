@@ -25,10 +25,12 @@ Perspective Plumb uses **full-res** ridge samples and chooses Distortion by **mi
 
 **Test-change disclosure:** `v122-test` new (22). Pins accept 1.22.0. No bars loosened.
 
-### Live verification (v1.22.0, pending push)
+### Live verification (v1.22.0, 2026-11-06 3:58 PM America/New_York)
 
-- Full `npm test` (WebKit on): **1158** checks (1136 in v1.21 + 22 v122 − overfit bars).
-- `v122-test`: **22/22** locally.
+- Live site reports `tintwork-shell-v1.22.0` / `APP_VERSION` 1.22.0 (Pages build `11464bc`, status built).
+- `v122-test` against https://kcope19.github.io/tintwork/ : **22/22 × 3**.
+- Full `npm test` (WebKit on, no TW_SKIP_WEBKIT): **1158** ok.
+- Screenshots: `screenshots/122-live-library-plumb.png`, `122-live-library-lens.png`, `122-live-library-lens-full.png`, `122-live-brick-plumb.png`, `122-live-c4-full.png`, `122-live-geneva-refuse.png`.
 
 ## v1.21.0 update (2026-11-06, America/New_York)
 
