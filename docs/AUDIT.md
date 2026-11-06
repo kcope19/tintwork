@@ -29,9 +29,11 @@ v1.16 is non-AI polish (no heal%/Full≤0.5° cycle; no new AI). Verified hunche
 
 **Test-change disclosure:** `v113-test` and `v17-test` Guided checks loosened — preview then Enter (not auto-apply on 2nd); options bar may show `1/4 guides`; wall scan uses y=1600 under Keep (content ends ~1824). `v112`/`v114`/`v115` version pins accept 1.16.0.
 
-### Live verification (v1.16.0, 2026-11-06 America/New_York)
+### Live verification (v1.16.0, 2026-11-06 about 8:32 AM America/New_York)
 
-- Pending push; filled after live 3/3.
+- Live site reports `tintwork-shell-v1.16.0` / `APP_VERSION` 1.16.0.
+- `v116-test` against https://kcope19.github.io/tintwork/ : **13/13 × 3**.
+- Screenshots: `116-live-export-sharpen.png`, `116-live-guided-preview.png`.
 
 ## v1.15.0 update (2026-11-05, America/New_York)
 
