@@ -24,10 +24,12 @@ Plumb Distortion refine uses **true apply+measure** on held-out check-set ridges
 
 **Test-change disclosure:** `v124-test` new (31). Pins accept 1.24.0. No bars loosened.
 
-### Live verification (v1.24.0, pending push)
+### Live verification (v1.24.0, 2026-11-06 5:13 PM America/New_York)
 
-- Full `npm test` (WebKit on): **1214** checks (1183 + 31 v124).
-- `v124-test`: **31/31** locally.
+- Live site reports `tintwork-shell-v1.24.0` / `APP_VERSION` 1.24.0 (Pages build `a29b98c`, status built).
+- `v124-test` against https://kcope19.github.io/tintwork/ : **31/31 × 3**.
+- Full `npm test` (WebKit on): **1214** ok.
+- Screenshots: `screenshots/124-live-library-plumb.png`, `124-live-brick-plumb.png`, `124-live-c4-full.png`, `124-live-geneva-refuse.png`, `124-live-cathedral-suggest.png`.
 
 ## v1.23.0 update (2026-11-06, America/New_York)
 
