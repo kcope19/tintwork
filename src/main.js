@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.21.0';
+const APP_VERSION = '1.22.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -3173,11 +3173,22 @@ function previewLensOnMxf(x) {
   x.pts = [[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]];
   mxfPreview();
 }
-/** Sample ridge points for each plumb guide (doc-space segments) on the layer preview. */
-function plumbSamplesFromGuides(x, guides) {
+/** Sample ridge points for plumb guides. Prefer full-res layer pixels (v1.22); fall back to the ≤640 preview. */
+function plumbSamplesFromGuides(x, guides, { full = true } = {}) {
+  const out = [];
+  if (full && x.src) {
+    const img = x.src, W = img.width, H = img.height;
+    for (const g of guides || []) {
+      const a = [g[0][0] - x.ox, g[0][1] - x.oy], b = [g[1][0] - x.ox, g[1][1] - x.oy];
+      // clamp into layer
+      const clip = (p) => [Math.max(1, Math.min(W - 2, p[0])), Math.max(1, Math.min(H - 2, p[1]))];
+      const pts = seg.sampleRidgeAlong(img, ...clip(a), ...clip(b), { win: 6, step: 0.025, minGrad: 10 });
+      if (pts.length >= 10) out.push(pts);
+    }
+    if (out.length) return out;
+  }
   const img = x.small; if (!img) return [];
   const k = x.k || 1;
-  const out = [];
   for (const g of guides || []) {
     const a = [(g[0][0] - x.ox) * k, (g[0][1] - x.oy) * k], b = [(g[1][0] - x.ox) * k, (g[1][1] - x.oy) * k];
     const pts = seg.sampleRidgeAlong(img, a[0], a[1], b[0], b[1]);
@@ -3185,16 +3196,117 @@ function plumbSamplesFromGuides(x, guides) {
   }
   return out;
 }
+/**
+ * Score Lens-then-Full residual for Distortion k: undistort detected lines + plumb seeds with k,
+ * fit Full upright (kRad=0 on the undistorted geometry), return worst |tilt| of the plumb chords (°).
+ * Lower is better. Infinity = Full would refuse / no fit.
+ */
+function scoreLensThenFullResidual(x, guides, k) {
+  try {
+    const img = x.small; if (!img || !guides?.length) return Infinity;
+    const W = img.width, H = img.height, sc = x.k || 1;
+    const toLayer = (p) => [(p[0] - x.ox) * sc, (p[1] - x.oy) * sc];
+    let lines = seg.detectLines(img, { orient: 'v', maxDeg: 25, minLenFrac: 0.1, maxLines: 28, thrFrac: 0.7 });
+    let hl = seg.detectLines(img, { orient: 'h', maxDeg: 18, minLenFrac: 0.1, maxLines: 28, thrFrac: 0.7 });
+    if (Math.abs(k) > 1e-8) {
+      lines = seg.undistortLines(lines, W, H, k);
+      hl = seg.undistortLines(hl, W, H, k);
+    }
+    const u = lines.length >= 2 ? seg.estimateUpright(lines, W, H) : { mode: 'none' };
+    let uh = { mode: 'none' };
+    if (hl.length >= 2) {
+      const swapped = hl.map((l) => ({ ...l, x1: l.y1, y1: l.x1, x2: l.y2, y2: l.x2, angle: Math.atan2(l.x2 - l.x1, l.y2 - l.y1) * 180 / Math.PI }));
+      const uu = seg.estimateUpright(swapped, H, W);
+      if (uu.mode !== 'none' && uu.vh) uh = { ...uu, vh: [uu.vh[1], uu.vh[0], uu.vh[2]] };
+    }
+    // weak-H filter (same idea as Full)
+    if (uh.mode !== 'none') {
+      const len = (uh.inliers || []).reduce((q, i) => q + (hl[i]?.len || 0), 0);
+      if ((uh.inliers || []).length < 3 || len < 0.5 * W) uh = { mode: 'none' };
+    }
+    const cx = W / 2, cy = H / 2;
+    const vv = u.mode !== 'none' && u.vh ? u.vh : null;
+    const vh = uh.mode !== 'none' && uh.vh ? uh.vh : null;
+    if (!vv && !vh) return Infinity;
+    const Hu = seg.uprightHomography(vv, vh, cx, cy); if (!Hu) return Infinity;
+    const und = (lx, ly) => {
+      if (!k) return [lx, ly];
+      const rNorm2 = cx * cx + cy * cy;
+      return seg.undistortPoint(lx, ly, cx, cy, k, rNorm2);
+    };
+    let worst = 0, n = 0;
+    for (const g of guides) {
+      const a0 = toLayer(g[0]), b0 = toLayer(g[1]);
+      const [ax, ay] = und(a0[0], a0[1]), [bx, by] = und(b0[0], b0[1]);
+      const a1 = mesh.applyH(Hu, ax, ay), b1 = mesh.applyH(Hu, bx, by);
+      if (!(a1[2] > 0.2 && b1[2] > 0.2)) continue;
+      const dx = b1[0] - a1[0], dy = b1[1] - a1[1];
+      const vert = Math.abs(dy) >= Math.abs(dx);
+      let ang = vert ? Math.atan2(dx, dy) * 180 / Math.PI : Math.atan2(dy, dx) * 180 / Math.PI;
+      worst = Math.max(worst, Math.abs(ang)); n++;
+    }
+    return n ? worst : Infinity;
+  } catch { return Infinity; }
+}
+/** Around plumb k0, pick Distortion that minimises scoreLensThenFullResidual (never worse than k=0 by >0.05°). */
+function refineDistortionByPostFull(x, guides, k0) {
+  const base0 = scoreLensThenFullResidual(x, guides, 0);
+  const s0 = lensKToSlider(k0);
+  // Always try Distortion 0 and a mild barrel/pincushion ladder (±5…±30), plus a neighbourhood of the
+  // plumb estimate. Half-gap k0 can have the wrong sign vs what helps Full — the ladder covers that.
+  const candS = new Set([0, Math.round(s0)]);
+  for (const s of [-30, -25, -20, -15, -10, -5, 5, 10, 15, 20, 25, 30]) candS.add(s);
+  for (let d = -15; d <= 15; d += 5) candS.add(Math.max(-100, Math.min(100, Math.round(s0 + d))));
+  for (let d = -4; d <= 4; d += 2) candS.add(Math.max(-100, Math.min(100, Math.round(s0 + d))));
+  const rows = [];
+  for (const s of [...candS].sort((a, b) => a - b)) {
+    const k = lensSliderToK(s);
+    const sc = scoreLensThenFullResidual(x, guides, k);
+    rows.push({ s, k, sc });
+  }
+  const finite = rows.filter((r) => r.sc < Infinity);
+  // Must beat Distortion 0 by ≥0.05° (or keep 0).
+  const improved = finite.filter((r) => !(base0 < Infinity) || r.sc <= base0 - 0.05);
+  if (!improved.length) return { k: 0, slider: 0, score: base0, base0, k0, rows };
+  const bestScore = Math.min(...improved.map((r) => r.sc));
+  // Among near-best (≤ best+0.1°), prefer the mildest |Distortion| — analytical score can favour a
+  // stronger k than the apply+measure path (library: analytical 25°, measured best +10).
+  let pool = improved.filter((r) => r.sc <= bestScore + 0.1);
+  // Cap auto Distortion at ±40: stronger values often overfit the analytical score (brick k0≈−0.15).
+  const mildPool = pool.filter((r) => Math.abs(r.s) <= 40);
+  if (mildPool.length) pool = mildPool;
+  else {
+    const capped = improved.filter((r) => Math.abs(r.s) <= 40);
+    if (capped.length) {
+      // Wider window under the cap: analytical score is noisier far from measured best
+      // (brick: analytical prefers +30, measured +20 ≈ same residual family).
+      const bestC = Math.min(...capped.map((r) => r.sc));
+      pool = capped.filter((r) => r.sc <= bestC + 0.5);
+    }
+  }
+  pool.sort((a, b) => Math.abs(a.s) - Math.abs(b.s) || a.sc - b.sc);
+  const pick = pool[0];
+  return { k: pick.k, slider: pick.s, score: pick.sc, base0, k0, rows, bestScore };
+}
 function solvePlumbOnMxf(x) {
   const guides = x.plumbs || x.guides || [];
   if (!guides.length) { status('Plumb line: draw 1–3 edges that should be straight.'); return 0; }
-  const samples = plumbSamplesFromGuides(x, guides);
-  if (!samples.length) { status('Plumb line: could not follow those edges; try longer, clearer lines.'); return 0; }
-  const k = seg.solveRadialFromPlumb(samples, x.small.width, x.small.height);
-  x.lensSlider = lensKToSlider(k);
+  let usedFull = true;
+  let samp = plumbSamplesFromGuides(x, guides, { full: true });
+  if (!samp.length) { usedFull = false; samp = plumbSamplesFromGuides(x, guides, { full: false }); }
+  if (!samp.length) { status('Plumb line: could not follow those edges; try longer, clearer lines.'); return 0; }
+  const WW = usedFull ? x.src.width : x.small.width, HH = usedFull ? x.src.height : x.small.height;
+  const k0 = seg.solveRadialFromPlumb(samp, WW, HH);
+  const refined = refineDistortionByPostFull(x, guides, k0);
+  const k = refined.k;
+  x.lensSlider = refined.slider;
   x.radialK = k;
+  x.plumbMeta = { k0, refined, usedFull };
   previewLensOnMxf(x);
-  status(k ? `Plumb line: Distortion set to ${x.lensSlider > 0 ? '+' : ''}${x.lensSlider} (k=${k.toFixed(3)}). Apply Lens, then Full.` : 'Plumb line: edges look straight already (Distortion 0).');
+  const tag = refined.score < Infinity ? `, post-Full ~${refined.score.toFixed(2)}°` : '';
+  status(Math.abs(k) > 1e-8
+    ? `Plumb: Distortion ${x.lensSlider > 0 ? '+' : ''}${x.lensSlider} (k0=${k0.toFixed(3)}→${k.toFixed(3)}${usedFull ? ', full-res' : ''}${tag}). Apply Lens, then Full.`
+    : `Plumb: Distortion 0 kept (post-Full residual${refined.base0 < Infinity ? ` ${refined.base0.toFixed(2)}°` : ' n/a'}; full-res=${usedFull}).`);
   buildOptionsBar();
   return k;
 }
@@ -9039,7 +9151,7 @@ window.tintwork = {
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
   exportSharpen: { apply: applyExportSharpen, optionsHTML: exportSharpOptionsHTML, label: exportSharpLabel, presets: EXPORT_SHARP_PRESETS, scaledSharpParams },
   finishGuidedUpright, uprightFromGuides, snapUprightGuide, suggestUprightGuides, applySuggestedGuides, scoreSegmentsAfter, bestVerticalPairGuides, diversifyTop2Verticals,
-  lensSliderToK, lensKToSlider, solvePlumbOnMxf, applyLensFromMxf, previewLensOnMxf, plumbSamplesFromGuides, addPlumbGuide, LENS_DISTORTION_K,
+  lensSliderToK, lensKToSlider, solvePlumbOnMxf, applyLensFromMxf, previewLensOnMxf, plumbSamplesFromGuides, scoreLensThenFullResidual, refineDistortionByPostFull, addPlumbGuide, LENS_DISTORTION_K,
   setProof, setProofWarn, get proofMode() { return proofMode; }, get proofWarn() { return proofWarn; }, PROOF_PAPERS,
   batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
