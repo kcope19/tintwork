@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.25.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.26.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,26 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.26.0 update (2026-11-06, America/New_York)
+
+Suggest guides on **busy facades**: mixed V+H gate scores verticals on **VP inliers** (decoration no longer vetoes cathedral), while horizontals still use the **broad** H probe so interiors/brick stay pure-V. Enumerates top-2 V × diversified H mixes. Three new CC0 held-out facades (`v126-city/glass/resid`).
+
+| ID | Finding | Kind | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F75 | Cathedral mixed refused: broad V probe worsened 0.74°→1.19° even when VP-inlier V improved. | quality | workflows-v124-gate-trace; v126 gates | `buildSuggestProbes` + inlier V gate; mixH enum; top-2 slack 0.75° when V improves. | v1.26.0 |
+| F76 | Need more held-out busy facades beyond v117 set. | audit | plan v1.26 | `v126-city.jpg`, `v126-glass.jpg`, `v126-resid.jpg` (CC0); baseline in workflows-v126-holdout-baseline.json. | v1.26.0 |
+
+**Not done:** library ≤0.5°; auto radial ungate; Adaptive Wide Angle. Glass/resid held-outs stay pure-V (disclosed).
+
+**Test-change disclosure:** `v126-test` new. Pins accept 1.26.0. No quality bars loosened.
+
+### Live verification (v1.26.0, 2026-11-06 America/New_York)
+
+- `v126-test` local: **22/22** (WebKit on).
+- Full `npm test`: **1261** ok (1239 + 22), 0 fails.
+- Live Pages verification follows deploy of this tag.
+
 
 ## v1.25.0 update (2026-11-06, America/New_York)
 

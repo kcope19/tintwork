@@ -6,6 +6,20 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.26 scorecard (Suggest busy facades + held-outs)
+
+Tune: cathedral / frame / library / c4 (gate only). Validate: interior, brick, flat, lowangle, geneva. New held-outs (no tune): `v126-city`, `v126-glass`, `v126-resid`.
+
+| Photo | Suggest | Notes |
+|---|---|---|
+| v117-cathedral | **mixed** (2V+1H) | restored; VP-inlier V improves (~2.0°→~1.2°) |
+| v117-interior | pure-V | broad H keeps hBetter false |
+| brick | pure-V | refused |
+| v117-frame / library / c4 | mixed | unchanged wins |
+| v117-flat / lowangle / geneva | pure-V | unchanged |
+| v126-city (holdout) | mixed | baseline only |
+| v126-glass / v126-resid (holdout) | pure-V | baseline only |
+
 ## v1.25 scorecard (upright/perspective UX + step counts)
 
 Local Chromium `?platform=win`, mouse-first click counts exclude shared open-file (Ctrl+O + pick), matching competitor docs.

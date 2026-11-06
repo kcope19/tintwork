@@ -6,7 +6,7 @@
 // max-age (GitHub Pages: 10 minutes) cannot serve a mix of old and new modules after a deploy; the
 // precache bypasses the HTTP cache too. A new worker takes over at once and the page shows a
 // "new version ready, reload" bar (see src/main.js).
-const CACHE = 'tintwork-shell-v1.25.0';
+const CACHE = 'tintwork-shell-v1.26.0';
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
   './src/main.js', './src/pixels.js', './src/selection.js', './src/ops.js', './src/worker.js', './src/icons.js',

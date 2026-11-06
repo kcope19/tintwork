@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.25.0';
+const APP_VERSION = '1.26.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -4021,6 +4021,43 @@ function diversifyTop2Verticals(x) {
   return out;
 }
 
+/** Build Suggest probes (v1.26): broad for ranking; VP-inlier V/H for the mixed gate so
+ * busy-facade decoration does not veto a real mixed correction (cathedral), while interiors
+ * that worsen inlier verticals still refuse. */
+function buildSuggestProbes(x, full) {
+  const isV = (g) => Math.abs(g[1][1] - g[0][1]) >= Math.abs(g[1][0] - g[0][0]);
+  let probe = (full || []).slice();
+  let gateV = [], gateH = [], hPool = [];
+  try {
+    const det = uprightDetectImage(x);
+    if (det) {
+      let vv = seg.detectLines(det.img, { orient: 'v', maxDeg: 25, minLenFrac: 0.12, maxLines: 28, thrFrac: 0.7 });
+      let hh = seg.detectLines(det.img, { orient: 'h', maxDeg: 20, minLenFrac: 0.12, maxLines: 28, thrFrac: 0.7 });
+      vv.sort((a, b) => b.len - a.len); hh.sort((a, b) => b.len - a.len);
+      const uv = vv.length >= 2 ? seg.estimateUpright(vv, det.W, det.H) : { mode: 'none', inliers: [] };
+      const uh = hh.length >= 2 ? seg.estimateUpright(hh.map((l) => ({ ...l, x1: l.y1, y1: l.x1, x2: l.y2, y2: l.x2 })), det.H, det.W) : { mode: 'none', inliers: [] };
+      const vInl = (uv.mode !== 'none' && (uv.inliers || []).length >= 2)
+        ? uv.inliers.map((i) => vv[i]).filter(Boolean).sort((a, b) => b.len - a.len) : [];
+      const hInl = (uh.mode !== 'none' && (uh.inliers || []).length >= 2)
+        ? uh.inliers.map((i) => hh[i]).filter(Boolean).sort((a, b) => b.len - a.len) : [];
+      probe = [...vv.slice(0, 6).map(det.toDoc), ...hh.slice(0, 6).map(det.toDoc)];
+      gateV = (vInl.length >= 2 ? vInl : vv).slice(0, 6).map(det.toDoc);
+      gateH = (hInl.length >= 2 ? hInl : hh).slice(0, 6).map(det.toDoc);
+      const hSrc = hInl.length >= 2 ? hInl : hh;
+      const span = x.h || det.H;
+      for (const l of hSrc) {
+        const d = det.toDoc(l); const m = (d[0][1] + d[1][1]) / 2;
+        if (hPool.every((o) => Math.abs(((o[0][1] + o[1][1]) / 2) - m) >= 0.1 * span)) hPool.push(d);
+        if (hPool.length >= 6) break;
+      }
+    }
+  } catch { /* keep defaults */ }
+  if (probe.length < 2) probe = (full || []).slice();
+  if (gateV.length < 2) gateV = probe.filter(isV);
+  if (gateH.length < 2) gateH = probe.filter((g) => !isV(g));
+  return { probe, gateV, gateH, hPool, isV };
+}
+
 /** Apply suggested guides into the current guided-upright session (editable; Enter finishes). */
 let lastSuggestGate = null;
 function applySuggestedGuides(x) {
@@ -4031,19 +4068,7 @@ function applySuggestedGuides(x) {
   const full = suggestUprightGuides(x, { max: 4 });
   if (full.length < 2) { status('Suggest guides: no clear vertical or horizontal edges found. Draw guides yourself.'); buildOptionsBar(); requestRender(); return false; }
   const base = x.pts0.map((p) => [...p]);
-  const isV = (g) => Math.abs(g[1][1] - g[0][1]) >= Math.abs(g[1][0] - g[0][0]);
-  // Broad probe: many detected edges in document space (not only the suggested subset).
-  let probe = full.slice();
-  try {
-    const det = uprightDetectImage(x);
-    if (det) {
-      const vv = seg.detectLines(det.img, { orient: 'v', maxDeg: 25, minLenFrac: 0.12, maxLines: 12, thrFrac: 0.7 });
-      const hh = seg.detectLines(det.img, { orient: 'h', maxDeg: 20, minLenFrac: 0.12, maxLines: 12, thrFrac: 0.7 });
-      vv.sort((a, b) => b.len - a.len); hh.sort((a, b) => b.len - a.len);
-      probe = [...vv.slice(0, 6).map(det.toDoc), ...hh.slice(0, 6).map(det.toDoc)];
-    }
-    if (probe.length < 2) probe = full.slice();
-  } catch { /* keep full */ }
+  const { probe, gateV, gateH, hPool, isV } = buildSuggestProbes(x, full);
   // Candidates: full mix, 3, 2; also a pure-vertical pair when ≥2 V exist (safe fallback).
   const cands = [];
   const consider = (g, source = 'sug') => {
@@ -4061,13 +4086,29 @@ function applySuggestedGuides(x) {
   if (onlyH.length >= 2) consider(onlyH.slice(0, 2), 'sugH');
   // v1.19: ranked pure-V pairs + diversify top-2 (hand-style). Prefer top-2 unless ranked
   // beats it by ≥0.5° on the V-only probe (protects flat held-out from clever-but-wrong pairs).
+  let top2 = [];
   try {
     const vProbeOnly = probe.filter(isV);
     const ranked = bestVerticalPairGuides(x, { probe: vProbeOnly, minSepFrac: 0.12, maxLines: 8 });
     if (ranked.length >= 2) consider(ranked, 'ranked');
-    const top2 = diversifyTop2Verticals(x);
+    top2 = diversifyTop2Verticals(x);
     if (top2.length >= 2) consider(top2, 'top2');
   } catch { /* keep existing cands */ }
+  // v1.26 busy facades: try top-2 V with each diversified H (and H pairs) so a single bad
+  // suggest-H does not block a viable mixed correction on cathedral-like scenes.
+  const vPair = (top2.length >= 2 ? top2 : onlyV.slice(0, 2));
+  const hCands = [];
+  for (const h of hPool) hCands.push(h);
+  for (const h of onlyH) {
+    const m = (h[0][1] + h[1][1]) / 2;
+    if (hCands.every((o) => Math.abs(((o[0][1] + o[1][1]) / 2) - m) >= 0.08 * (x.h || 1))) hCands.push(h);
+  }
+  if (vPair.length >= 2) {
+    for (let i = 0; i < hCands.length; i++) {
+      consider([...vPair, hCands[i]], `mixH${i}`);
+      for (let j = i + 1; j < Math.min(hCands.length, i + 3); j++) consider([...vPair, hCands[i], hCands[j]], `mixH${i}_${j}`);
+    }
+  }
   if (!cands.length) {
     x.guides = [];
     status('Suggest guides: those edges cannot be straightened together. Draw guides yourself.');
@@ -4088,46 +4129,59 @@ function applySuggestedGuides(x) {
     const onTop2T = scoreSegmentsAfter(base, top2Pref.guides, top2Pref.next);
     if (Number.isFinite(onTop2R) && Number.isFinite(onTop2T) && onTop2R <= onTop2T + 0.15) v2 = rankedPref;
   }
-  const mixed = finite.filter((c) => c.mixed).sort((a, b) => a.score - b.score || b.guides.length - a.guides.length)[0];
+  const mixedList = finite.filter((c) => c.mixed).sort((a, b) => a.score - b.score || b.guides.length - a.guides.length);
   let best = null;
-  // Accept mixed only when it beats pure-V by ≥0.25° on the full probe, does not worsen
-  // vertical probe edges by >0.5°, AND either improves verticals (≥0.15°) or improves
-  // horizontals by ≥2° (rejects interior-like weak H probes that hurt held-out seeds).
-  if (v2 && mixed) {
-    const vProbe = probe.filter(isV);
+  // Accept mixed only when it does not worsen VP-inlier verticals by >0.5°, and either improves
+  // those verticals (≥0.15°), improves inlier horizontals by ≥2°, or beats pure-V by ≥0.25° on
+  // the broad probe. Decorative edges in the broad V set no longer veto busy-facade mixes.
+  if (v2 && mixedList.length) {
+    // V gate: VP inliers (busy facades). H gate: broad horizontals so interior furniture
+    // lines cannot invent a fake ≥2° H win (F51 / v1.18 interior refuse).
+    const vProbe = gateV.length >= 2 ? gateV : probe.filter(isV);
     const hProbe = probe.filter((g) => !isV(g));
-    const mV = vProbe.length >= 2 ? scoreSegmentsAfter(base, vProbe, mixed.next) : Infinity;
-    const vv = vProbe.length >= 2 ? scoreSegmentsAfter(base, vProbe, v2.next) : Infinity;
-    const mH = hProbe.length >= 2 ? scoreSegmentsAfter(base, hProbe, mixed.next) : Infinity;
-    const vH = hProbe.length >= 2 ? scoreSegmentsAfter(base, hProbe, v2.next) : Infinity;
-    const vOk = !(Number.isFinite(mV) && Number.isFinite(vv) && mV > vv + 0.5);
-    const vBetter = Number.isFinite(mV) && Number.isFinite(vv) && mV <= vv - 0.15;
-    const hBetter = Number.isFinite(mH) && Number.isFinite(vH) && mH <= vH - 2.0;
-    // Cathedral: overall worst can be H-tied; accept when V-only probe improves ≥0.15° and H not worse by >1°.
-    const vOnlyBetter = Number.isFinite(mV) && Number.isFinite(vv) && mV <= vv - 0.15
-      && (!(Number.isFinite(mH) && Number.isFinite(vH)) || mH <= vH + 1.0);
-    const overallBetter = mixed.score <= v2.score - 0.25;
-    let top2Safe = true;
-    if (v2.source === 'top2') {
-      const onMix = scoreSegmentsAfter(base, v2.guides, mixed.next);
-      const onV2 = scoreSegmentsAfter(base, v2.guides, v2.next);
-      const bigH = Number.isFinite(mH) && Number.isFinite(vH) && mH <= vH - 5.0;
-      // v1.24: when both V-probe and H-probe clearly improve, allow a slightly wider
-      // top-2 slack (0.75°) so cathedral-like facades can take mixed without the
-      // strict 0.25° top-2 veto (F57). Interior still fails vOk / overall on the broad probe.
-      const bothImprove = vBetter && hBetter;
-      const slack = bothImprove ? 0.75 : 0.25;
-      top2Safe = bigH || !(Number.isFinite(onMix) && Number.isFinite(onV2) && onMix > onV2 + slack);
+    void gateH;
+    let chosen = null;
+    let gateInfo = null;
+    for (const mixed of mixedList) {
+      const mV = vProbe.length >= 2 ? scoreSegmentsAfter(base, vProbe, mixed.next) : Infinity;
+      const vv = vProbe.length >= 2 ? scoreSegmentsAfter(base, vProbe, v2.next) : Infinity;
+      const mH = hProbe.length >= 2 ? scoreSegmentsAfter(base, hProbe, mixed.next) : Infinity;
+      const vH = hProbe.length >= 2 ? scoreSegmentsAfter(base, hProbe, v2.next) : Infinity;
+      const vOk = !(Number.isFinite(mV) && Number.isFinite(vv) && mV > vv + 0.5);
+      const vBetter = Number.isFinite(mV) && Number.isFinite(vv) && mV <= vv - 0.15;
+      const hBetter = Number.isFinite(mH) && Number.isFinite(vH) && mH <= vH - 2.0;
+      const vOnlyBetter = Number.isFinite(mV) && Number.isFinite(vv) && mV <= vv - 0.15
+        && (!(Number.isFinite(mH) && Number.isFinite(vH)) || mH <= vH + 1.0);
+      const overallBetter = mixed.score <= v2.score - 0.25;
+      let top2Safe = true;
+      if (v2.source === 'top2') {
+        const onMix = scoreSegmentsAfter(base, v2.guides, mixed.next);
+        const onV2 = scoreSegmentsAfter(base, v2.guides, v2.next);
+        const bigH = Number.isFinite(mH) && Number.isFinite(vH) && mH <= vH - 5.0;
+        // v1.26: when VP-inlier V improves, allow 0.75° top-2 slack (busy facades); else 0.25°.
+        const slack = vBetter ? 0.75 : 0.25;
+        top2Safe = bigH || !(Number.isFinite(onMix) && Number.isFinite(onV2) && onMix > onV2 + slack);
+      }
+      const acceptMix = vOk && top2Safe && (overallBetter || vOnlyBetter || hBetter) && (vBetter || hBetter || vOnlyBetter);
+      const info = {
+        acceptMix, vOk, top2Safe, overallBetter, vOnlyBetter, hBetter, vBetter,
+        mV, vv, mH, vH, mixedScore: mixed.score, v2score: v2.score,
+        mixedN: mixed.guides.length, mixedNv: mixed.nv, mixedNh: mixed.nh, v2src: v2.source,
+        source: mixed.source, gateV: vProbe.length, gateH: hProbe.length,
+      };
+      if (acceptMix) {
+        if (!chosen || mV < chosen.mV - 0.05 || (Math.abs(mV - chosen.mV) <= 0.05 && mixed.score < chosen.score)) {
+          chosen = { ...mixed, mV, score: mixed.score };
+          gateInfo = info;
+        }
+      } else if (!gateInfo) {
+        gateInfo = info; // keep first (best broad score) refusal for diagnostics
+      }
     }
-    const acceptMix = vOk && top2Safe && (overallBetter || vOnlyBetter || hBetter) && (vBetter || hBetter || vOnlyBetter);
-    lastSuggestGate = {
-      acceptMix, vOk, top2Safe, overallBetter, vOnlyBetter, hBetter, vBetter,
-      mV, vv, mH, vH, mixedScore: mixed.score, v2score: v2.score,
-      mixedN: mixed.guides.length, mixedNv: mixed.nv, mixedNh: mixed.nh, v2src: v2.source,
-    };
-    best = acceptMix ? mixed : v2;
+    lastSuggestGate = gateInfo;
+    best = chosen || v2;
   } else if (v2) best = v2;
-  else if (mixed) best = mixed;
+  else if (mixedList[0]) best = mixedList[0];
   else best = finite.sort((a, b) => a.score - b.score)[0] || cands[0];
   if (best && best.nv === 0 && best.nh >= 2 && v2) best = v2;
   if (!best || !Number.isFinite(best.score)) {

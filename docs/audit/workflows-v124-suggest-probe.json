@@ -1,11 +1,11 @@
 {
   "v117-cathedral.jpg": {
     "ok": true,
-    "n": 2,
+    "n": 3,
     "nv": 2,
-    "nh": 0,
-    "mixed": false,
-    "status": "Suggested 2 guides (2 vertical, 0 horizontal · ~0.7°). Enter applies · drag to edit · Esc cancels."
+    "nh": 1,
+    "mixed": true,
+    "status": "Suggested 3 guides (2 vertical, 1 horizontal · ~1.2°). Enter applies · drag to edit · Esc cancels."
   },
   "v117-frame.jpg": {
     "ok": true,
@@ -25,11 +25,11 @@
   },
   "v117-interior.jpg": {
     "ok": true,
-    "n": 2,
+    "n": 4,
     "nv": 2,
-    "nh": 0,
-    "mixed": false,
-    "status": "Suggested 2 guides (2 vertical, 0 horizontal · ~6.6°). Enter applies · drag to edit · Esc cancels."
+    "nh": 2,
+    "mixed": true,
+    "status": "Suggested 4 guides (2 vertical, 2 horizontal · ~5.4°). Enter applies · drag to edit · Esc cancels."
   },
   "v117-lowangle.jpg": {
     "ok": true,
@@ -37,7 +37,7 @@
     "nv": 2,
     "nh": 0,
     "mixed": false,
-    "status": "Suggested 2 guides (2 vertical, 0 horizontal · ~1.3°). Enter applies · drag to edit · Esc cancels."
+    "status": "Suggested 2 guides (2 vertical, 0 horizontal · ~2.6°). Enter applies · drag to edit · Esc cancels."
   },
   "library.jpg": {
     "ok": true,
@@ -49,18 +49,18 @@
   },
   "c4.jpg": {
     "ok": true,
+    "n": 4,
+    "nv": 2,
+    "nh": 2,
+    "mixed": true,
+    "status": "Suggested 4 guides (2 vertical, 2 horizontal · ~2.2°). Enter applies · drag to edit · Esc cancels."
+  },
+  "brick.jpg": {
+    "ok": true,
     "n": 3,
     "nv": 2,
     "nh": 1,
     "mixed": true,
-    "status": "Suggested 3 guides (2 vertical, 1 horizontal · ~2.0°). Enter applies · drag to edit · Esc cancels."
-  },
-  "brick.jpg": {
-    "ok": true,
-    "n": 2,
-    "nv": 2,
-    "nh": 0,
-    "mixed": false,
-    "status": "Suggested 2 guides (2 vertical, 0 horizontal · ~16.9°). Enter applies · drag to edit · Esc cancels."
+    "status": "Suggested 3 guides (2 vertical, 1 horizontal · ~21.1°). Enter applies · drag to edit · Esc cancels."
   }
 }

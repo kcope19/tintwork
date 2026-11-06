@@ -46,3 +46,17 @@ Downloaded **after** planning the v1.17 measurement pass; seed edges fixed befor
 | v117-station.jpg | File:Interior of a train station (Unsplash).jpg | CC0 | Jared Erondu erondu | held-out: station interior / wide converging |
 | | https://commons.wikimedia.org/wiki/File%3AInterior_of_a_train_station_%28Unsplash%29.jpg | | | |
 
+
+
+## v1.26 held-out upright set (downloaded 2026-11-06, America/New_York)
+
+Downloaded **after** shipping the v1.26 Suggest busy-facade gate; seed edges / Suggest results recorded before any further tune on these files.
+
+| File | Commons file | Licence | Author | Role |
+|---|---|---|---|---|
+| v126-city.jpg | File:City Facade (Unsplash).jpg | CC0 | Falk Heger (@falk) | held-out: busy city facade |
+| | https://commons.wikimedia.org/wiki/File:City_Facade_(Unsplash).jpg | orig 6000×4000; stored as 1280 long-edge thumb | | |
+| v126-glass.jpg | File:Dark glass facade (Unsplash).jpg | CC0 | Mike Wilson (@mkwlsn) | held-out: dark glass facade |
+| | https://commons.wikimedia.org/wiki/File:Dark_glass_facade_(Unsplash).jpg | orig 4081×2721; stored as 1280 long-edge thumb | | |
+| v126-resid.jpg | File:Modern residential facade (Unsplash).jpg | CC0 | Samuel Zeller (@samuelzeller) | held-out: modern residential facade |
+| | https://commons.wikimedia.org/wiki/File:Modern_residential_facade_(Unsplash).jpg | orig 5225×3483; stored as 1280 long-edge thumb | | |
