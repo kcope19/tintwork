@@ -23,11 +23,12 @@ Suggest guides on **busy facades**: mixed V+H gate scores verticals on **VP inli
 
 **Test-change disclosure:** `v126-test` new. Pins accept 1.26.0. No quality bars loosened.
 
-### Live verification (v1.26.0, 2026-11-06 America/New_York)
+### Live verification (v1.26.0, 2026-11-06 6:37 PM America/New_York)
 
-- `v126-test` local: **22/22** (WebKit on).
-- Full `npm test`: **1261** ok (1239 + 22), 0 fails.
-- Live Pages verification follows deploy of this tag.
+- Live site reports `tintwork-shell-v1.26.0` / `APP_VERSION` 1.26.0 (Pages build `048d235`, status built).
+- `v126-test` against https://kcope19.github.io/tintwork/ : **22/22 × 3**.
+- Full `npm test` (WebKit on): **1261** ok (1239 + 22).
+- Screenshot: `screenshots/126-live-cathedral-suggest.png` (Suggest 2V+1H · ~1.2°).
 
 
 ## v1.25.0 update (2026-11-06, America/New_York)
