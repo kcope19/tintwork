@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.20 (WebKit tests restored; lens-aware Full measured & stayed gated)
+
+v1.20 keeps to non-AI tools. **Host WebKit deps** are installed again so `npm test` runs the full desktop/mobile WebKit suite without `TW_SKIP_WEBKIT`. **Lens-aware Full** was measured with force-apply of `kEst`: on library it *worsened* fixed seeds (0.86°→1.54°), so radial stays gated (`k=0`) with a compare-gate left in place for a future win. geneva/hongkong Full still refuse; c4 Full ≤0.5° on fixed vertical seeds. Suggest frame can take mixed when safe. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.19 (Suggest pure-V ranking; brick/c4 clarified)
 
 v1.19 keeps to non-AI tools. **Suggest guides** now detects on the full composite (same recipe as hand top-2), ranks well-separated vertical pairs, rejects short partners, and falls back to diversify top-2 unless a ranked pair clearly wins without hurting those edges. Held-out flat / lowangle / geneva no longer lose to hand top-2. The old brick/c4 "~17°" scorecard number was mostly **horizontal-seed residual** after good verticals (brick: non-level feature; c4: real keystone — Suggest mixed now cuts H to ~2°). Lens-aware Full radial stays gated (do-no-harm). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).

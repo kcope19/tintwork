@@ -1,0 +1,15 @@
+flat scores {
+  scoreGuides: 1.5409115701139672e-13,
+  scoreProbe: 3.381889567240857,
+  full: 2
+}
+v117-flat.jpg top2 0.10 sug 0.10 Δ 0.00 V 0.10 → 0.10 H undefined → undefined { n: 2, nv: 2, nh: 0 }
+v117-interior.jpg top2 1.00 sug 1.00 Δ 0.00 V 0.71 → 0.71 H 1.00 → 1.00 { n: 2, nv: 2, nh: 0 }
+v117-cathedral.jpg top2 1.09 sug 1.09 Δ 0.00 V 1.09 → 1.09 H undefined → undefined { n: 2, nv: 2, nh: 0 }
+v117-frame.jpg top2 1.20 sug 0.88 Δ -0.32 V 1.20 → 0.88 H 1.00 → 0.17 { n: 3, nv: 2, nh: 1 }
+library.jpg top2 4.65 sug 0.78 Δ -3.87 V 0.99 → 0.78 H 4.65 → 0.11 { n: 4, nv: 2, nh: 2 }
+c4.jpg top2 18.17 sug 2.07 Δ -16.10 V 0.19 → 0.99 H 18.17 → 2.07 { n: 3, nv: 2, nh: 1 }
+brick.jpg top2 16.90 sug 16.90 Δ 0.00 V 0.32 → 0.32 H 16.90 → 16.90 { n: 2, nv: 2, nh: 0 }
+v117-lowangle.jpg top2 1.90 sug 1.90 Δ 0.00 V 1.90 → 1.90 H undefined → undefined { n: 2, nv: 2, nh: 0 }
+geneva.jpg top2 4.28 sug 4.28 Δ 0.00 V 4.28 → 4.28 H 0.69 → 0.69 { n: 2, nv: 2, nh: 0 }
+hongkong.jpg top2 1.03 sug 1.03 Δ 0.00 V 0.35 → 0.35 H 1.03 → 1.03 { n: 2, nv: 2, nh: 0 }

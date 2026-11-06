@@ -1,0 +1,215 @@
+{
+  "app": "1.19.0",
+  "rows": [
+    {
+      "file": "library.jpg",
+      "mode": "full",
+      "lu": {
+        "mode": "full",
+        "k": 0,
+        "kEst": -0.05,
+        "H": true,
+        "hlines": 4,
+        "lines": 22,
+        "mxf": false
+      },
+      "nV": 3,
+      "nH": 2,
+      "beforeV": 3.5194712900084264,
+      "beforeH": 4.24562407390329,
+      "before": 4.24562407390329,
+      "afterV": 3.20823427869546,
+      "afterH": 0.7322891873058953,
+      "after": 3.20823427869546
+    },
+    {
+      "file": "brick.jpg",
+      "mode": "full",
+      "lu": {
+        "mode": "full",
+        "k": 0,
+        "kEst": 0,
+        "H": true,
+        "hlines": 9,
+        "lines": 14,
+        "mxf": false
+      },
+      "nV": 3,
+      "nH": 2,
+      "beforeV": 1.5406948805518184,
+      "beforeH": 17.495094435170536,
+      "before": 17.495094435170536,
+      "afterV": 0.2813134513593954,
+      "afterH": 17.341046577192834,
+      "after": 17.341046577192834
+    },
+    {
+      "file": "c4.jpg",
+      "mode": "full",
+      "lu": {
+        "mode": "full",
+        "k": 0,
+        "kEst": 0,
+        "H": true,
+        "hlines": 0,
+        "lines": 18,
+        "mxf": false
+      },
+      "nV": 3,
+      "nH": 2,
+      "beforeV": 4.775908729146894,
+      "beforeH": 19.62752475401116,
+      "before": 19.62752475401116,
+      "afterV": 0.3008323761555403,
+      "afterH": 18.147014428788435,
+      "after": 18.147014428788435
+    },
+    {
+      "file": "geneva.jpg",
+      "mode": "full",
+      "lu": {
+        "mode": "none",
+        "k": 0,
+        "kEst": 0,
+        "H": false,
+        "hlines": 0,
+        "lines": 20,
+        "mxf": false
+      },
+      "nV": 3,
+      "nH": 2,
+      "beforeV": 4.459139128609771,
+      "beforeH": 0.4977932749545067,
+      "before": 4.459139128609771,
+      "afterV": 4.459139128609771,
+      "afterH": 0.4977932749545067,
+      "after": 4.459139128609771
+    },
+    {
+      "file": "hongkong.jpg",
+      "mode": "full",
+      "lu": {
+        "mode": "none",
+        "k": 0,
+        "kEst": 0,
+        "H": false,
+        "hlines": 0,
+        "lines": 26,
+        "mxf": false
+      },
+      "nV": 3,
+      "nH": 2,
+      "beforeV": 1.1060500146818346,
+      "beforeH": 1.0245474539076072,
+      "before": 1.1060500146818346,
+      "afterV": 1.1060500146818346,
+      "afterH": 1.0245474539076072,
+      "after": 1.1060500146818346
+    },
+    {
+      "file": "v117-flat.jpg",
+      "mode": "full",
+      "lu": {
+        "mode": "full",
+        "k": 0,
+        "kEst": 0,
+        "H": true,
+        "hlines": 0,
+        "lines": 6,
+        "mxf": false
+      },
+      "nV": 3,
+      "nH": 0,
+      "beforeV": 23.432302063127544,
+      "beforeH": null,
+      "before": 23.432302063127544,
+      "afterV": 0.6340582755384095,
+      "afterH": null,
+      "after": 0.6340582755384095
+    },
+    {
+      "file": "v117-cathedral.jpg",
+      "mode": "full",
+      "lu": {
+        "mode": "full",
+        "k": 0,
+        "kEst": 0,
+        "H": true,
+        "hlines": 0,
+        "lines": 22,
+        "mxf": false
+      },
+      "nV": 3,
+      "nH": 0,
+      "beforeV": 1.1516815770575966,
+      "beforeH": null,
+      "before": 1.1516815770575966,
+      "afterV": 1.0948529879846836,
+      "afterH": null,
+      "after": 1.0948529879846836
+    },
+    {
+      "file": "v117-interior.jpg",
+      "mode": "full",
+      "lu": {
+        "mode": "full",
+        "k": 0,
+        "kEst": 0,
+        "H": true,
+        "hlines": 4,
+        "lines": 7,
+        "mxf": false
+      },
+      "nV": 3,
+      "nH": 2,
+      "beforeV": 0.7724587641886419,
+      "beforeH": 0.9981486878520415,
+      "before": 0.9981486878520415,
+      "afterV": 1.1217875314825085,
+      "afterH": 5.278043342809525,
+      "after": 5.278043342809525
+    },
+    {
+      "file": "v117-lowangle.jpg",
+      "mode": "full",
+      "lu": {
+        "mode": "full",
+        "k": 0,
+        "kEst": 0.04,
+        "H": true,
+        "hlines": 0,
+        "lines": 20,
+        "mxf": false
+      },
+      "nV": 3,
+      "nH": 0,
+      "beforeV": 15.152319423786858,
+      "beforeH": null,
+      "before": 15.152319423786858,
+      "afterV": 1.5426083805567798,
+      "afterH": null,
+      "after": 1.5426083805567798
+    },
+    {
+      "file": "v117-frame.jpg",
+      "mode": "full",
+      "lu": {
+        "mode": "none",
+        "k": 0,
+        "kEst": 0,
+        "H": false,
+        "hlines": 0,
+        "lines": 14,
+        "mxf": false
+      },
+      "nV": 3,
+      "nH": 2,
+      "beforeV": 0.8141025264888775,
+      "beforeH": 1.0053819135063733,
+      "before": 1.0053819135063733,
+      "afterV": 0.8141025264888775,
+      "afterH": 1.0053819135063733,
+      "after": 1.0053819135063733
+    }
+  ]
+}

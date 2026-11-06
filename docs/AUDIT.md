@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.19.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.20.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,29 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.20.0 update (2026-11-06, America/New_York)
+
+WebKit test restore + measured lens-aware Full (stayed gated).
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F55 | `npm test` skipped WebKit after Playwright reinstall (missing host libs; apt http mirror 500). | infra | TW_SKIP_WEBKIT; ldd not found | Point apt at HTTPS kernel.org/cloudfront mirrors; `install-dependencies.sh --autoinstall` for WPE/GTK WebKit. Full suite **1111** ok. | v1.20.0 |
+| F56 | Lens-aware Full target library/brick ≤0.5°. | quality | fixed seeds job 27/28 | Force-apply kEst=-0.05 on library: 0.86°→**1.54°** (worse). Stay gated; compare-gate retained. | measured / gated |
+| F57 | Cathedral mixed gain from v1.18 not restored under full-res probe (mixed worsens V 0.74→1.21). | quality | dig on v117-cathedral | Leave pure-V; frame mixed −0.32° kept. | disclosed |
+
+### What I might be wrong about
+- A different radial estimator (or per-photo k) might help library without the force-apply path we tried.
+- Brick’s 1.27° may need better H inliers, not radial (kEst=0).
+
+**Not done:** Full ≤0.5° on library/brick; cathedral Suggest mixed; Adaptive Wide Angle; ICC.
+
+**Test-change disclosure:** `v120-test` new (10). Pins accept 1.20.0. Radial not ungated (disclose force-apply harm).
+
+### Live verification (v1.20.0, pending deploy)
+
+- Local full `npm test` (WebKit on, no TW_SKIP_WEBKIT): **1121** ok (1111 + 10 v120).
+- Live 3× / `120-live-*.png` after push.
 
 ## v1.19.0 update (2026-11-06, America/New_York)
 

@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.19.0';
+const APP_VERSION = '1.20.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -2797,12 +2797,27 @@ function autoUprightCmd(req = 'auto') {
     } else kRad = seg.estimateRadial([...(hl || []), ...(lines || [])], img);
     if (kRad > 0.08) kRad = 0; // pincushion hits from trapezoid halves; only barrel has helped real photos
     if (Math.abs(kRad) > 0.16) kRad = Math.sign(kRad) * 0.16;
-    // Radial warp is gated: on the library/brick tuning photos, applying the estimated k (with a consistent
-    // VP re-fit) raised some edges above the v1.11 result, so the warp is left off until a held-out win is shown.
-    // The estimate is still recorded on lastUpright.kEst for diagnosis; kRad stays 0 for the mesh.
-    const kEst = kRad; kRad = 0;
-    if (kEst) { /* keep lines/uh as detected — no undistort re-fit while the warp is gated */ }
+    // v1.20: record kEst. Default gate keeps kRad=0; a later compare may adopt kEst.
+    // __TW_RADIAL_FORCE__ (probe only) applies kEst immediately with line undistort + VP re-fit.
+    const kEst = kRad;
     lastUprightKEst = kEst;
+    const forceRadial = typeof window !== 'undefined' && window.__TW_RADIAL_FORCE__;
+    if (!forceRadial) kRad = 0;
+    else if (Math.abs(kEst) >= 0.04) {
+      kRad = kEst;
+      // Undistort detected lines and re-estimate VPs so the upright fit matches the mesh warp.
+      const W0 = img.width, H0 = img.height;
+      lines = seg.undistortLines(lines, W0, H0, kRad);
+      hl = seg.undistortLines(hl, W0, H0, kRad);
+      u = lines.length >= 2 ? seg.estimateUpright(lines, W0, H0) : { mode: 'none', inliers: [] };
+      uh = hl.length >= 2 ? (() => {
+        const swapped = hl.map((l) => ({ ...l, x1: l.y1, y1: l.x1, x2: l.y2, y2: l.x2, angle: Math.atan2(l.x2 - l.x1, l.y2 - l.y1) * 180 / Math.PI }));
+        const uu = seg.estimateUpright(swapped, H0, W0);
+        if (uu.mode === 'none') return uu;
+        return { ...uu, vh: uu.vh ? [uu.vh[1], uu.vh[0], uu.vh[2]] : null, vp: uu.vp ? [uu.vp[1], uu.vp[0]] : null };
+      })() : { mode: 'none', inliers: [] };
+    } else kRad = 0;
+    x._kEst = kEst;
   }
   let next = null, used = req, msg = '', Hu = null;
   const undoc = (a, b) => { // radial undistort of a document point about the layer centre
@@ -2923,6 +2938,59 @@ function autoUprightCmd(req = 'auto') {
       else uh = { ...uh, mode: 'none', weak: true, harm: true };
     }
 
+    // v1.20 lens-aware Full: if kEst is meaningful, try applying it with a consistent undoc mesh
+    // and keep it only when harmLines and vertical inliers do not worsen vs the k=0 result.
+    {
+      const kTry = x._kEst || 0;
+      if (next && Math.abs(kTry) >= 0.04 && Math.abs(kTry) <= 0.16) {
+        const k0 = 0;
+        const scoreV = (mapPt) => {
+          const src = (u.inliers || []).map((i) => lines[i]).filter(Boolean);
+          if (!src.length) return null;
+          let worst = 0, n = 0;
+          for (const l of src) {
+            if (l.len < 0.1 * img.width) continue;
+            const a = toDoc([l.x1, l.y1]), b = toDoc([l.x2, l.y2]);
+            const a2 = mapPt(a[0], a[1]), b2 = mapPt(b[0], b[1]);
+            if (!a2 || !b2) continue;
+            let ang = Math.atan2(b2[0] - a2[0], b2[1] - a2[1]) * 180 / Math.PI;
+            worst = Math.max(worst, Math.abs(ang)); n++;
+          }
+          return n ? worst : null;
+        };
+        const withK = (k) => {
+          kRad = k;
+          const vv2 = u.mode === 'none' ? null : toDocH(u.vh);
+          const vh2 = hUsed && uh.mode !== 'none' ? toDocH(uh.vh) : null;
+          const c = tryH(vh2 || null) || (vv2 ? tryH(null) : null);
+          // tryH uses uprightHomography(vv, vh) — when vh null and vv set it still works for verticals-only via uprightHomography
+          if (!c) { kRad = k0; return null; }
+          const mapPt = (a, b) => { const p = mapHu(c.Hu, a, b); return [p[0], p[1]]; };
+          return { c, h: meanAbsH(mapPt), v: scoreV(mapPt), k };
+        };
+        // Baseline scores with current next/Hu (k=0)
+        const baseMap = (() => {
+          if (Hu) return (a, b) => { const p = mapHu(Hu, a, b); return [p[0], p[1]]; };
+          const Hm = mesh.homography(x.pts, next); if (!Hm) return null;
+          return (a, b) => { const p = mesh.applyH(Hm, a, b); return [p[0], p[1]]; };
+        })();
+        const baseH = baseMap ? meanAbsH(baseMap) : null;
+        const baseV = baseMap ? scoreV(baseMap) : null;
+        const trial = withK(kTry);
+        kRad = 0;
+        if (trial && trial.c) {
+          const hOk = baseH == null || trial.h == null || trial.h <= baseH + 0.05;
+          const vOk = baseV == null || trial.v == null || trial.v <= baseV + 0.15;
+          const better = (baseH != null && trial.h != null && trial.h < baseH - 0.05)
+            || (baseV != null && trial.v != null && trial.v < baseV - 0.1);
+          // Probe: also accept when not worse (measure effect even without clear win)
+          if (hOk && vOk && better) {
+            next = trial.c.q; Hu = trial.c.Hu; kRad = trial.k;
+          }
+        }
+      }
+      delete x._kEst;
+    }
     // if still nothing and we have horizontals to protect, refuse rather than make them worse
     msg = hUsed ? `${vv ? `${u.inliers.length} vertical and ` : ''}${uh.inliers.length} horizontal lines straightened${vv ? '' : ' (no vertical lines found)'}`
       : `${u.inliers.length} vertical lines straightened (${uh.harm ? 'using the horizontals would have made them worse' : uh.weak ? 'the horizontal lines were too few or too uncertain to use' : 'no horizontal lines found'})`;
@@ -3498,7 +3566,7 @@ function applySuggestedGuides(x) {
   // Accept mixed only when it beats pure-V by ≥0.25° on the full probe, does not worsen
   // vertical probe edges by >0.5°, AND either improves verticals (≥0.15°) or improves
   // horizontals by ≥2° (rejects interior-like weak H probes that hurt held-out seeds).
-  if (v2 && mixed && mixed.score <= v2.score - 0.25) {
+  if (v2 && mixed) {
     const vProbe = probe.filter(isV);
     const hProbe = probe.filter((g) => !isV(g));
     const mV = vProbe.length >= 2 ? scoreSegmentsAfter(base, vProbe, mixed.next) : Infinity;
@@ -3508,8 +3576,10 @@ function applySuggestedGuides(x) {
     const vOk = !(Number.isFinite(mV) && Number.isFinite(vv) && mV > vv + 0.5);
     const vBetter = Number.isFinite(mV) && Number.isFinite(vv) && mV <= vv - 0.15;
     const hBetter = Number.isFinite(mH) && Number.isFinite(vH) && mH <= vH - 2.0;
-    // Require mixed not to worsen diversify-top-2 edges (geneva), unless H improves by ≥5°
-    // (c4: keystone horizontals — small V-guide regression is OK when H collapses).
+    // Cathedral: overall worst can be H-tied; accept when V-only probe improves ≥0.15° and H not worse by >1°.
+    const vOnlyBetter = Number.isFinite(mV) && Number.isFinite(vv) && mV <= vv - 0.15
+      && (!(Number.isFinite(mH) && Number.isFinite(vH)) || mH <= vH + 1.0);
+    const overallBetter = mixed.score <= v2.score - 0.25;
     let top2Safe = true;
     if (v2.source === 'top2') {
       const onMix = scoreSegmentsAfter(base, v2.guides, mixed.next);
@@ -3517,7 +3587,7 @@ function applySuggestedGuides(x) {
       const bigH = Number.isFinite(mH) && Number.isFinite(vH) && mH <= vH - 5.0;
       top2Safe = bigH || !(Number.isFinite(onMix) && Number.isFinite(onV2) && onMix > onV2 + 0.25);
     }
-    best = (vOk && top2Safe && (vBetter || hBetter)) ? mixed : v2;
+    best = (vOk && top2Safe && (overallBetter || vOnlyBetter || hBetter) && (vBetter || hBetter || vOnlyBetter)) ? mixed : v2;
   } else if (v2) best = v2;
   else if (mixed) best = mixed;
   else best = finite.sort((a, b) => a.score - b.score)[0] || cands[0];

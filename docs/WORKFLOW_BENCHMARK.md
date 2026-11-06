@@ -6,6 +6,23 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.20 scorecard (WebKit restored; lens-aware Full measured)
+
+| Area | v1.19 | v1.20 | Verdict |
+|---|---|---|---|
+| Full npm test / WebKit | skipped (`TW_SKIP_WEBKIT`) | **1111** ok, WebKit green | **match** (infra) |
+| Library Full (fixed seeds) | ~0.86°; radial gated | 0.86°; force-radial **1.54°** (worse) → stay gated | **trails** 0.5°; safer gated |
+| Brick Full (fixed seeds) | ~1.27° | 1.27° (kEst=0) | **trails** 0.5° |
+| c4 Full (fixed V seeds) | — | **0.23°** | **match** ≤0.5° |
+| geneva / hongkong Full | refuse | refuse | **match** do-no-harm |
+| Suggest flat/lowangle/geneva | Δ0 | Δ0 | **match** |
+| Suggest frame | Δ0 pure-V | **−0.32** mixed | **closer** |
+| Cathedral mixed | Δ0 | Δ0 (mixed worsens V on full-res probe) | **trails** vs v1.18 −0.44 |
+
+**Lens-aware Full disclosure:** `estimateRadial` still records `kEst` (library ≈ −0.05). Force-applying it with line undistort + VP re-fit raised library worst fixed-seed residual from **0.86° to 1.54°**. Compare-gate therefore keeps `kRad = 0`. No ungate this release.
+
+**Test-change disclosure:** `v120-test` new (10). Pins accept 1.20.0. `TW_SKIP_WEBKIT` remains an opt-in escape only. No quality bars loosened.
+
 ## v1.19 scorecard (Suggest pure-V ranking; brick/c4 V/H split)
 
 Tune: library / c4. Validate held-out: v117-* + geneva / brick / hongkong. Measure: worst residual of hand seeds after top-2 vs Suggest (`docs/audit/workflows-v119-suggest.json`).
