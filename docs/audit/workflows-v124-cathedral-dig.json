@@ -1,0 +1,73 @@
+{
+  "fullN": 4,
+  "fullV": 2,
+  "fullH": 2,
+  "cands": [
+    {
+      "source": "sug4",
+      "n": 4,
+      "nv": 2,
+      "nh": 2,
+      "mixed": true,
+      "score": 1.6084279748580426e-14
+    },
+    {
+      "source": "sug3",
+      "n": 3,
+      "nv": 2,
+      "nh": 1,
+      "mixed": true,
+      "score": 7.7064580070270665
+    },
+    {
+      "source": "sug2",
+      "n": 2,
+      "nv": 2,
+      "nh": 0,
+      "mixed": false,
+      "score": 10.247368619314777
+    },
+    {
+      "source": "sugV",
+      "n": 2,
+      "nv": 2,
+      "nh": 0,
+      "mixed": false,
+      "score": 10.247368619314777
+    },
+    {
+      "source": "top2",
+      "n": 2,
+      "nv": 2,
+      "nh": 0,
+      "mixed": false,
+      "score": 10.164877479588826
+    },
+    {
+      "source": "forceMix",
+      "n": 3,
+      "nv": 2,
+      "nh": 1,
+      "mixed": true,
+      "score": 7.7064580070270665
+    },
+    {
+      "source": "forceMix4",
+      "n": 4,
+      "nv": 2,
+      "nh": 2,
+      "mixed": true,
+      "score": 1.6084279748580426e-14
+    }
+  ],
+  "detail": {
+    "vv": 0.8011242366925713,
+    "mV": 7.312607032698493e-14,
+    "vH": 10.164877479588826,
+    "mH": 7.7064580070270665,
+    "v2score": 10.164877479588826,
+    "mixScore": 7.7064580070270665,
+    "onTop2Mix": 0.5754668948515927,
+    "onTop2V": 0
+  }
+}

@@ -25,7 +25,7 @@ const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }
 // --- 1. Version
 {
   const v = await T(() => window.tintwork.APP_VERSION);
-  check(v === '1.14.0' || v === '1.15.0' || v === '1.16.0' || v === '1.17.0' || v === '1.18.0' || v === '1.19.0' || v === '1.21.0' || v === '1.22.0' || v === '1.23.0' || await T(() => window.tintwork.APP_VERSION) === '1.20.0', `APP_VERSION is 1.14+ (${v})`); // v1.16 tree; TW_ROOT of v1.14 still passes
+  check(v === '1.14.0' || v === '1.15.0' || v === '1.16.0' || v === '1.17.0' || v === '1.18.0' || v === '1.19.0' || v === '1.21.0' || v === '1.22.0' || v === '1.23.0' || v === '1.24.0' || await T(() => window.tintwork.APP_VERSION) === '1.24.0' || await T(() => window.tintwork.APP_VERSION) === '1.20.0', `APP_VERSION is 1.14+ (${v})`); // v1.16 tree; TW_ROOT of v1.14 still passes
 }
 
 // --- 2. Soft-proof papers: rag, newsprint, approximate CMY + menus

@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.24 (honest Plumb measure)
+
+v1.24 keeps to non-AI tools. **Plumb** now scores Distortion by **apply+measure on held-out edges** (ridge samples on the preview, pushed through lens undistort + Full upright), not analytical chord endpoints. Solve reports its time (~0.7s). Do-no-harm unchanged: brick and library Plumb still leave Distortion at 0 when the check set does not clearly improve. **Library ≤0.5° is not reachable with Distortion alone** (held-out worst stays ~3°). Cathedral mixed Suggest still refused. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.23 (Plumb do-no-harm)
 
 v1.23 keeps to non-AI tools. **Plumb** still samples at full resolution, but Distortion refine now scores **held-out detected verticals** (not the lines you drew). It only sets Distortion when the check set’s median **and** worst improve, signs agree across folds, and `Distortion`≥5; otherwise Distortion stays **0** and the status bar says **No reliable lens bend found**. Brick both traces and library Plumb now refuse unsafe bends. Library ≤0.5° still trails (manual Distortion remains). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).

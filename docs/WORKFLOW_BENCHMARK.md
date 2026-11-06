@@ -6,6 +6,25 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.24 scorecard (apply+measure Plumb; library ≤0.5° not reachable via Distortion)
+
+| Area | v1.23 | v1.24 | Verdict |
+|---|---|---|---|
+| Plumb refine score | analytical chord median/worst | **apply+measure**: preview ridges → undistort+Full Hu | **closer** (honest) |
+| Plumb latency | (analytical fast) | **~0.7 s** (cached Hough+ridges; status shows ms) | **match** responsive |
+| Brick / library Plumb | Distortion 0 | Distortion 0 (do-no-harm kept) | **match** |
+| Library held-out worst | — | D0 **~3.19°**; +10 **~3.10°**; +20 **~2.99°** — never ≤0.5° | **trails**; Distortion alone insufficient |
+| Library manual +10→Full (in-sample) | 0.73° | 0.73° | trails ≤0.5° |
+| Cathedral mixed Suggest | not restored | still refused (broad probe V 0.74°→1.19°) | **trails** (safe) |
+| c4 / geneva / hongkong | match | match | **match** |
+| Full npm test / WebKit | 1183 | *(pending)* | — |
+
+**Library ≤0.5° disclosure:** Under honest check-set apply+measure, Distortion never brings held-out worst under ~3°. Non-AI Distortion+Full cannot hit ≤0.5° on library; leave manual path and Plumb refuse.
+
+**Cathedral disclosure:** Restoring mixed would require accepting V worsen on the broad probe; gate kept.
+
+**Test-change disclosure:** `v124-test` new (31). Pins accept 1.24.0. v123 status regex still matches “No reliable… · N ms”.
+
 ## v1.23 scorecard (Plumb do-no-harm)
 
 | Area | v1.22 | v1.23 | Verdict |

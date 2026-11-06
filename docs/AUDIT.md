@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.23.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.24.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,22 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.24.0 update (2026-11-06, America/New_York)
+
+Plumb Distortion refine uses **true apply+measure** on held-out check-set ridges (preview-res, cached Hough+ridges, ~0.7s, ms in status). Do-no-harm unchanged. Library ≤0.5° via Distortion **not reachable** (held-out worst stays ~3°). Cathedral mixed still refused (V worsen on broad probe).
+
+| ID | Finding | Kind | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F68 | Analytical post-Full chords disagree with apply+measure (library −23 false accept). | quality | v1.23 validate | `scoreApplyMeasureStats` / ridge→undistort→Hu; refine uses it. | v1.24.0 |
+| F69 | Library Distortion path cannot reach ≤0.5° on honest held-out worst (~3° at D0/+10/+20). | quality | workflows-v124-plumb-probe | Disclose; keep Plumb refuse + manual slider. | disclosed |
+| F70 | Cathedral mixed still worsens V on broad Suggest probe (0.74°→1.19°). | quality | workflows-v124-gate-trace | Leave pure-V; optional wider top2 slack only when both V+H improve (does not unlock cathedral). | disclosed |
+
+**Not done:** library ≤0.5°; cathedral mixed Suggest; auto radial ungate; Adaptive Wide Angle.
+
+**Test-change disclosure:** `v124-test` new (31). Pins accept 1.24.0. No bars loosened.
+
+### Live verification (v1.24.0, pending)
 
 ## v1.23.0 update (2026-11-06, America/New_York)
 
