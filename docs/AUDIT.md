@@ -24,7 +24,10 @@ Plumb Distortion refine is **do-no-harm**: score held-out detected verticals (no
 
 **Test-change disclosure:** `v123-test` new (25). Pins accept 1.23.0. No bars loosened.
 
-### Live verification (v1.23.0, pending)
+### Live verification (v1.23.0, pending push)
+
+- Full `npm test` (WebKit on): **1183** checks (1158 in v1.22 + 25 v123).
+- `v123-test`: **25/25** locally. `v122-test` plumb bars accept Distortion 0 (disclosed).
 
 ## v1.22.0 update (2026-11-06, America/New_York)
 

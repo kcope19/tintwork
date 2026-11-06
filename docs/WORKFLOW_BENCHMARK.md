@@ -16,7 +16,7 @@ v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York):
 | Library manual Distortion+10→Full | 0.73° | 0.73° (manual still available) | **closer**; trails ≤0.5° |
 | c4 / geneva / hongkong | 0.23° / refuse / refuse | unchanged | **match** |
 | Cathedral mixed Suggest | not restored | not restored | **trails** |
-| Full npm test / WebKit | 1158 | *(pending)* | — |
+| Full npm test / WebKit | 1158 | **1183** ok, WebKit green | **match** (infra) |
 
 **Do-no-harm disclosure:** Analytical median alone can false-accept (library −23). v1.23 also requires check-set **worst** to improve. Apply+measure held-out: brick +20 **0.47°→0.72°** median; library non-zero Distortion does not beat Full-only worst on held-out Vs.
 
