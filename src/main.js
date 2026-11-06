@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.22.0';
+const APP_VERSION = '1.23.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -3197,9 +3197,10 @@ function plumbSamplesFromGuides(x, guides, { full = true } = {}) {
   return out;
 }
 /**
- * Score Lens-then-Full residual for Distortion k: undistort detected lines + plumb seeds with k,
- * fit Full upright (kRad=0 on the undistorted geometry), return worst |tilt| of the plumb chords (°).
- * Lower is better. Infinity = Full would refuse / no fit.
+ * Score Lens-then-Full residual for Distortion k: undistort detected lines, fit Full upright
+ * (kRad=0 on the undistorted geometry), return worst |tilt| of measureGuides chords (°).
+ * measureGuides should be the held-out check set (not the plumb traces). Lower is better.
+ * Infinity = Full would refuse / no fit / no measurable guides.
  */
 function scoreLensThenFullResidual(x, guides, k) {
   try {
@@ -3219,7 +3220,6 @@ function scoreLensThenFullResidual(x, guides, k) {
       const uu = seg.estimateUpright(swapped, H, W);
       if (uu.mode !== 'none' && uu.vh) uh = { ...uu, vh: [uu.vh[1], uu.vh[0], uu.vh[2]] };
     }
-    // weak-H filter (same idea as Full)
     if (uh.mode !== 'none') {
       const len = (uh.inliers || []).reduce((q, i) => q + (hl[i]?.len || 0), 0);
       if ((uh.inliers || []).length < 3 || len < 0.5 * W) uh = { mode: 'none' };
@@ -3234,26 +3234,159 @@ function scoreLensThenFullResidual(x, guides, k) {
       const rNorm2 = cx * cx + cy * cy;
       return seg.undistortPoint(lx, ly, cx, cy, k, rNorm2);
     };
-    let worst = 0, n = 0;
-    for (const g of guides) {
+    // Score the longest guides (up to 8); use median |tilt| so one bad chord cannot dominate.
+    const scored = [];
+    const ordered = [...guides].sort((a, b) => {
+      const la = Math.hypot(a[1][0] - a[0][0], a[1][1] - a[0][1]);
+      const lb = Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1]);
+      return lb - la;
+    }).slice(0, 5);
+    for (const g of ordered) {
       const a0 = toLayer(g[0]), b0 = toLayer(g[1]);
       const [ax, ay] = und(a0[0], a0[1]), [bx, by] = und(b0[0], b0[1]);
       const a1 = mesh.applyH(Hu, ax, ay), b1 = mesh.applyH(Hu, bx, by);
       if (!(a1[2] > 0.2 && b1[2] > 0.2)) continue;
       const dx = b1[0] - a1[0], dy = b1[1] - a1[1];
       const vert = Math.abs(dy) >= Math.abs(dx);
-      let ang = vert ? Math.atan2(dx, dy) * 180 / Math.PI : Math.atan2(dy, dx) * 180 / Math.PI;
-      worst = Math.max(worst, Math.abs(ang)); n++;
+      const ang = vert ? Math.atan2(dx, dy) * 180 / Math.PI : Math.atan2(dy, dx) * 180 / Math.PI;
+      scored.push(Math.abs(ang));
     }
-    return n ? worst : Infinity;
+    if (!scored.length) return Infinity;
+    scored.sort((a, b) => a - b);
+    return scored[Math.floor(scored.length / 2)];
   } catch { return Infinity; }
 }
-/** Around plumb k0, pick Distortion that minimises scoreLensThenFullResidual (never worse than k=0 by >0.05°). */
+/** Same as scoreLensThenFullResidual but returns { median, worst, n }. */
+function scoreLensThenFullStats(x, guides, k) {
+  try {
+    const img = x.small; if (!img || !guides?.length) return { median: Infinity, worst: Infinity, n: 0 };
+    const W = img.width, H = img.height, sc = x.k || 1;
+    const toLayer = (p) => [(p[0] - x.ox) * sc, (p[1] - x.oy) * sc];
+    let lines = seg.detectLines(img, { orient: 'v', maxDeg: 25, minLenFrac: 0.1, maxLines: 28, thrFrac: 0.7 });
+    let hl = seg.detectLines(img, { orient: 'h', maxDeg: 18, minLenFrac: 0.1, maxLines: 28, thrFrac: 0.7 });
+    if (Math.abs(k) > 1e-8) {
+      lines = seg.undistortLines(lines, W, H, k);
+      hl = seg.undistortLines(hl, W, H, k);
+    }
+    const u = lines.length >= 2 ? seg.estimateUpright(lines, W, H) : { mode: 'none' };
+    let uh = { mode: 'none' };
+    if (hl.length >= 2) {
+      const swapped = hl.map((l) => ({ ...l, x1: l.y1, y1: l.x1, x2: l.y2, y2: l.x2, angle: Math.atan2(l.x2 - l.x1, l.y2 - l.y1) * 180 / Math.PI }));
+      const uu = seg.estimateUpright(swapped, H, W);
+      if (uu.mode !== 'none' && uu.vh) uh = { ...uu, vh: [uu.vh[1], uu.vh[0], uu.vh[2]] };
+    }
+    if (uh.mode !== 'none') {
+      const len = (uh.inliers || []).reduce((q, i) => q + (hl[i]?.len || 0), 0);
+      if ((uh.inliers || []).length < 3 || len < 0.5 * W) uh = { mode: 'none' };
+    }
+    const cx = W / 2, cy = H / 2;
+    const vv = u.mode !== 'none' && u.vh ? u.vh : null;
+    const vh = uh.mode !== 'none' && uh.vh ? uh.vh : null;
+    if (!vv && !vh) return { median: Infinity, worst: Infinity, n: 0 };
+    const Hu = seg.uprightHomography(vv, vh, cx, cy); if (!Hu) return { median: Infinity, worst: Infinity, n: 0 };
+    const und = (lx, ly) => {
+      if (!k) return [lx, ly];
+      const rNorm2 = cx * cx + cy * cy;
+      return seg.undistortPoint(lx, ly, cx, cy, k, rNorm2);
+    };
+    const scored = [];
+    const ordered = [...guides].sort((a, b) => {
+      const la = Math.hypot(a[1][0] - a[0][0], a[1][1] - a[0][1]);
+      const lb = Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1]);
+      return lb - la;
+    }).slice(0, 5);
+    for (const g of ordered) {
+      const a0 = toLayer(g[0]), b0 = toLayer(g[1]);
+      const [ax, ay] = und(a0[0], a0[1]), [bx, by] = und(b0[0], b0[1]);
+      const a1 = mesh.applyH(Hu, ax, ay), b1 = mesh.applyH(Hu, bx, by);
+      if (!(a1[2] > 0.2 && b1[2] > 0.2)) continue;
+      const dx = b1[0] - a1[0], dy = b1[1] - a1[1];
+      const vert = Math.abs(dy) >= Math.abs(dx);
+      const ang = vert ? Math.atan2(dx, dy) * 180 / Math.PI : Math.atan2(dy, dx) * 180 / Math.PI;
+      scored.push(Math.abs(ang));
+    }
+    if (!scored.length) return { median: Infinity, worst: Infinity, n: 0 };
+    scored.sort((a, b) => a - b);
+    return { median: scored[Math.floor(scored.length / 2)], worst: scored[scored.length - 1], n: scored.length };
+  } catch { return { median: Infinity, worst: Infinity, n: 0 }; }
+}
+/** Doc-space midpoint of a [[x,y],[x,y]] segment. */
+function segMid(g) { return [(g[0][0] + g[1][0]) / 2, (g[0][1] + g[1][1]) / 2]; }
+function segLen(g) {
+  const dx = g[1][0] - g[0][0], dy = g[1][1] - g[0][1];
+  return Math.hypot(dx, dy);
+}
+/** Split detected lines into fit (near plumb traces) vs check (held-out). Doc coordinates. */
+function splitDetectedPlumbSets(x, plumbGuides) {
+  const img = x.small; if (!img) return { fit: [], check: [], allV: [], allH: [] };
+  const sc = x.k || 1;
+  const toDoc = (l) => [[l.x1 / sc + x.ox, l.y1 / sc + x.oy], [l.x2 / sc + x.ox, l.y2 / sc + x.oy]];
+  const vl = seg.detectLines(img, { orient: 'v', maxDeg: 25, minLenFrac: 0.1, maxLines: 28, thrFrac: 0.65 });
+  const hl = seg.detectLines(img, { orient: 'h', maxDeg: 18, minLenFrac: 0.1, maxLines: 20, thrFrac: 0.65 });
+  const allV = vl.map(toDoc).sort((a, b) => segLen(b) - segLen(a));
+  const allH = hl.map(toDoc).sort((a, b) => segLen(b) - segLen(a));
+  const plumbs = plumbGuides || [];
+  const distPointSeg = (p, g) => {
+    const ax = g[0][0], ay = g[0][1], bx = g[1][0], by = g[1][1];
+    const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1;
+    let t = ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2; t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p[0] - (ax + t * dx), p[1] - (ay + t * dy));
+  };
+  const nearPlumb = (g) => {
+    const m = segMid(g);
+    const gx = m[0];
+    return plumbs.some((pg) => {
+      const pm = segMid(pg);
+      // Midpoint proximity, x-column proximity for verticals, or either endpoint near the plumb segment.
+      if (Math.hypot(m[0] - pm[0], m[1] - pm[1]) < 90) return true;
+      if (Math.abs(gx - pm[0]) < 55 && Math.abs((g[1][1] - g[0][1])) > Math.abs(g[1][0] - g[0][0])) return true;
+      if (distPointSeg(g[0], pg) < 45 || distPointSeg(g[1], pg) < 45) return true;
+      if (distPointSeg(m, pg) < 40) return true;
+      return false;
+    });
+  };
+  const fit = [], check = [];
+  for (const g of allV) (nearPlumb(g) ? fit : check).push(g);
+  // Check set is verticals only — H residuals after Full are dominated by keystone, not lens bend.
+  return { fit, check, allV, allH };
+}
+/** Sign of Distortion slider / k; 0 if |s|<5 (too mild to vote). */
+function distortionSign(slider) {
+  if (slider > 4) return 1;
+  if (slider < -4) return -1;
+  return 0;
+}
+/**
+ * Analytical k0 from a single doc-space guide via full-res (or preview) ridge samples.
+ */
+function plumbK0FromGuides(x, guides) {
+  let usedFull = true;
+  let samp = plumbSamplesFromGuides(x, guides, { full: true });
+  if (!samp.length) { usedFull = false; samp = plumbSamplesFromGuides(x, guides, { full: false }); }
+  const nPts = (samp || []).reduce((q, poly) => q + (poly?.length || 0), 0);
+  // A single short ridge poly is too noisy for a sign vote (library one-guide often nPts≪10).
+  if (!samp.length || nPts < 10) return { k0: 0, usedFull, ok: false, nPts };
+  const WW = usedFull ? x.src.width : x.small.width, HH = usedFull ? x.src.height : x.small.height;
+  return { k0: seg.solveRadialFromPlumb(samp, WW, HH), usedFull, ok: true, nPts };
+}
+/**
+ * v1.23 do-no-harm refine: score Distortion candidates on held-out detected edges (check set),
+ * require improvement vs Distortion 0 by ≥ MARGIN, and require sign consistency across the user
+ * plumb k0 and an alternate detected-V trace. Otherwise keep 0.
+ */
 function refineDistortionByPostFull(x, guides, k0) {
-  const base0 = scoreLensThenFullResidual(x, guides, 0);
+  const MARGIN = 0.20; // ° on check-set residual vs Distortion 0
+  const { check, fit, allV } = splitDetectedPlumbSets(x, guides);
+  const measure = check.length >= 2 ? check : null;
+  if (!measure) {
+    return { k: 0, slider: 0, score: Infinity, base0: Infinity, k0, rows: [], reason: 'no-check-set', checkN: check.length, fitN: fit.length };
+  }
+  const base0 = scoreLensThenFullResidual(x, measure, 0);
+  // If Distortion-0 Full proxy is already wild, the check-set score is not trustworthy (brick keystone).
+  if (!(base0 < 10)) {
+    return { k: 0, slider: 0, score: base0, base0, k0, rows: [], reason: 'check-unreliable', checkN: check.length, fitN: fit.length };
+  }
   const s0 = lensKToSlider(k0);
-  // Always try Distortion 0 and a mild barrel/pincushion ladder (±5…±30), plus a neighbourhood of the
-  // plumb estimate. Half-gap k0 can have the wrong sign vs what helps Full — the ladder covers that.
   const candS = new Set([0, Math.round(s0)]);
   for (const s of [-30, -25, -20, -15, -10, -5, 5, 10, 15, 20, 25, 30]) candS.add(s);
   for (let d = -15; d <= 15; d += 5) candS.add(Math.max(-100, Math.min(100, Math.round(s0 + d))));
@@ -3261,52 +3394,97 @@ function refineDistortionByPostFull(x, guides, k0) {
   const rows = [];
   for (const s of [...candS].sort((a, b) => a - b)) {
     const k = lensSliderToK(s);
-    const sc = scoreLensThenFullResidual(x, guides, k);
-    rows.push({ s, k, sc });
+    rows.push({ s, k, sc: scoreLensThenFullResidual(x, measure, k) });
   }
   const finite = rows.filter((r) => r.sc < Infinity);
-  // Must beat Distortion 0 by ≥0.05° (or keep 0).
-  const improved = finite.filter((r) => !(base0 < Infinity) || r.sc <= base0 - 0.05);
-  if (!improved.length) return { k: 0, slider: 0, score: base0, base0, k0, rows };
+  const improved = finite.filter((r) => !(base0 < Infinity) || r.sc <= base0 - MARGIN);
+  if (!improved.length) {
+    return { k: 0, slider: 0, score: base0, base0, k0, rows, reason: 'no-check-improve', checkN: check.length, fitN: fit.length };
+  }
   const bestScore = Math.min(...improved.map((r) => r.sc));
-  // Among near-best (≤ best+0.1°), prefer the mildest |Distortion| — analytical score can favour a
-  // stronger k than the apply+measure path (library: analytical 25°, measured best +10).
-  let pool = improved.filter((r) => r.sc <= bestScore + 0.1);
-  // Cap auto Distortion at ±40: stronger values often overfit the analytical score (brick k0≈−0.15).
-  const mildPool = pool.filter((r) => Math.abs(r.s) <= 40);
-  if (mildPool.length) pool = mildPool;
-  else {
+  let pool = improved.filter((r) => r.sc <= bestScore + 0.1 && Math.abs(r.s) <= 40);
+  if (!pool.length) {
     const capped = improved.filter((r) => Math.abs(r.s) <= 40);
-    if (capped.length) {
-      // Wider window under the cap: analytical score is noisier far from measured best
-      // (brick: analytical prefers +30, measured +20 ≈ same residual family).
-      const bestC = Math.min(...capped.map((r) => r.sc));
-      pool = capped.filter((r) => r.sc <= bestC + 0.5);
+    if (!capped.length) {
+      return { k: 0, slider: 0, score: base0, base0, k0, rows, bestScore, reason: 'over-cap', checkN: check.length, fitN: fit.length };
     }
+    const bestC = Math.min(...capped.map((r) => r.sc));
+    pool = capped.filter((r) => r.sc <= bestC + 0.5);
   }
   pool.sort((a, b) => Math.abs(a.s) - Math.abs(b.s) || a.sc - b.sc);
   const pick = pool[0];
-  return { k: pick.k, slider: pick.s, score: pick.sc, base0, k0, rows, bestScore };
+
+  // Sign consistency: user plumb k0 vs alternate trace from 2 longest held-out Vs.
+  const signPlumb = distortionSign(lensKToSlider(k0));
+  const signPick = distortionSign(pick.s);
+  let signAlt = 0, k0Alt = 0, altOk = false;
+  const altGuides = (allV || []).filter((g) => !fit.includes(g) && measure.includes(g)).slice(0, 2);
+  // Prefer pure check Vs (exclude H we may have stuffed into check)
+  const checkV = measure.filter((g) => Math.abs(g[1][0] - g[0][0]) <= Math.abs(g[1][1] - g[0][1]));
+  const altV = (checkV.length >= 2 ? checkV : allV.filter((g) => !fit.includes(g))).slice(0, 2);
+  if (altV.length >= 1) {
+    const alt = plumbK0FromGuides(x, altV);
+    if (alt.ok) { k0Alt = alt.k0; signAlt = distortionSign(lensKToSlider(alt.k0)); altOk = true; }
+  }
+  // Sign consistency across traces = held-out check folds + alternate detected-V plumb.
+  // Per-guide analytical k0 is too noisy (often |slider|=100 on one edge) to veto.
+  if (signPick && altOk && signAlt && signPick !== signAlt) {
+    return { k: 0, slider: 0, score: base0, base0, k0, rows, bestScore, pickRejected: pick, reason: 'sign-vs-alt', checkN: check.length, fitN: fit.length, k0Alt, signAlt, signPlumb };
+  }
+  // Cross-check: split check Vs in half; each half's best mild slider sign must agree with pick (when strong).
+  const half = Math.max(2, Math.floor(measure.length / 2));
+  const foldA = measure.slice(0, half), foldB = measure.slice(half);
+  if (foldA.length >= 2 && foldB.length >= 2 && signPick) {
+    const bestSign = (fold) => {
+      let best = { s: 0, sc: scoreLensThenFullResidual(x, fold, 0) };
+      for (const s of [-20, -10, 10, 20]) {
+        const sc = scoreLensThenFullResidual(x, fold, lensSliderToK(s));
+        if (sc < best.sc - 0.1) best = { s, sc };
+      }
+      return distortionSign(best.s);
+    };
+    const sa = bestSign(foldA), sb = bestSign(foldB);
+    if ((sa && sa !== signPick) || (sb && sb !== signPick) || (sa && sb && sa !== sb)) {
+      return { k: 0, slider: 0, score: base0, base0, k0, rows, bestScore, pickRejected: pick, reason: 'sign-folds', checkN: check.length, fitN: fit.length, k0Alt, signAlt, foldSigns: [sa, sb] };
+    }
+  }
+  // Confirm on worst-of-top5 as well — median-only can false-positive (library −23).
+  const baseStats = scoreLensThenFullStats(x, measure, 0);
+  const pickStats = scoreLensThenFullStats(x, measure, pick.k);
+  if (!(pickStats.worst < Infinity) || !(baseStats.worst < Infinity) || pickStats.worst > baseStats.worst - MARGIN * 0.5) {
+    return {
+      k: 0, slider: 0, score: base0, base0, k0, rows, bestScore, pickRejected: pick,
+      reason: 'worst-no-improve', checkN: check.length, fitN: fit.length, k0Alt, signAlt,
+      baseStats, pickStats,
+    };
+  }
+  // |Distortion|<5 is noise — treat as no reliable bend.
+  if (Math.abs(pick.s) < 5) {
+    return { k: 0, slider: 0, score: base0, base0, k0, rows, bestScore, pickRejected: pick, reason: 'too-mild', checkN: check.length, fitN: fit.length, k0Alt, signAlt, baseStats, pickStats };
+  }
+  return {
+    k: pick.k, slider: pick.s, score: pick.sc, base0, k0, rows, bestScore,
+    reason: 'ok', checkN: check.length, fitN: fit.length, k0Alt, signAlt, altOk, baseStats, pickStats,
+  };
 }
 function solvePlumbOnMxf(x) {
   const guides = x.plumbs || x.guides || [];
   if (!guides.length) { status('Plumb line: draw 1–3 edges that should be straight.'); return 0; }
-  let usedFull = true;
-  let samp = plumbSamplesFromGuides(x, guides, { full: true });
-  if (!samp.length) { usedFull = false; samp = plumbSamplesFromGuides(x, guides, { full: false }); }
-  if (!samp.length) { status('Plumb line: could not follow those edges; try longer, clearer lines.'); return 0; }
-  const WW = usedFull ? x.src.width : x.small.width, HH = usedFull ? x.src.height : x.small.height;
-  const k0 = seg.solveRadialFromPlumb(samp, WW, HH);
+  const primary = plumbK0FromGuides(x, guides);
+  if (!primary.ok) { status('Plumb line: could not follow those edges; try longer, clearer lines.'); return 0; }
+  const { k0, usedFull } = primary;
   const refined = refineDistortionByPostFull(x, guides, k0);
   const k = refined.k;
   x.lensSlider = refined.slider;
   x.radialK = k;
   x.plumbMeta = { k0, refined, usedFull };
   previewLensOnMxf(x);
-  const tag = refined.score < Infinity ? `, post-Full ~${refined.score.toFixed(2)}°` : '';
-  status(Math.abs(k) > 1e-8
-    ? `Plumb: Distortion ${x.lensSlider > 0 ? '+' : ''}${x.lensSlider} (k0=${k0.toFixed(3)}→${k.toFixed(3)}${usedFull ? ', full-res' : ''}${tag}). Apply Lens, then Full.`
-    : `Plumb: Distortion 0 kept (post-Full residual${refined.base0 < Infinity ? ` ${refined.base0.toFixed(2)}°` : ' n/a'}; full-res=${usedFull}).`);
+  if (!(Math.abs(k) > 1e-8)) {
+    status('No reliable lens bend found');
+  } else {
+    const tag = refined.score < Infinity ? `, check-set ~${refined.score.toFixed(2)}°` : '';
+    status(`Plumb: Distortion ${x.lensSlider > 0 ? '+' : ''}${x.lensSlider} (k0=${k0.toFixed(3)}→${k.toFixed(3)}${usedFull ? ', full-res' : ''}${tag}). Apply Lens, then Full.`);
+  }
   buildOptionsBar();
   return k;
 }
@@ -9151,7 +9329,7 @@ window.tintwork = {
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
   exportSharpen: { apply: applyExportSharpen, optionsHTML: exportSharpOptionsHTML, label: exportSharpLabel, presets: EXPORT_SHARP_PRESETS, scaledSharpParams },
   finishGuidedUpright, uprightFromGuides, snapUprightGuide, suggestUprightGuides, applySuggestedGuides, scoreSegmentsAfter, bestVerticalPairGuides, diversifyTop2Verticals,
-  lensSliderToK, lensKToSlider, solvePlumbOnMxf, applyLensFromMxf, previewLensOnMxf, plumbSamplesFromGuides, scoreLensThenFullResidual, refineDistortionByPostFull, addPlumbGuide, LENS_DISTORTION_K,
+  lensSliderToK, lensKToSlider, solvePlumbOnMxf, applyLensFromMxf, previewLensOnMxf, plumbSamplesFromGuides, scoreLensThenFullResidual, scoreLensThenFullStats, refineDistortionByPostFull, splitDetectedPlumbSets, addPlumbGuide, LENS_DISTORTION_K,
   setProof, setProofWarn, get proofMode() { return proofMode; }, get proofWarn() { return proofWarn; }, PROOF_PAPERS,
   batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
