@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.17.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -2715,7 +2715,19 @@ async function applyMeshXf() {
   if (x.upright) {
     lastUpright = { ...(lastUpright || {}), H: x.uprightHu || mesh.homography([[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]], x.pts), k: x.radialK || 0, center: [x.ox + x.w / 2, x.oy + x.h / 2], rNorm2: (x.w / 2) ** 2 + (x.h / 2) ** 2, kind: x.upright, crop: null, filled: false };
     const how = state.opts.uprightEdges;
-    if (how === 'crop') { const r = cropEmptyEdges({ label: 'Crop empty edges (upright)', quiet: true }); if (r) { lastUpright.crop = r; status(`Upright applied and cropped to ${r.w} × ${r.h} px so no empty corners show.`); } }
+    if (how === 'crop') {
+      // v1.17 constrain-crop: prefer the aspect-locked opaque rect (document ratio), but if a free-aspect
+      // opaque rect keeps ≥15% more area and aspect shift is mild (≤1.35×), use that instead.
+      const locked = innerOpaqueRect({ keepRatio: true }), free = innerOpaqueRect({ keepRatio: false });
+      let preferFree = false;
+      if (locked && free && !locked.full && !free.full) {
+        const aL = locked.w * locked.h, aF = free.w * free.h, ar0 = doc().width / doc().height, ar1 = free.w / free.h;
+        const mild = Math.max(ar0 / ar1, ar1 / ar0) <= 1.35;
+        preferFree = mild && aF >= aL * 1.15;
+      }
+      const r = cropEmptyEdges({ label: 'Crop empty edges (upright)', quiet: true, keepRatio: !preferFree });
+      if (r) { lastUpright.crop = r; lastUpright.cropFree = preferFree; status(`Upright applied and cropped to ${r.w} × ${r.h} px so no empty corners show${preferFree ? ' (free aspect; more of the photo kept)' : ''}.`); }
+    }
     else if (how === 'fill') { if (fillEmptyEdges({ quiet: true })) { lastUpright.filled = true; status('Upright applied; empty corners filled from nearby pixels.'); } }
   }
   buildOptionsBar(); updateLayersPanel(); requestRender();
@@ -2926,8 +2938,11 @@ function autoUprightCmd(req = 'auto') {
     lastUpright.mode = 'none'; x.uprightHu = null; x.radialK = 0;
     const what = req === 'level' ? 'horizontal' : req === 'full' ? 'vertical or horizontal' : 'vertical';
     const none = req === 'level' ? hl.length < 2 : req === 'full' ? lines.length < 2 && hl.length < 2 : lines.length < 2 && (req !== 'auto' || hl.length < 2);
-    status(none ? `Auto upright found no long straight ${what} lines. Try Guides and draw two edges yourself.` : `Auto upright: the ${what} lines already look straight (or disagree). Try Guides.`);
-    buildOptionsBar(); requestRender(); return lastUpright;
+    const msgRefuse = none ? `Auto upright found no long straight ${what} lines. Try Guides and draw two edges yourself.` : `Auto upright: the ${what} lines already look straight (or disagree). Try Guides.`;
+    // v1.17: leave the document as it was (no stuck Perspective session). Esc is not required.
+    cancelMeshXf({ quiet: true });
+    status(msgRefuse);
+    return lastUpright;
   }
   x.pts = next; x.upright = 'auto';
   mxfPreview();
@@ -3046,7 +3061,7 @@ function deepMesh(src, w, h, m, ox, oy, region = null, into = null) {
   mesh.renderMeshCPU(src, w, h, m, ox, oy, out, region);
   return out;
 }
-function cancelMeshXf() {
+function cancelMeshXf({ quiet = false } = {}) {
   const x = state.mxf; if (!x) return;
   state.mxf = null; x.seq++;
   const l = x.layer, o = x.orig;
@@ -3054,7 +3069,7 @@ function cancelMeshXf() {
   if (o.mask && l.mask) { l.mask.canvas = o.mask; touchMask(l); }
   touch(l);
   if (o.deep) { l.deep = o.deep; l.deepRev = l.rev; l.deepOX = o.deepOX; l.deepOY = o.deepOY; }
-  buildOptionsBar(); requestRender(); status('Transform cancelled');
+  buildOptionsBar(); requestRender(); if (!quiet) status('Transform cancelled');
 }
 function mxfBarParts() {
   const x = state.mxf, warp = x.mode === 'warp';
@@ -3076,7 +3091,23 @@ function drawMeshBox(toS) {
     const N = 24, n = x.n;
     for (let j = 0; j < n; j++) { const t = j / (n - 1), pts = []; for (let i = 0; i <= N; i++) pts.push(mesh.warpEval(x.pts, n, i / N, t)); line(pts); strokeTwice(); }
     for (let i = 0; i < n; i++) { const s = i / (n - 1), pts = []; for (let j = 0; j <= N; j++) pts.push(mesh.warpEval(x.pts, n, s, j / N)); line(pts); strokeTwice(); }
-  } else { line([...x.pts, x.pts[0]]); strokeTwice(); }
+  } else {
+    line([...x.pts, x.pts[0]]); strokeTwice();
+    // v1.17: light thirds grid inside the perspective quad (helps manual corner drags; not drawn in guide mode)
+    if (!x.guideMode) {
+      const bil = (u, v) => {
+        const [x0, y0] = x.pts[0], [x1, y1] = x.pts[1], [x2, y2] = x.pts[2], [x3, y3] = x.pts[3];
+        const a = x0 * (1 - u) + x1 * u, b = y0 * (1 - u) + y1 * u, c = x3 * (1 - u) + x2 * u, d = y3 * (1 - u) + y2 * u;
+        return [a * (1 - v) + c * v, b * (1 - v) + d * v];
+      };
+      vctx.save(); vctx.setLineDash([4, 4]);
+      for (const t of [1 / 3, 0.5, 2 / 3]) {
+        line([bil(t, 0), bil(t, 1)]); vctx.lineWidth = 1; vctx.strokeStyle = '#ffffff55'; vctx.stroke();
+        line([bil(0, t), bil(1, t)]); vctx.stroke();
+      }
+      vctx.restore();
+    }
+  }
   for (const g of [...(x.guides || []), ...(x.guideDraft ? [x.guideDraft] : [])]) { // guided upright lines
     line(g); vctx.lineWidth = 3; vctx.strokeStyle = '#000a'; vctx.stroke(); vctx.lineWidth = 1.5; vctx.strokeStyle = '#3ad1ff'; vctx.stroke();
   }
@@ -3086,6 +3117,37 @@ function drawMeshBox(toS) {
     vctx.beginPath(); vctx.arc(hx, hy, hs, 0, Math.PI * 2); vctx.fillStyle = warp ? '#7a5cff' : '#fff'; vctx.fill(); vctx.lineWidth = 1.5; vctx.strokeStyle = '#1b1c20'; vctx.stroke();
   }
   vctx.restore();
+}
+
+/** Snap a guided-upright segment to a nearby detected edge (v1.17). Searches long V/H lines on the
+ * layer preview; if both endpoints fall within `tol` px of the same line, the guide becomes that line. */
+function snapUprightGuide(x, g, tol = 14) {
+  try {
+    const img = x.small; if (!img) return g;
+    const k = x.k || 1, toLayer = (p) => [(p[0] - x.ox) * k, (p[1] - x.oy) * k];
+    const toDoc = (p) => [p[0] / k + x.ox, p[1] / k + x.oy];
+    const a = toLayer(g[0]), b = toLayer(g[1]);
+    const vert = Math.abs(b[1] - a[1]) >= Math.abs(b[0] - a[0]);
+    const lines = seg.detectLines(img, { orient: vert ? 'v' : 'h', maxDeg: 28, minLenFrac: 0.08, maxLines: 30, thrFrac: 0.68 });
+    let best = null, bestD = tol;
+    const distPt = (px, py, l) => {
+      const dx = l.x2 - l.x1, dy = l.y2 - l.y1, len2 = dx * dx + dy * dy || 1;
+      let t = ((px - l.x1) * dx + (py - l.y1) * dy) / len2; t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const qx = l.x1 + t * dx, qy = l.y1 + t * dy;
+      return { d: Math.hypot(px - qx, py - qy), t, qx, qy };
+    };
+    for (const l of lines) {
+      const da = distPt(a[0], a[1], l), db = distPt(b[0], b[1], l);
+      const d = Math.max(da.d, db.d);
+      if (d < bestD && Math.abs(da.t - db.t) > 0.08) { bestD = d; best = l; }
+    }
+    if (!best) return g;
+    // Project endpoints onto the line; extend slightly toward the detected segment ends when close
+    const da = distPt(a[0], a[1], best), db = distPt(b[0], b[1], best);
+    const p0 = toDoc([da.qx, da.qy]), p1 = toDoc([db.qx, db.qy]);
+    if (Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) * state.zoom < 12) return g;
+    return [p0, p1];
+  } catch { return g; }
 }
 /**
  * Guided upright (v1.16: 2–4 guides). Two guides still use a 4-point homography (each line straightened
@@ -3161,6 +3223,7 @@ function finishGuidedUpright(x) {
 }
 function addUprightGuide(x, g) {
   if (Math.hypot(g[1][0] - g[0][0], g[1][1] - g[0][1]) * state.zoom < 12) { status('Drag a longer line along an edge that should be straight.'); return; }
+  g = snapUprightGuide(x, g, 14 / Math.max(0.25, state.zoom));
   if (!x.pts0) x.pts0 = x.pts.map((p) => [...p]);
   x.guides = [...(x.guides || []), g];
   const n = x.guides.length;
@@ -8464,7 +8527,7 @@ window.tintwork = {
   autoUprightCmd, get lastUpright() { return lastUpright; }, cropEmptyEdges, fillEmptyEdges, innerOpaqueRect, segment: seg,
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
   exportSharpen: { apply: applyExportSharpen, optionsHTML: exportSharpOptionsHTML, label: exportSharpLabel, presets: EXPORT_SHARP_PRESETS, scaledSharpParams },
-  finishGuidedUpright, uprightFromGuides,
+  finishGuidedUpright, uprightFromGuides, snapUprightGuide,
   setProof, setProofWarn, get proofMode() { return proofMode; }, get proofWarn() { return proofWarn; }, PROOF_PAPERS,
   batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
