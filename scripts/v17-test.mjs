@@ -97,17 +97,21 @@ await T(() => { const t = window.tintwork; t.newDocument(2000, 2400, 'white', 'b
 const menuHas = await page.locator('#menus .menu-items button[data-cmd="guidedUpright"]').count();
 check(menuHas === 1, 'Image menu has Guided upright');
 if (menuHas) {
-  // v1.13 applies Guided immediately after the second line (Crop by default). This check measures uncropped
-  // geometry, so choose Keep *before* the guides are drawn.
+  // v1.16: Guided previews after ≥2 guides; Enter / Apply / 4th finishes (was auto-apply on 2nd in v1.13).
+  // Keep edges so this check measures uncropped geometry.
+  // DISCLOSED LOOSEN (v1.16): options bar shows "1/4 guides" (status still says "second line"); finish with Enter.
   await T(() => { window.tintwork.state.opts.uprightEdges = 'keep'; });
   await T(() => window.tintwork.run('guidedUpright'));
   const toS = (x, y) => page.evaluate(({ x, y }) => { const r = document.querySelector('#view').getBoundingClientRect(), s = window.tintwork.state; return { x: r.left + s.panX + x * s.zoom, y: r.top + s.panY + y * s.zoom }; }, { x, y });
   const drag = async (a, b) => { const s = await toS(...a), e = await toS(...b); await page.mouse.move(s.x, s.y); await page.mouse.down(); for (let k = 1; k <= 8; k++) await page.mouse.move(s.x + (e.x - s.x) * k / 8, s.y + (e.y - s.y) * k / 8); await page.mouse.up(); };
   const ex = (y) => { const t = (y - 200) / 2100; return [600 - 300 * t, 1400 + 300 * t]; };
   await drag([ex(300)[0], 300], [ex(2200)[0], 2200]);
-  const mid = await T(() => ({ guides: window.tintwork.mxf?.guides?.length, bar: document.querySelector('#optionsbar').textContent }));
-  check(mid.guides === 1 && /second line/i.test(mid.bar), `after one guide the options bar asks for a second (${mid.guides}, "${(mid.bar || '').slice(0, 60)}")`);
+  const mid = await T(() => ({ guides: window.tintwork.mxf?.guides?.length, bar: document.querySelector('#optionsbar').textContent, status: document.querySelector('#status')?.textContent }));
+  check(mid.guides === 1 && (/1\/4|second/i.test(mid.bar) || /second/i.test(mid.status || '')), `after one guide asks for more (${mid.guides}, bar="${(mid.bar || '').slice(0, 50)}", status="${(mid.status || '').slice(0, 40)}")`);
   await drag([ex(300)[1], 300], [ex(2200)[1], 2200]);
+  await page.waitForTimeout(100);
+  const prev = await T(() => ({ mxf: !!window.tintwork.mxf, guides: window.tintwork.mxf?.guides?.length }));
+  if (prev.mxf && prev.guides >= 2) await page.keyboard.press('Enter');
   await page.waitForFunction(() => !window.tintwork.mxf, null, { timeout: 15000 }).catch(() => {});
   await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
   const e = await T(async () => { const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), x = c.getContext('2d'); const scan = (y, dir) => { const d = x.getImageData(0, y, c.width, 1).data; for (let k = 0; k < c.width; k++) { const i = dir > 0 ? k : c.width - 1 - k, j = i * 4; if (d[j + 3] > 200 && d[j] < 110 && d[j + 1] < 100) return i; } return -1; }; return [scan(360, 1), scan(2040, 1), scan(360, -1), scan(2040, -1)]; });

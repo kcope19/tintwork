@@ -16,7 +16,7 @@ v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York):
 
 **Summary (v1.16): output sharpening closes a named print gap without claiming ICC; Guided gains multi-guide capacity (2-guide costs +1 Enter vs v1.13). No heal%/Full cycle. npm test: see release note.**
 
-**Test-change disclosure:** `v116-test` new (13 checks). `v113-test` Guided no longer auto-applies on 2nd guide (preview + Enter) — disclosed loosen. `v114`/`v115` APP_VERSION pins accept 1.16.0.
+**Test-change disclosure:** `v116-test` new (13 checks). `v113-test` / `v17-test` Guided no longer auto-apply on 2nd guide (preview + Enter) — disclosed loosen. `v112`/`v114`/`v115` APP_VERSION pins accept 1.16.0.
 
 **What I might be wrong about**
 - Calling export sharpen “closer” assumes users want unsharp-on-export; some prefer sharpen only in develop. Amounts were not A/B’d against LR Print Sharpening on paper.
