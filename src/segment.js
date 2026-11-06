@@ -615,6 +615,95 @@ export function estimateRadial(lines, img) {
  * Fit a vanishing point to near-vertical segments (RANSAC over pairs, weighted by length, then least squares).
  * Returns { mode: 'none' | 'rotate' | 'keystone', angle (deg, for 'rotate'), vp: [x, y] (for 'keystone'), inliers, lines }.
  */
+
+/**
+ * Sample the edge ridge along a chord (layer-pixel coords). Walks the segment and picks the strongest
+ * perpendicular gradient peak within ±win px — same idea as estimateRadial's horizon sampling, but works
+ * for verticals too. Returns ≥10 points or [].
+ */
+export function sampleRidgeAlong(img, x1, y1, x2, y2, { win = 5, step = 0.04, minGrad = 12 } = {}) {
+  const W = img.width, H = img.height, d = img.data;
+  const lum = (x, y) => { const i = (y * W + x) * 4; return 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; };
+  const vert = Math.abs(y2 - y1) >= Math.abs(x2 - x1);
+  const pts = [];
+  for (let t = 0.02; t <= 0.981; t += step) {
+    const x0 = x1 + (x2 - x1) * t, y0 = y1 + (y2 - y1) * t;
+    let best = 0, bx = Math.round(x0), by = Math.round(y0);
+    if (vert) {
+      const c = Math.round(x0), v = Math.round(y0);
+      if (v < 1 || v >= H - 1) continue;
+      for (let u = c - win; u <= c + win; u++) {
+        if (u < 1 || u >= W - 1) continue;
+        const g = Math.abs(lum(u + 1, v) - lum(u - 1, v));
+        if (g > best) { best = g; bx = u; by = v; }
+      }
+    } else {
+      const c = Math.round(y0), u = Math.round(x0);
+      if (u < 1 || u >= W - 1) continue;
+      for (let v = c - win; v <= c + win; v++) {
+        if (v < 1 || v >= H - 1) continue;
+        const g = Math.abs(lum(u, v + 1) - lum(u, v - 1));
+        if (g > best) { best = g; bx = u; by = v; }
+      }
+    }
+    if (best < minGrad) continue;
+    pts.push([bx, by]);
+  }
+  return pts.length >= 10 ? pts : [];
+}
+
+/**
+ * Solve a single radial term from 1–3 user plumb polylines (each an array of [x,y] ridge samples in the
+ * same pixel space as `W`×`H`). Minimises mean |left−right| half-angle across the plumbs (and does not
+ * raise mid-line RMS). Same k convention as undistortPoint / estimateRadial. Returns 0 when unclear.
+ */
+export function solveRadialFromPlumb(polylines, W, H) {
+  const samples = (polylines || []).filter((p) => p && p.length >= 10);
+  if (!samples.length) return 0;
+  const cx = W / 2, cy = H / 2, rNorm2 = cx * cx + cy * cy;
+  const und = (x, y, k) => { const dx = x - cx, dy = y - cy, s = 1 + k * ((dx * dx + dy * dy) / rNorm2); return [cx + dx * s, cy + dy * s]; };
+  const halfGap = (pts, k) => {
+    const U = pts.map(([x, y]) => und(x, y, k));
+    const mid = U.length >> 1;
+    const ang = (a, b) => {
+      const xs = U.slice(a, b); if (xs.length < 4) return null;
+      const mx = xs.reduce((q, p) => q + p[0], 0) / xs.length, my = xs.reduce((q, p) => q + p[1], 0) / xs.length;
+      let sxy = 0, sxx = 0, syy = 0;
+      for (const p of xs) { sxy += (p[0] - mx) * (p[1] - my); sxx += (p[0] - mx) ** 2; syy += (p[1] - my) ** 2; }
+      // prefer the dominant axis so vertical plumbs work too
+      if (sxx >= syy) { if (sxx < 1) return null; return Math.atan(sxy / sxx) * 180 / Math.PI; }
+      if (syy < 1) return null; return Math.atan(sxy / syy) * 180 / Math.PI;
+    };
+    const L = ang(0, mid), R = ang(mid, U.length); if (L == null || R == null) return null;
+    return Math.abs(L - R);
+  };
+  const score = (k) => {
+    let s = 0, n = 0; for (const pts of samples) { const g = halfGap(pts, k); if (g == null) continue; s += g; n++; }
+    return n ? s / n : Infinity;
+  };
+  const base = score(0);
+  if (!(base > 0.15)) return 0;
+  let bestK = 0, best = base;
+  const scores = [[0, base]];
+  for (let ki = -50; ki <= 50; ki++) {
+    if (!ki) continue;
+    const k = ki / 100, e = score(k);
+    scores.push([k, e]);
+    if (e < best - 1e-4) { best = e; bestK = k; }
+  }
+  if (!(base - best > 0.12) || Math.abs(bestK) < 0.02) return 0;
+  // Prefer the mildest |k| within 15% of the best half-gap improvement (avoids over-bend that hurts Full).
+  const target = best + (base - best) * 0.15;
+  let mild = bestK;
+  for (const [k, e] of scores) {
+    if (e <= target && Math.abs(k) < Math.abs(mild)) mild = k;
+  }
+  bestK = mild;
+  if (Math.abs(bestK) > 0.15) bestK = Math.sign(bestK) * 0.15;
+  if (Math.abs(bestK) < 0.02) return 0;
+  return bestK;
+}
+
 export function estimateUpright(lines, W, H, { tolDeg = 1.2 } = {}) {
   if (lines.length < 2) return { mode: 'none', inliers: [], lines };
   const hom = (l) => { const a = [l.x1, l.y1, 1], b = [l.x2, l.y2, 1]; return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; };

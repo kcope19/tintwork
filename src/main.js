@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.20.0';
+const APP_VERSION = '1.21.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -2617,7 +2617,7 @@ async function renderMeshAny(img, outW, outH, m, ox = 0, oy = 0) {
 
 // --- Perspective & warp (Edit menu): drag corner / grid handles; Enter applies, Esc cancels -----------
 function mxfGrid(n) { const x = state.mxf; if (!x || x.mode !== 'warp' || x.n === n) return; x.n = n; mxfResetPoints(x); mxfPreview(); mxfRender(); buildOptionsBar(); }
-const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'mxfSuggestGuides', 'mxfGuidedApply', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'uprightEdges_crop', 'uprightEdges_fill', 'uprightEdges_keep', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
+const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'mxfSuggestGuides', 'mxfGuidedApply', 'mxfPlumb', 'mxfPlumbSolve', 'mxfLensApply', 'perspectiveLens', 'plumbLine', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'uprightEdges_crop', 'uprightEdges_fill', 'uprightEdges_keep', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
 function startMeshXf(mode) {
   const d = doc(), l = activeLayer();
   if (!l || state.mxf) return;
@@ -2640,6 +2640,7 @@ function startMeshXf(mode) {
     pts: null, job: null, seq: 0,
   };
   mxfResetPoints(x);
+  x.lensSlider = 0; x.lensVignette = 0; x.plumbMode = false; x.plumbs = [];
   state.mxf = x;
   if (d.selection) status(`${mode === 'warp' ? 'Warp' : 'Perspective'} transforms the whole layer (the selection is ignored).`);
   else status(mode === 'warp' ? 'Warp: drag the grid points; Enter applies, Esc cancels.' : 'Perspective: drag the corners; Enter applies, Esc cancels.');
@@ -2648,11 +2649,14 @@ function startMeshXf(mode) {
 function mxfResetPoints(x) {
   const { w, h, ox, oy } = x;
   x.pts = x.mode === 'perspective' ? [[ox, oy], [ox + w, oy], [ox + w, oy + h], [ox, oy + h]] : mesh.gridPoints(x.n, w, h, ox, oy);
-  x.uprightHu = null; x.radialK = 0;
+  x.uprightHu = null; x.radialK = 0; x.lensApply = false;
+  // keep lensSlider / lensVignette so Reset clears the warp but not the remembered slider unless asked
 }
 function mxfMesh(x) {
   if (x.mode !== 'perspective') return mesh.warpMesh(x.pts, x.n, x.w, x.h, 32);
   if (x.uprightHu) return mesh.uprightMeshFromH(x.w, x.h, x.uprightHu, x.radialK || 0, x.ox, x.oy);
+  // v1.21: pure lens preview — identity Hu + radialK (no perspective yet)
+  if (Math.abs(x.radialK || 0) > 1e-8) return mesh.uprightMeshFromH(x.w, x.h, [1, 0, 0, 0, 1, 0, 0, 0, 1], x.radialK, x.ox, x.oy);
   return mesh.perspectiveMesh(x.w, x.h, x.pts);
 }
 /** Output rectangle of the mesh, limited to 3× the document so a near-degenerate quad cannot explode. */
@@ -2696,7 +2700,8 @@ function mxfRender() {
 }
 async function applyMeshXf() {
   const x = state.mxf; if (!x) return;
-  const l = x.layer, moved = x.pts.some((p, i) => { const q = (x.mode === 'perspective' ? [[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]] : mesh.gridPoints(x.n, x.w, x.h, x.ox, x.oy))[i]; return Math.abs(p[0] - q[0]) > 1e-6 || Math.abs(p[1] - q[1]) > 1e-6; });
+  const l = x.layer, lensMoved = !!(x.lensApply || (Math.abs(x.radialK || 0) > 1e-6 && x.upright === 'lens'));
+  const moved = lensMoved || x.pts.some((p, i) => { const q = (x.mode === 'perspective' ? [[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]] : mesh.gridPoints(x.n, x.w, x.h, x.ox, x.oy))[i]; return Math.abs(p[0] - q[0]) > 1e-6 || Math.abs(p[1] - q[1]) > 1e-6; });
   if (!moved) { cancelMeshXf(); return; }
   setBusy(1);
   try { const ok = await mxfRender(); if (!ok && state.mxf === x) { cancelMeshXf(); status('Nothing to apply.'); return; } }
@@ -2710,9 +2715,22 @@ async function applyMeshXf() {
     const m = mxfMesh(x), b = m && mxfBounds(m);
     if (b && b.w === l.canvas.width && b.h === l.canvas.height) { l.deep = deepMesh(x.dsrc, b.w, b.h, m, b.x, b.y); l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0; }
   }
-  commit(x.upright ? 'Upright' : x.mode === 'warp' ? 'Warp' : 'Perspective');
-  status(`${x.upright ? 'Upright' : x.mode === 'warp' ? 'Warp' : 'Perspective'} applied (${gfx.lastWarpPath === 'cpu' ? 'CPU' : gfx.lastWarpPath === 'webgpu' ? 'WebGPU' : 'WebGL2'})`);
-  if (x.upright) {
+  // v1.21: optional vignette amount baked into the same undo as lens apply
+  const vigAmt = x.upright === 'lens' ? (+x.lensVignette || 0) : 0;
+  if (vigAmt) {
+    try {
+      const info = { docW: l.canvas.width, docH: l.canvas.height, offX: 0, offY: 0 };
+      const img = ctxOf(l.canvas).getImageData(0, 0, l.canvas.width, l.canvas.height);
+      runOp('vignette', img, { amount: Math.min(100, Math.abs(vigAmt)), size: 70, feather: 50 }, info);
+      ctxOf(l.canvas).putImageData(img, 0, 0);
+      if (l.deep) { l.deep = runDeep('vignette', l.deep, { amount: Math.min(100, Math.abs(vigAmt)), size: 70, feather: 50 }, info) || l.deep; }
+      touch(l);
+    } catch { /* vignette is best-effort */ }
+  }
+  const label = x.upright === 'lens' ? 'Lens distortion' : x.upright ? 'Upright' : x.mode === 'warp' ? 'Warp' : 'Perspective';
+  commit(label);
+  status(`${label} applied (${gfx.lastWarpPath === 'cpu' ? 'CPU' : gfx.lastWarpPath === 'webgpu' ? 'WebGPU' : 'WebGL2'})`);
+  if (x.upright && x.upright !== 'lens') {
     lastUpright = { ...(lastUpright || {}), H: x.uprightHu || mesh.homography([[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]], x.pts), k: x.radialK || 0, center: [x.ox + x.w / 2, x.oy + x.h / 2], rNorm2: (x.w / 2) ** 2 + (x.h / 2) ** 2, kind: x.upright, crop: null, filled: false };
     const how = state.opts.uprightEdges;
     if (how === 'crop') {
@@ -3139,15 +3157,80 @@ function cancelMeshXf({ quiet = false } = {}) {
   if (o.deep) { l.deep = o.deep; l.deepRev = l.rev; l.deepOX = o.deepOX; l.deepOY = o.deepOY; }
   buildOptionsBar(); requestRender(); if (!quiet) status('Transform cancelled');
 }
+
+/** v1.21: Distortion slider ±100 ↔ upright radial k (same sign convention as RAW Distortion:
+ * positive slider straightens barrel → negative upright k). Scale matches raw.DISTORTION_K. */
+const LENS_DISTORTION_K = 0.0015;
+function lensSliderToK(slider) { return -((+slider) || 0) * LENS_DISTORTION_K; }
+function lensKToSlider(k) { return Math.max(-100, Math.min(100, Math.round((-(+k || 0) / LENS_DISTORTION_K) * 10) / 10)); }
+function previewLensOnMxf(x) {
+  if (!x || x.mode !== 'perspective') return;
+  const k = lensSliderToK(x.lensSlider || 0);
+  x.radialK = k;
+  if (Math.abs(k) < 1e-8) { x.uprightHu = null; mxfResetPoints(x); mxfPreview(); return; }
+  // identity Hu so only radial bends the mesh; corners stay for the handles
+  x.uprightHu = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  x.pts = [[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]];
+  mxfPreview();
+}
+/** Sample ridge points for each plumb guide (doc-space segments) on the layer preview. */
+function plumbSamplesFromGuides(x, guides) {
+  const img = x.small; if (!img) return [];
+  const k = x.k || 1;
+  const out = [];
+  for (const g of guides || []) {
+    const a = [(g[0][0] - x.ox) * k, (g[0][1] - x.oy) * k], b = [(g[1][0] - x.ox) * k, (g[1][1] - x.oy) * k];
+    const pts = seg.sampleRidgeAlong(img, a[0], a[1], b[0], b[1]);
+    if (pts.length >= 10) out.push(pts);
+  }
+  return out;
+}
+function solvePlumbOnMxf(x) {
+  const guides = x.plumbs || x.guides || [];
+  if (!guides.length) { status('Plumb line: draw 1–3 edges that should be straight.'); return 0; }
+  const samples = plumbSamplesFromGuides(x, guides);
+  if (!samples.length) { status('Plumb line: could not follow those edges; try longer, clearer lines.'); return 0; }
+  const k = seg.solveRadialFromPlumb(samples, x.small.width, x.small.height);
+  x.lensSlider = lensKToSlider(k);
+  x.radialK = k;
+  previewLensOnMxf(x);
+  status(k ? `Plumb line: Distortion set to ${x.lensSlider > 0 ? '+' : ''}${x.lensSlider} (k=${k.toFixed(3)}). Apply Lens, then Full.` : 'Plumb line: edges look straight already (Distortion 0).');
+  buildOptionsBar();
+  return k;
+}
+async function applyLensFromMxf() {
+  const x = state.mxf; if (!x || x.mode !== 'perspective') return;
+  const k = lensSliderToK(x.lensSlider || 0);
+  if (Math.abs(k) < 1e-8 && !(+x.lensVignette)) { status('Lens: Distortion is 0 — nothing to apply.'); cancelMeshXf({ quiet: true }); return; }
+  x.radialK = k;
+  x.uprightHu = Math.abs(k) > 1e-8 ? [1, 0, 0, 0, 1, 0, 0, 0, 1] : null;
+  x.pts = [[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]];
+  x.upright = 'lens';
+  x.lensApply = true;
+  x.plumbMode = false; x.guideMode = false; x.plumbs = []; x.guides = [];
+  await applyMeshXf();
+}
 function mxfBarParts() {
   const x = state.mxf, warp = x.mode === 'warp';
+  const ls = x.lensSlider ?? 0, lv = x.lensVignette ?? 0;
+  const lensRow = warp ? '' : `<span class="seg lens-seg" title="Manual lens: Distortion applies before Upright (one undo). Positive straightens barrel; negative straightens pincushion.">`
+    + `<label class="inline">Distortion <input type="range" id="mxfLensDist" min="-100" max="100" step="1" value="${ls}"/><input type="number" id="mxfLensDistN" min="-100" max="100" step="1" value="${ls}" style="width:3.2em"/></label>`
+    + `<label class="inline">Vignette <input type="range" id="mxfLensVig" min="0" max="100" step="1" value="${lv}" title="Corner darkening amount (applied with Lens)"/></label>`
+    + `<button data-cmd="mxfPlumb" class="${x.plumbMode ? 'on' : ''}" title="Draw 1–3 edges that should be straight; solves Distortion from their bend">Plumb</button>`
+    + ((x.plumbMode && (x.plumbs || []).length >= 1) ? `<button data-cmd="mxfPlumbSolve">Solve Distortion</button>` : '')
+    + `<button data-cmd="mxfLensApply" class="primary" title="Apply Distortion (and Vignette) as one undo, then run Full/Vertical">Apply Lens</button></span>`;
+  const hint = warp ? 'Drag grid points to bend the layer'
+    : x.plumbMode ? `Plumb: ${(x.plumbs || []).length}/3 lines · draw along curved edges that should be straight`
+    : x.guideMode ? `Guided: ${(x.guides || []).length}/4 guides${(x.guides || []).length >= 2 ? ' · Enter applies' : ' · draw along edges'}`
+    : 'Drag the corners';
   return [`<span class="tool-title">${warp ? 'Warp' : 'Perspective'}</span>`,
     warp ? '' : `<span class="seg" title="Upright from the photo's straight lines">${[['autoUpright', 'auto', 'Auto', 'Make the vertical lines upright (levels from the horizontals when there are no verticals)'], ['uprightLevel', 'level', 'Level', 'Rotate so the horizontal lines are level'], ['uprightVertical', 'vertical', 'Vertical', 'Make the vertical lines upright and parallel'], ['uprightFull', 'full', 'Full', 'Straighten the verticals and the horizontals together']].map(([c, m, n, t]) => `<button data-cmd="${c}" class="${x.upright === 'auto' && lastUpright?.req === m ? 'on' : ''}" title="${t}">${n}</button>`).join('')}</span>`,
     warp ? '' : `<button data-cmd="mxfGuides" class="${x.guideMode ? 'on' : ''}" title="Draw 2–4 lines along edges that should be vertical or horizontal">Guides</button>`,
     warp ? '' : `<button data-cmd="mxfSuggestGuides" title="Pick 2–4 strong vertical/horizontal edges for you (editable; Enter applies)">Suggest guides</button>`,
+    lensRow,
     warp ? '' : `<span class="seg" title="After an upright correction: crop away the empty corners, fill them from nearby pixels, or leave them transparent">${[['crop', 'Crop edges'], ['fill', 'Fill edges'], ['keep', 'Keep']].map(([k, n]) => `<button data-cmd="uprightEdges_${k}" class="${state.opts.uprightEdges === k ? 'on' : ''}">${n}</button>`).join('')}</span>`,
     warp ? `<span class="seg">${[3, 4, 5].map((n) => `<button data-cmd="mxfGrid${n}" class="${x.n === n ? 'on' : ''}" title="${n}×${n} control points">${n}×${n}</button>`).join('')}</span>` : '',
-    `<span class="muted">${warp ? 'Drag grid points to bend the layer' : x.guideMode ? `Guided: ${(x.guides || []).length}/4 guides${(x.guides || []).length >= 2 ? ' · Enter applies' : ' · draw along edges'}` : 'Drag the corners'} · Enter applies · Esc cancels</span>`,
+    `<span class="muted">${hint} · Enter applies · Esc cancels</span>`,
     (x.guideMode && (x.guides || []).length >= 2 ? `<button data-cmd="mxfGuidedApply" class="primary">Apply guides</button>` : ''),
     `<button data-cmd="mxfReset">Reset</button>`, `<button data-cmd="mxfApply" class="primary">Apply</button>`, `<button data-cmd="mxfCancel">Cancel</button>`];
 }
@@ -3177,8 +3260,8 @@ function drawMeshBox(toS) {
       vctx.restore();
     }
   }
-  for (const g of [...(x.guides || []), ...(x.guideDraft ? [x.guideDraft] : [])]) { // guided upright lines
-    line(g); vctx.lineWidth = 3; vctx.strokeStyle = '#000a'; vctx.stroke(); vctx.lineWidth = 1.5; vctx.strokeStyle = '#3ad1ff'; vctx.stroke();
+  for (const g of [...(x.guides || []), ...(x.plumbs || []), ...(x.guideDraft ? [x.guideDraft] : [])]) { // guided / plumb lines
+    line(g); vctx.lineWidth = 3; vctx.strokeStyle = '#000a'; vctx.stroke(); vctx.lineWidth = 1.5; vctx.strokeStyle = x.plumbMode || (x.plumbs || []).includes(g) ? '#ffb000' : '#3ad1ff'; vctx.stroke();
   }
   const hs = IS_TOUCH ? 7 : 4.5;
   for (const [px, py] of x.pts) {
@@ -3630,9 +3713,22 @@ function addUprightGuide(x, g) {
   buildOptionsBar();
 }
 
+function addPlumbGuide(x, g) {
+  if (Math.hypot(g[1][0] - g[0][0], g[1][1] - g[0][1]) * state.zoom < 12) { status('Drag a longer line along an edge that should be straight.'); return; }
+  g = snapUprightGuide(x, g, 18 / Math.max(0.25, state.zoom));
+  x.plumbs = [...(x.plumbs || []), g];
+  if (x.plumbs.length > 3) x.plumbs = x.plumbs.slice(-3);
+  const n = x.plumbs.length;
+  status(n >= 1 ? `Plumb: ${n}/3 · Enter or Solve Distortion sets the Distortion slider` : 'Plumb: draw along an edge');
+  if (n >= 3) solvePlumbOnMxf(x);
+  else buildOptionsBar();
+  requestRender();
+}
+
 const mxfHandler = {
   down(p, e) {
     const x = state.mxf, tol = (e.pointerType === 'touch' ? 22 : 10) / state.zoom;
+    if (x.plumbMode) { x.guideDraft = [[p.x, p.y], [p.x, p.y]]; drag = { plumb: true }; requestRender(); return; }
     if (x.guideMode) { x.guideDraft = [[p.x, p.y], [p.x, p.y]]; drag = { guide: true }; requestRender(); return; }
     let best = -1, bd = tol;
     x.pts.forEach(([a, b], i) => { const dd = Math.hypot(p.x - a, p.y - b); if (dd <= bd) { bd = dd; best = i; } });
@@ -3641,13 +3737,14 @@ const mxfHandler = {
   },
   move(p) {
     const x = state.mxf;
-    if (drag && drag.guide && x && x.guideDraft) { x.guideDraft[1] = [p.x, p.y]; requestRender(); return; }
+    if (drag && (drag.guide || drag.plumb) && x && x.guideDraft) { x.guideDraft[1] = [p.x, p.y]; requestRender(); return; }
     if (!drag || drag.mxf == null || !x) return;
     x.pts[drag.mxf] = [drag.start[0] + p.x - drag.p0.x, drag.start[1] + p.y - drag.p0.y];
     mxfPreview();
   },
   up() {
     const x = state.mxf;
+    if (drag && drag.plumb && x) { const g = x.guideDraft; x.guideDraft = null; drag = null; if (g) addPlumbGuide(x, g); return; }
     if (drag && drag.guide && x) { const g = x.guideDraft; x.guideDraft = null; drag = null; if (g) addUprightGuide(x, g); return; }
     if (!drag || drag.mxf == null) return;
     mxfRender().catch((err) => status(`Preview failed: ${err.message}`));
@@ -4064,7 +4161,7 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); objSelCancel(); return; }
   }
   if (state.mxf) {
-    if (e.key === 'Enter') { e.preventDefault(); if (state.mxf.guideMode && (state.mxf.guides || []).length >= 2) finishGuidedUpright(state.mxf); else run('mxfApply'); return; }
+    if (e.key === 'Enter') { e.preventDefault(); if (state.mxf.plumbMode && (state.mxf.plumbs || []).length >= 1) { solvePlumbOnMxf(state.mxf); return; } if (state.mxf.guideMode && (state.mxf.guides || []).length >= 2) finishGuidedUpright(state.mxf); else run('mxfApply'); return; }
     if (e.key === 'Escape') { e.preventDefault(); run('mxfCancel'); return; }
   }
   if (state.xf) {
@@ -4147,7 +4244,10 @@ const cmds = {
   mxfApply: () => applyMeshXf(),
   mxfCancel: () => cancelMeshXf(),
   mxfReset: () => { const x = state.mxf; if (!x) return; mxfResetPoints(x); x.guides = []; mxfPreview(); mxfRender(); },
-  mxfGuides: () => { const x = state.mxf; if (!x || x.mode !== 'perspective') return; if (x.guideMode && x.pts0) { x.pts = x.pts0.map((p) => [...p]); x.pts0 = null; mxfPreview(); } x.guideMode = !x.guideMode; x.guides = []; if (!x.guideMode) x.pts0 = null; buildOptionsBar(); requestRender(); if (x.guideMode) status('Guided upright: drag along 2–4 edges that should be vertical or horizontal.'); },
+  mxfGuides: () => { const x = state.mxf; if (!x || x.mode !== 'perspective') return; if (x.guideMode && x.pts0) { x.pts = x.pts0.map((p) => [...p]); x.pts0 = null; mxfPreview(); } x.guideMode = !x.guideMode; x.guides = []; x.plumbMode = false; if (!x.guideMode) x.pts0 = null; buildOptionsBar(); requestRender(); if (x.guideMode) status('Guided upright: drag along 2–4 edges that should be vertical or horizontal.'); },
+  mxfPlumb: () => { const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.plumbMode = !x.plumbMode; x.guideMode = false; x.plumbs = x.plumbs || []; if (!x.plumbMode) { /* keep plumbs for solve */ } buildOptionsBar(); requestRender(); if (x.plumbMode) status('Plumb line: drag along 1–3 edges that should be straight (snaps to detected edges). Solve sets Distortion.'); },
+  mxfPlumbSolve: () => { const x = state.mxf; if (!x) return; solvePlumbOnMxf(x); },
+  mxfLensApply: () => { void applyLensFromMxf(); },
   mxfGuidedApply: () => { const x = state.mxf; if (x) finishGuidedUpright(x); },
   mxfSuggestGuides: needDoc(() => {
     if (!state.mxf) startMeshXf('perspective');
@@ -4155,6 +4255,9 @@ const cmds = {
     applySuggestedGuides(x);
   }),
   guidedUpright: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.guideMode = true; x.guides = []; x.pts0 = null; buildOptionsBar(); requestRender(); status('Guided upright: drag along 2–4 edges that should be vertical or horizontal (Enter applies after two). Suggest guides picks them for you.'); }),
+  perspectiveLens: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.plumbMode = false; x.guideMode = false; x.lensSlider = x.lensSlider ?? 0; buildOptionsBar(); requestRender(); status('Lens distortion: drag Distortion (live preview). Apply Lens (one undo), then Full/Vertical. Or use Plumb to solve Distortion from edges.'); }),
+  plumbLine: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.plumbMode = true; x.guideMode = false; x.plumbs = []; buildOptionsBar(); requestRender(); status('Plumb line: drag along 1–3 edges that should be straight. Enter/Solve sets Distortion; Apply Lens, then Full.'); }),
+
   suggestGuides: needDoc(() => { run('mxfSuggestGuides'); }),
   mxfGrid3: () => mxfGrid(3), mxfGrid4: () => mxfGrid(4), mxfGrid5: () => mxfGrid(5),
   camera: () => { fileMode = 'open'; $('#cameraInput').click(); },
@@ -4382,7 +4485,7 @@ const MENUS = [
   ['Image', [['Image size…', 'imageSize'], ['Resize to preset…', 'resizePresets'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], ['Crop with preset', 'cropPresetTool'], '-',
     ['Rotate 90° clockwise', 'rotateCW'], ['Rotate 90° counter-clockwise', 'rotateCCW'], ['Rotate 180°', 'rotate180'],
     ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Auto enhance', 'autoEnhance', 'Ctrl+Shift+L'], ['Auto enhance options…', 'autoEnhanceOptions'], ['Auto white balance', 'autoWhiteBalance'], ['Auto white balance options…', 'autoWBOptions'],
-    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], ['Auto upright', 'autoUpright'], ['Upright: level (horizontals)', 'uprightLevel'], ['Upright: vertical', 'uprightVertical'], ['Upright: full (verticals + horizontals)', 'uprightFull'], ['Guided upright', 'guidedUpright'], ['Suggest upright guides', 'suggestGuides'], ['Crop away empty edges', 'cropEmptyEdges'], ['Fill empty edges', 'fillEmptyEdges'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
+    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], ['Auto upright', 'autoUpright'], ['Upright: level (horizontals)', 'uprightLevel'], ['Upright: vertical', 'uprightVertical'], ['Upright: full (verticals + horizontals)', 'uprightFull'], ['Guided upright', 'guidedUpright'], ['Suggest upright guides', 'suggestGuides'], ['Lens distortion (Perspective)', 'perspectiveLens'], ['Plumb line (lens)', 'plumbLine'], ['Crop away empty edges', 'cropEmptyEdges'], ['Fill empty edges', 'fillEmptyEdges'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
   ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
     ['Object select (drag a box)', 'objectSelectTool'], ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
@@ -7505,6 +7608,19 @@ function buildOptionsBar() {
       bar.querySelectorAll(`[data-opt="${k}"]`).forEach((other) => { if (other !== inp && other.type !== 'checkbox') other.value = o[k]; });
     });
   });
+  // v1.21 lens Distortion / Vignette live preview while Perspective is open
+  const x = state.mxf;
+  if (x && x.mode === 'perspective') {
+    const syncLens = (slider) => {
+      x.lensSlider = Math.max(-100, Math.min(100, +slider));
+      const r = bar.querySelector('#mxfLensDist'), n = bar.querySelector('#mxfLensDistN');
+      if (r) r.value = x.lensSlider; if (n) n.value = x.lensSlider;
+      previewLensOnMxf(x);
+    };
+    bar.querySelector('#mxfLensDist')?.addEventListener('input', (e) => syncLens(e.target.value));
+    bar.querySelector('#mxfLensDistN')?.addEventListener('change', (e) => syncLens(e.target.value));
+    bar.querySelector('#mxfLensVig')?.addEventListener('input', (e) => { x.lensVignette = Math.max(0, Math.min(100, +e.target.value)); });
+  }
 }
 
 const BLEND_MODES = [['source-over', 'Normal'], ['multiply', 'Multiply'], ['screen', 'Screen'], ['overlay', 'Overlay'], ['darken', 'Darken'], ['lighten', 'Lighten'],
@@ -8923,6 +9039,7 @@ window.tintwork = {
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
   exportSharpen: { apply: applyExportSharpen, optionsHTML: exportSharpOptionsHTML, label: exportSharpLabel, presets: EXPORT_SHARP_PRESETS, scaledSharpParams },
   finishGuidedUpright, uprightFromGuides, snapUprightGuide, suggestUprightGuides, applySuggestedGuides, scoreSegmentsAfter, bestVerticalPairGuides, diversifyTop2Verticals,
+  lensSliderToK, lensKToSlider, solvePlumbOnMxf, applyLensFromMxf, previewLensOnMxf, plumbSamplesFromGuides, addPlumbGuide, LENS_DISTORTION_K,
   setProof, setProofWarn, get proofMode() { return proofMode; }, get proofWarn() { return proofWarn; }, PROOF_PAPERS,
   batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
