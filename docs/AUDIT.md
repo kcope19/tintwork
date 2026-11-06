@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.22.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.23.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,22 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.23.0 update (2026-11-06, America/New_York)
+
+Plumb Distortion refine is **do-no-harm**: score held-out detected verticals (not plumb traces), require median + worst improvement, sign consistency across check folds / alt trace, reject `Distortion`<5. Status when refused: **No reliable lens bend found**.
+
+| ID | Finding | Kind | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F65 | v1.22 Plumb Distortion could worsen held-out edges (brick +20; alt sign flip). | quality / safety | workflows-v122-brick-heldout | fit/check split; check-set median+worst; fold/alt signs; too-mild. | v1.23.0 |
+| F66 | Analytical median false-accepted library Distortion −23 vs apply+measure. | quality | workflows-v123-heldout-validate | Require worst-of-top5 also improves by ≥0.5×margin. | v1.23.0 |
+| F67 | Library Full/Distortion still >0.5° on honest held-out / Full-only. | quality | held-out validate; manual +10 → 0.73° in-sample | Disclose trail; Priority 2 deferred. | disclosed |
+
+**Not done:** library ≤0.5° honest held-out; cathedral mixed Suggest; auto radial ungate; Adaptive Wide Angle.
+
+**Test-change disclosure:** `v123-test` new (25). Pins accept 1.23.0. No bars loosened.
+
+### Live verification (v1.23.0, pending)
 
 ## v1.22.0 update (2026-11-06, America/New_York)
 

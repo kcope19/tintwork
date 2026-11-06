@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.23 (Plumb do-no-harm)
+
+v1.23 keeps to non-AI tools. **Plumb** still samples at full resolution, but Distortion refine now scores **held-out detected verticals** (not the lines you drew). It only sets Distortion when the check set’s median **and** worst improve, signs agree across folds, and `Distortion`≥5; otherwise Distortion stays **0** and the status bar says **No reliable lens bend found**. Brick both traces and library Plumb now refuse unsafe bends. Library ≤0.5° still trails (manual Distortion remains). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.22 (full-res Plumb + post-Full Distortion refine)
 
 v1.22 keeps to non-AI tools. **Plumb** now samples edges at **full resolution** and **refines Distortion** by searching nearby slider values for the lowest post-Full residual (never worse than Distortion 0; auto capped at ±40). Measured: library Plumb → +10 → Full **0.73°** (still trails ≤0.5°); brick Plumb refine → +20 but **held-out Vs stay ~1°** (the 0.01° figure was in-sample overfit — disclosed). c4 ≤0.5° and geneva/hongkong Full refuse unchanged. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).

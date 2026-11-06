@@ -6,6 +6,22 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.23 scorecard (Plumb do-no-harm)
+
+| Area | v1.22 | v1.23 | Verdict |
+|---|---|---|---|
+| Plumb refine objective | post-Full on plumb chords (overfit) | **held-out detected Vs** (fit/check split); median + worst gates; fold/alt sign; `Distortion`∈[5,40] | **safer** |
+| Brick Plumb A / alt | +20 / −15 (hurt held-out) | **Distortion 0** + “No reliable lens bend found” | **match** do-no-harm |
+| Library Plumb | +10 (in-sample 0.73°; held-out not improved) | **Distortion 0** (worst-no-improve) | **safer**; trails ≤0.5° |
+| Library manual Distortion+10→Full | 0.73° | 0.73° (manual still available) | **closer**; trails ≤0.5° |
+| c4 / geneva / hongkong | 0.23° / refuse / refuse | unchanged | **match** |
+| Cathedral mixed Suggest | not restored | not restored | **trails** |
+| Full npm test / WebKit | 1158 | *(pending)* | — |
+
+**Do-no-harm disclosure:** Analytical median alone can false-accept (library −23). v1.23 also requires check-set **worst** to improve. Apply+measure held-out: brick +20 **0.47°→0.72°** median; library non-zero Distortion does not beat Full-only worst on held-out Vs.
+
+**Test-change disclosure:** `v123-test` new (25). Pins accept 1.23.0. No quality bars loosened.
+
 ## v1.22 scorecard (full-res Plumb + post-Full Distortion refine)
 
 | Area | v1.21 | v1.22 | Verdict |

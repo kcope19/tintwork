@@ -1,0 +1,52 @@
+{
+  "c4": {
+    "mode": "full",
+    "H": true
+  },
+  "geneva": {
+    "mode": "none",
+    "H": false
+  },
+  "hongkong": {
+    "mode": "none",
+    "H": false
+  },
+  "v117": {
+    "v117-cathedral.jpg": {
+      "mode": "full",
+      "H": true
+    },
+    "v117-curvy.jpg": {
+      "mode": "none",
+      "H": false
+    },
+    "v117-flat.jpg": {
+      "mode": "full",
+      "H": true
+    },
+    "v117-frame.jpg": {
+      "mode": "none",
+      "H": false
+    },
+    "v117-geo.jpg": {
+      "mode": "full",
+      "H": true
+    },
+    "v117-interior.jpg": {
+      "mode": "full",
+      "H": true
+    },
+    "v117-lookup.jpg": {
+      "mode": "full",
+      "H": true
+    },
+    "v117-lowangle.jpg": {
+      "mode": "full",
+      "H": true
+    },
+    "v117-station.jpg": {
+      "mode": "none",
+      "H": false
+    }
+  }
+}
