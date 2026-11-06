@@ -29,11 +29,12 @@ Manual Lens distortion + Plumb line (no AI). Auto Full radial stays gated.
 
 **Test-change disclosure:** `v121-test` new (15). Pins accept 1.21.0. No bars loosened.
 
-### Live verification (v1.21.0, pending deploy)
+### Live verification (v1.21.0, 2026-11-06 about 2:58 PM America/New_York)
 
-- Local `v121-test`: **15/15**.
-- Local full `npm test` (WebKit on): **1136** ok (1121 + 15).
-- Live 3× / `121-live-*.png` after push.
+- Live site reports `tintwork-shell-v1.21.0` / `APP_VERSION` 1.21.0 (Pages build `5ae2a3e`, status built).
+- `v121-test` against https://kcope19.github.io/tintwork/ : **15/15 × 3**.
+- Screenshots: `screenshots/121-live-library-lens.png`, `121-live-library-lens-full.png`, `121-live-library-plumb.png`, `121-live-geneva-refuse.png`.
+- Local full `npm test` (WebKit on, no TW_SKIP_WEBKIT): **1136** ok.
 
 ## v1.20.0 update (2026-11-06, America/New_York)
 
