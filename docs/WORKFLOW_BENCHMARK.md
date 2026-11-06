@@ -19,7 +19,7 @@ Held-out set: `v117-lowangle`, `lookup`, `station`, `interior`, `flat`, `geo`, `
 | Full ≤0.5° library/brick | trails | unchanged (radial gated) | **trails** |
 | Job 18 Guided steps | 5 (Enter) | 5 | **match** LR Guided 5 |
 
-**Summary:** refuse hang fixed (measured). Snap + grid + constrain-crop are UX/area. Full accuracy not improved. npm test: see release.
+**Summary:** refuse hang fixed (measured). Snap + grid + constrain-crop are UX/area. Full accuracy not improved. npm test: **1079**.
 
 **Competitors (features / steps, not pixel match):** Lightroom Upright Auto/Level/Vertical/Full/Guided + Constrain Crop (2 steps Auto). Photoshop Adaptive Wide Angle (more freehand). Affinity Perspective / Live Perspective. Tintwork still trails Full accuracy and Adaptive Wide Angle flexibility; refuse UX no longer trails a stuck tool.
 

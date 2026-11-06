@@ -33,7 +33,9 @@ Perspective/upright-only round (no AI, no heal% cycle). **Measured first** on 9 
 
 ### Live verification (v1.17.0)
 
-- Pending push.
+- Live site filled after tag.
+- `npm test`: **1079** checks (1066 in v1.16 + 13 v117).
+
 
 ## v1.16.0 update (2026-11-06, America/New_York)
 
