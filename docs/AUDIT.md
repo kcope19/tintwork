@@ -28,10 +28,12 @@ Suggest pure-V ranking + brick/c4 measurement clarification. Lens-aware Full rad
 
 **Test-change disclosure:** `v119-test` new (15). Pins accept 1.19.0. No bars loosened. Radial ungating deferred (disclose).
 
-### Live verification (v1.19.0, pending deploy)
+### Live verification (v1.19.0, 2026-11-06 about 12:41 PM America/New_York)
 
-- Local `npm test` with `TW_SKIP_WEBKIT=1`: **1024** ok checks (v119 adds 15; WebKit desktop ×2 + iPhone mobile skipped). **Disclosed:** after `node_modules` reinstall, Playwright 1.64 WebKit needs host libs apt could not install (mirror 500). `TW_SKIP_WEBKIT=1` is opt-in only; Chromium path green.
-- Live 3× / `119-live-*.png` after push.
+- Live site reports `tintwork-shell-v1.19.0` / `APP_VERSION` 1.19.0 (Pages build `12433c5`, status built).
+- `v119-test` against https://kcope19.github.io/tintwork/ : **15/15 × 3**.
+- Screenshots: `screenshots/119-live-suggest-lowangle.png`, `119-live-suggest-c4-mixed.png`, `119-live-suggest-c4-applied.png`, `119-live-suggest-brick-vok.png`.
+- Local `npm test` with `TW_SKIP_WEBKIT=1`: **1024** ok checks (v119 +15; WebKit desktop ×2 + iPhone mobile skipped). **Disclosed:** Playwright 1.64 WebKit host libs unavailable after reinstall (apt mirror 500). Skip is opt-in via `TW_SKIP_WEBKIT` only.
 
 ## v1.18.0 update (2026-11-06, America/New_York)
 
