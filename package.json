@@ -38,7 +38,8 @@
     "test:v118": "node scripts/v118-test.mjs",
     "test:v119": "node scripts/v119-test.mjs",
     "test:v120": "node scripts/v120-test.mjs",
-    "test:v121": "node scripts/v121-test.mjs && node scripts/v122-test.mjs"
+    "test:v121": "node scripts/v121-test.mjs",
+    "test:v122": "node scripts/v122-test.mjs"
   },
   "license": "MIT",
   "type": "module",
