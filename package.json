@@ -1,11 +1,11 @@
 {
   "name": "tintwork",
-  "version": "1.24.0",
+  "version": "1.25.0",
   "description": "Tintwork: an original browser-based layered image editor (Canvas 2D)",
   "scripts": {
     "start": "serve -l 5173 .",
     "dev": "serve -l 5173 .",
-    "test": "node scripts/smoke-test.mjs && node scripts/desktop-platform-test.mjs && node scripts/windows-test.mjs && node scripts/mobile-test.mjs && node scripts/v07-test.mjs && node scripts/v08-test.mjs && node scripts/v09-test.mjs && node scripts/v10-test.mjs && node scripts/v11-test.mjs && node scripts/v12-test.mjs && node scripts/v13-test.mjs && node scripts/v14-test.mjs && node scripts/v15-test.mjs && node scripts/v16-test.mjs && node scripts/v17-test.mjs && node scripts/v18-test.mjs && node scripts/v19-test.mjs && node scripts/v110-test.mjs && node scripts/v111-test.mjs && node scripts/v112-test.mjs && node scripts/v113-test.mjs && node scripts/v114-test.mjs && node scripts/v115-test.mjs && node scripts/v116-test.mjs && node scripts/v117-test.mjs && node scripts/v118-test.mjs && node scripts/v119-test.mjs && node scripts/v120-test.mjs && node scripts/v121-test.mjs && node scripts/v122-test.mjs && node scripts/v123-test.mjs && node scripts/v124-test.mjs",
+    "test": "node scripts/smoke-test.mjs && node scripts/desktop-platform-test.mjs && node scripts/windows-test.mjs && node scripts/mobile-test.mjs && node scripts/v07-test.mjs && node scripts/v08-test.mjs && node scripts/v09-test.mjs && node scripts/v10-test.mjs && node scripts/v11-test.mjs && node scripts/v12-test.mjs && node scripts/v13-test.mjs && node scripts/v14-test.mjs && node scripts/v15-test.mjs && node scripts/v16-test.mjs && node scripts/v17-test.mjs && node scripts/v18-test.mjs && node scripts/v19-test.mjs && node scripts/v110-test.mjs && node scripts/v111-test.mjs && node scripts/v112-test.mjs && node scripts/v113-test.mjs && node scripts/v114-test.mjs && node scripts/v115-test.mjs && node scripts/v116-test.mjs && node scripts/v117-test.mjs && node scripts/v118-test.mjs && node scripts/v119-test.mjs && node scripts/v120-test.mjs && node scripts/v121-test.mjs && node scripts/v122-test.mjs && node scripts/v123-test.mjs && node scripts/v124-test.mjs && node scripts/v125-test.mjs",
     "test:windows": "node scripts/windows-test.mjs",
     "test:platform": "node scripts/desktop-platform-test.mjs",
     "bench": "node scripts/bench.mjs all",
@@ -39,7 +39,7 @@
     "test:v119": "node scripts/v119-test.mjs",
     "test:v120": "node scripts/v120-test.mjs",
     "test:v121": "node scripts/v121-test.mjs",
-    "test:v122": "node scripts/v122-test.mjs && node scripts/v123-test.mjs && node scripts/v124-test.mjs"
+    "test:v122": "node scripts/v122-test.mjs && node scripts/v123-test.mjs && node scripts/v124-test.mjs && node scripts/v125-test.mjs"
   },
   "license": "MIT",
   "type": "module",

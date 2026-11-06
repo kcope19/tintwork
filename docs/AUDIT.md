@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.24.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.25.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,25 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.25.0 update (2026-11-06, America/New_York)
+
+Upright/perspective **UX + step counts** (Windows mouse-first). Plumb/Upright refuse status is plain language (Plumb includes check-set median/worst). **Apply Lens + Full** when Distortion ≠ 0 is one click / one undo. Panel: A/L/V/F/G/P, tooltips, default focus Full, Enter/Esc clarified. USER_GUIDE when-works/refuses table. Docs: library 0.73° marked in-sample.
+
+| ID | Finding | Kind | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F71 | Plumb refuse said only “No reliable lens bend found” without median/worst. | friction | status audit | `plumbRefuseStatus` one-liner with check median/worst + reason. | v1.25.0 |
+| F72 | Lens then Full needed two clicks and two undos. | friction | mouse step count vs LR | `Apply Lens + Full` / Enter → one History step (`squashHistory`). | v1.25.0 |
+| F73 | Perspective panel friction vs LR/Affinity (no letter keys, vague tooltips, Apply Lens primary when Distortion=0). | friction | E2E mouse audit | A/L/V/F/G/P; tooltips; primary Apply Lens+Full when Distortion≠0; focus Full; Enter/Esc. | v1.25.0 |
+| F74 | Docs cited library 0.73° without in-sample caveat. | audit | README / AUDIT / WORKFLOW | Mark in-sample; held-out worst ~3° already disclosed in v1.24. | v1.25.0 |
+
+**Not done:** library ≤0.5°; cathedral mixed Suggest; auto radial ungate; Adaptive Wide Angle.
+
+**Test-change disclosure:** `v125-test` new. Pins accept 1.25.0. No quality bars loosened.
+
+### Live verification (v1.25.0, pending deploy)
+
+- Full `npm test` (WebKit on): **1239** ok (1214 + 25 v125). Pins accept 1.25.0. Live 3× + screenshots pending push.
 
 ## v1.24.0 update (2026-11-06, America/New_York)
 
@@ -60,7 +79,7 @@ Perspective Plumb uses **full-res** ridge samples and chooses Distortion by **mi
 |---|---|---|---|---|---|
 | F61 | Plumb ridge on ≤640 preview under-samples long edges. | quality | v1.21 plumb | `plumbSamplesFromGuides` prefers `x.src` full-res; preview fallback. | v1.22.0 |
 | F62 | Analytical plumb k alone can miss the Distortion that helps Full (wrong sign / too strong). | quality | library/brick sweeps | `refineDistortionByPostFull`: ladder + beat base0 ≥0.05°; mild among near-best; |slider|≤40. | v1.22.0 |
-| F63 | Library Distortion path still >0.5° (best measured +10 → 0.73°). | quality | fine sweep / v122-test | Disclose trail; keep mild +10. | disclosed |
+| F63 | Library Distortion path still >0.5° (best measured +10 → 0.73° **in-sample**; held-out worst ~3°). | quality | fine sweep / v122-test | Disclose trail; keep mild +10. | disclosed |
 | F64 | Brick “0.01° after Distortion+20” was in-sample / null-seed artifact; held-out Vs ~1° unchanged; alt Plumb → −15. | audit / quality | workflows-v122-brick-heldout | Disclose; drop ≤0.5° brick bar from v122-test. | disclosed |
 
 **Not done:** library Full/Distortion ≤0.5°; brick held-out ≤0.5°; cathedral mixed Suggest; auto ungate of radial; Adaptive Wide Angle.
@@ -82,7 +101,7 @@ Manual Lens distortion + Plumb line (no AI). Auto Full radial stays gated.
 |---|---|---|---|---|---|
 | F58 | Auto radial fit fails / hurts library when force-applied. | quality | v1.20 force 0.86°→1.54° | Manual Distortion slider + Apply Lens (1 undo) before Upright; live preview; optional Vignette. | v1.21.0 |
 | F59 | Need a non-AI way to set Distortion from bent edges. | friction | LR manual Distortion | Plumb tool: 1–3 edges, snap, `solveRadialFromPlumb` (mild-prefer). | v1.21.0 |
-| F60 | Library Full still >0.5°. | quality | fixed seeds | Distortion +10 then Full → **0.73°** (best safe measured). Still trails 0.5°. | disclosed |
+| F60 | Library Full still >0.5°. | quality | fixed seeds | Distortion +10 then Full → **0.73° in-sample** (best safe measured; held-out worst ~3°). Still trails 0.5°. | disclosed |
 
 ### What I might be wrong about
 - A better plumb sample (full-res ridge, multi-k verify against Full residual) might reach ≤0.5° on library.

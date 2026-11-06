@@ -6,6 +6,25 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.25 scorecard (upright/perspective UX + step counts)
+
+Local Chromium `?platform=win`, mouse-first click counts exclude shared open-file (Ctrl+O + pick), matching competitor docs.
+
+| Mode / path | Before (v1.24) | After (v1.25) | LR / Affinity ref | Verdict |
+|---|---|---|---|---|
+| Full only (panel open) | 1 click Full | 1 click Full (focus defaults to Full; key F) | LR Full 1 after panel / 2 from menu | **match** |
+| Full from Image menu | 2 (menu + item) | 2, or **Ctrl+Alt+Shift+F** = 1 chord | LR Full ~2 | **match** (shortcut closer) |
+| Distortion then Full | 3: set slider + Apply Lens + Full (2 undos) | **2**: set slider + **Apply Lens + Full** (**1 undo**); Enter = same | LR Distortion+Upright ~2–3 | **match** (was trails on undo count) |
+| Plumb refuse → understand why | status “No reliable…” only | one-line reason + check median/worst | — | **closer** |
+| Level / Vertical / Auto | 1 click each | 1 click or L / V / A | LR 1 | **match** |
+| Guided | draw ≥2 + Enter | unchanged (+ G toggles Guides) | LR Guided ~5 | **match** (2-guide) |
+| Undo Lens+Full+crop | 2–3 History steps | **1** (“Lens + Full”) | LR often 1 develop step | **match** |
+| Library ≤0.5° / cathedral mixed | trails / refused | unchanged | — | **trails** (disclosed) |
+
+**Click-count disclosure:** Competitor counts from public docs (±1). Tintwork counts are scripted button clicks on `?platform=win`, not a Windows usability lab.
+
+**Test-change disclosure:** `v125-test` new (25). Pins 1.25.0. Full npm test **1239** ok (WebKit). No quality bars loosened.
+
 ## v1.24 scorecard (apply+measure Plumb; library ≤0.5° not reachable via Distortion)
 
 | Area | v1.23 | v1.24 | Verdict |
@@ -32,7 +51,7 @@ v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York):
 | Plumb refine objective | post-Full on plumb chords (overfit) | **held-out detected Vs** (fit/check split); median + worst gates; fold/alt sign; `Distortion`∈[5,40] | **safer** |
 | Brick Plumb A / alt | +20 / −15 (hurt held-out) | **Distortion 0** + “No reliable lens bend found” | **match** do-no-harm |
 | Library Plumb | +10 (in-sample 0.73°; held-out not improved) | **Distortion 0** (worst-no-improve) | **safer**; trails ≤0.5° |
-| Library manual Distortion+10→Full | 0.73° | 0.73° (manual still available) | **closer**; trails ≤0.5° |
+| Library manual Distortion+10→Full | 0.73° in-sample | 0.73° in-sample (manual still available) | **closer**; trails ≤0.5° |
 | c4 / geneva / hongkong | 0.23° / refuse / refuse | unchanged | **match** |
 | Cathedral mixed Suggest | not restored | not restored | **trails** |
 | Full npm test / WebKit | 1158 | **1183** ok, WebKit green | **match** (infra) |
@@ -47,7 +66,7 @@ v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York):
 |---|---|---|---|
 | Plumb sampling | ≤640 preview | **full-res** layer (preview fallback) | **closer** |
 | Distortion from Plumb | analytical `solveRadialFromPlumb` (mild) | + **refine by minimizing post-Full residual** (ladder around k0; beat Distortion 0 by ≥0.05°; mild among near-best; auto |Distortion|≤40) | **new** |
-| Library Distortion→Full | +10 → **0.73°** (manual) | Plumb refine → **+10** → **0.73°** | **closer**; still trails ≤0.5° |
+| Library Distortion→Full | +10 → **0.73° in-sample** (manual) | Plumb refine → **+10** → **0.73° in-sample** | **closer**; still trails ≤0.5°; held-out worst ~3° |
 | Brick Distortion→Full | trails | Plumb refine → **+20**; in-sample plumb chords ~0.01° **overfit**; held-out detected Vs **~1.0°→~1.2°** (no gain); alt Plumb sign-flips to −15 | **trails** ≤0.5° (disclosed) |
 | c4 Full | 0.23° | 0.23° | **match** ≤0.5° |
 | geneva / hongkong Full | refuse | refuse | **match** |
@@ -69,7 +88,7 @@ v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York):
 | Manual Distortion + Vignette in Perspective | — | live preview; Apply Lens = 1 undo; before Upright | **new** |
 | Plumb line (1–3 edges → Distortion) | — | snap + `solveRadialFromPlumb` (mild-prefer) | **new** |
 | Library Full-only | 0.86° | 0.86° | **trails** 0.5° |
-| Library Distortion+10 → Full | — | **0.73°** | **closer**; still trails 0.5° |
+| Library Distortion+10 → Full | — | **0.73° in-sample** | **closer**; still trails 0.5°; held-out worst ~3° |
 | Brick Full | ~1.27° | trails (auto); Distortion helps some seeds | **trails** 0.5° |
 | c4 Full | 0.23° | 0.23° | **match** ≤0.5° |
 | geneva / hongkong Full | refuse | refuse | **match** |

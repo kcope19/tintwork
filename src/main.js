@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.24.0';
+const APP_VERSION = '1.25.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -2617,7 +2617,7 @@ async function renderMeshAny(img, outW, outH, m, ox = 0, oy = 0) {
 
 // --- Perspective & warp (Edit menu): drag corner / grid handles; Enter applies, Esc cancels -----------
 function mxfGrid(n) { const x = state.mxf; if (!x || x.mode !== 'warp' || x.n === n) return; x.n = n; mxfResetPoints(x); mxfPreview(); mxfRender(); buildOptionsBar(); }
-const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'mxfSuggestGuides', 'mxfGuidedApply', 'mxfPlumb', 'mxfPlumbSolve', 'mxfLensApply', 'perspectiveLens', 'plumbLine', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'uprightEdges_crop', 'uprightEdges_fill', 'uprightEdges_keep', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
+const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'mxfSuggestGuides', 'mxfGuidedApply', 'mxfPlumb', 'mxfPlumbSolve', 'mxfLensApply', 'mxfLensApplyFull', 'perspectiveLens', 'plumbLine', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'uprightEdges_crop', 'uprightEdges_fill', 'uprightEdges_keep', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
 function startMeshXf(mode) {
   const d = doc(), l = activeLayer();
   if (!l || state.mxf) return;
@@ -2643,8 +2643,17 @@ function startMeshXf(mode) {
   x.lensSlider = 0; x.lensVignette = 0; x.plumbMode = false; x.plumbs = [];
   state.mxf = x;
   if (d.selection) status(`${mode === 'warp' ? 'Warp' : 'Perspective'} transforms the whole layer (the selection is ignored).`);
-  else status(mode === 'warp' ? 'Warp: drag the grid points; Enter applies, Esc cancels.' : 'Perspective: drag the corners; Enter applies, Esc cancels.');
+  else status(mode === 'warp' ? 'Warp: drag the grid points; Enter applies, Esc cancels.'
+    : 'Perspective: Auto/Level/Vertical/Full, Guides, or Distortion. Keys A L V F · Enter applies · Esc cancels.');
   buildOptionsBar(); requestRender();
+  // v1.25: mouse-first default focus on Full (most common upright), unless Distortion already set
+  if (mode === 'perspective' && !IS_TOUCH) {
+    setTimeout(() => {
+      const btn = document.querySelector('#optionsbar [data-cmd="mxfLensApplyFull"]')
+        || document.querySelector('#optionsbar [data-cmd="uprightFull"]');
+      btn?.focus({ preventScroll: true });
+    }, 0);
+  }
 }
 function mxfResetPoints(x) {
   const { w, h, ox, oy } = x;
@@ -2727,9 +2736,14 @@ async function applyMeshXf() {
       touch(l);
     } catch { /* vignette is best-effort */ }
   }
-  const label = x.upright === 'lens' ? 'Lens distortion' : x.upright ? 'Upright' : x.mode === 'warp' ? 'Warp' : 'Perspective';
-  commit(label);
-  status(`${label} applied (${gfx.lastWarpPath === 'cpu' ? 'CPU' : gfx.lastWarpPath === 'webgpu' ? 'WebGPU' : 'WebGL2'})`);
+  const label = x.upright === 'lens' ? 'Lens distortion' : x.upright ? (x._commitLabel || 'Upright') : x.mode === 'warp' ? 'Warp' : 'Perspective';
+  if (x._deferCommit) {
+    // v1.25: caller will commit (or squash) — keep pixels applied, no history entry yet
+    status(`${label} applied…`);
+  } else {
+    commit(label);
+    status(`${label} applied (${gfx.lastWarpPath === 'cpu' ? 'CPU' : gfx.lastWarpPath === 'webgpu' ? 'WebGPU' : 'WebGL2'})`);
+  }
   if (x.upright && x.upright !== 'lens') {
     lastUpright = { ...(lastUpright || {}), H: x.uprightHu || mesh.homography([[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]], x.pts), k: x.radialK || 0, center: [x.ox + x.w / 2, x.oy + x.h / 2], rNorm2: (x.w / 2) ** 2 + (x.h / 2) ** 2, kind: x.upright, crop: null, filled: false };
     const how = state.opts.uprightEdges;
@@ -3015,7 +3029,7 @@ function autoUprightCmd(req = 'auto') {
     if (kRad) msg += `; lens ${kRad > 0 ? '+' : ''}${kRad.toFixed(2)}`;
   }
   lastUpright = { req, mode: next ? used : 'none', vkind: u.mode, vp: u.vp ? toDoc(u.vp) : null, angle: u.angle ?? null, lines: (u.inliers || []).length, found: lines.length,
-    hkind: uh.mode, hweak: !!uh.weak, hvp: uh.vp ? toDoc(uh.vp) : null, hangle: uh.angle ?? null, hlines: uh.mode === 'none' ? 0 : (uh.inliers || []).length, hfound: hl.length, k: kRad, kEst: lastUprightKEst || 0, ms: Math.round(performance.now() - t0) };
+    hkind: uh.mode, hweak: !!uh.weak, hharm: !!uh.harm, hvp: uh.vp ? toDoc(uh.vp) : null, hangle: uh.angle ?? null, hlines: uh.mode === 'none' ? 0 : (uh.inliers || []).length, hfound: hl.length, k: kRad, kEst: lastUprightKEst || 0, ms: Math.round(performance.now() - t0) };
   { const D = (l) => [...toDoc([l.x1, l.y1]), ...toDoc([l.x2, l.y2])].map((t) => Math.round(t * 10) / 10); lastUpright.debug = { v: lines.map(D), vin: [...(u.inliers || [])], h: hl.map(D), hin: uh.mode === 'none' ? [] : [...(uh.inliers || [])] }; } // detected lines (document pixels), for diagnosis
   if (used === 'vertical' && next) lastUpright.mode = u.mode; // 'keystone' | 'rotate' (v1.8 values)
   x.uprightHu = Hu; x.radialK = kRad || 0;
@@ -3024,7 +3038,11 @@ function autoUprightCmd(req = 'auto') {
     lastUpright.mode = 'none'; x.uprightHu = null; x.radialK = 0;
     const what = req === 'level' ? 'horizontal' : req === 'full' ? 'vertical or horizontal' : 'vertical';
     const none = req === 'level' ? hl.length < 2 : req === 'full' ? lines.length < 2 && hl.length < 2 : lines.length < 2 && (req !== 'auto' || hl.length < 2);
-    const msgRefuse = none ? `Auto upright found no long straight ${what} lines. Try Guides and draw two edges yourself.` : `Auto upright: the ${what} lines already look straight (or disagree). Try Guides.`;
+    let msgRefuse;
+    if (none) msgRefuse = `Upright (${req}): no long straight ${what} lines found. Try Guides and draw two edges yourself.`;
+    else if (req === 'full' && uh?.harm) msgRefuse = 'Full upright refused: using the detected lines would make horizontals worse. Try Guides, or Level / Vertical alone.';
+    else if (req === 'full' && uh?.weak) msgRefuse = 'Full upright refused: horizontals were too few or uncertain (or already nearly level). Try Vertical, Level, or Guides.';
+    else msgRefuse = `Upright (${req}): the ${what} lines already look straight (or disagree). Try Guides.`;
     // v1.17: leave the document as it was (no stuck Perspective session). Esc is not required.
     cancelMeshXf({ quiet: true });
     status(msgRefuse);
@@ -3036,7 +3054,8 @@ function autoUprightCmd(req = 'auto') {
   // menu choice like Lightroom's Upright — no extra Enter. Esc is unavailable after apply; Undo reverts.
   status(`Upright (${used}): ${msg}`);
   buildOptionsBar();
-  void applyMeshXf();
+  const applyP = applyMeshXf();
+  lastUpright.applyP = applyP;
   return lastUpright;
 }
 /** Downscaled alpha of the composite (≤ 800 px) for finding the empty corners. */
@@ -3527,6 +3546,26 @@ function refineDistortionByPostFull(x, guides, k0) {
     ms: performance.now() - t0,
   };
 }
+/** v1.25: one-line plain-language Plumb refuse with check-set median/worst. */
+function plumbRefuseStatus(refined) {
+  const msTag = refined.ms != null ? ` · ${Math.round(refined.ms)} ms` : '';
+  const med = refined.baseStats?.median ?? (refined.base0 < Infinity ? refined.base0 : null);
+  const worst = refined.baseStats?.worst;
+  const fmt = (n) => (n != null && Number.isFinite(n) && n < Infinity) ? n.toFixed(2) : null;
+  const m = fmt(med), w = fmt(worst);
+  const checkTag = (m != null && w != null) ? ` (check median ${m}°, worst ${w}°)` : (m != null ? ` (check median ${m}°)` : '');
+  const why = ({
+    'no-check-set': 'not enough held-out edges to verify',
+    'no-ridges': 'could not sample held-out edges',
+    'check-unreliable': 'held-out edges were too noisy to trust',
+    'no-check-improve': 'no Distortion clearly improved held-out edges',
+    'worst-no-improve': 'best Distortion did not improve the worst held-out edge',
+    'sign-vs-alt': 'Distortion sign disagreed across edges',
+    'sign-folds': 'Distortion sign disagreed across edge halves',
+    'too-mild': 'only a tiny Distortion looked better — left at 0',
+  })[refined.reason] || 'no reliable lens bend';
+  return `No reliable lens bend found: ${why}${checkTag}${msTag}`;
+}
 function solvePlumbOnMxf(x) {
   const guides = x.plumbs || x.guides || [];
   if (!guides.length) { status('Plumb line: draw 1–3 edges that should be straight.'); return 0; }
@@ -3542,10 +3581,10 @@ function solvePlumbOnMxf(x) {
   previewLensOnMxf(x);
   const msTag = refined.ms != null ? ` · ${Math.round(refined.ms)} ms` : '';
   if (!(Math.abs(k) > 1e-8)) {
-    status(`No reliable lens bend found${msTag}`);
+    status(plumbRefuseStatus(refined));
   } else {
     const tag = refined.score < Infinity ? `, check ~${refined.score.toFixed(2)}°` : '';
-    status(`Plumb: Distortion ${x.lensSlider > 0 ? '+' : ''}${x.lensSlider} (k0=${k0.toFixed(3)}→${k.toFixed(3)}${usedFull ? ', full-res' : ''}${tag})${msTag}. Apply Lens, then Full.`);
+    status(`Plumb: Distortion ${x.lensSlider > 0 ? '+' : ''}${x.lensSlider} (k0=${k0.toFixed(3)}→${k.toFixed(3)}${usedFull ? ', full-res' : ''}${tag})${msTag}. Apply Lens + Full (one undo), or Apply Lens then Full.`);
   }
   buildOptionsBar();
   return k;
@@ -3562,29 +3601,81 @@ async function applyLensFromMxf() {
   x.plumbMode = false; x.guideMode = false; x.plumbs = []; x.guides = [];
   await applyMeshXf();
 }
+/**
+ * v1.25: Apply Distortion (+ optional Vignette) then Full upright as one undo step.
+ * If Full refuses, still commits Lens alone so the bake is undoable.
+ */
+async function applyLensThenFullFromMxf() {
+  const x = state.mxf; if (!x || x.mode !== 'perspective') return;
+  const k = lensSliderToK(x.lensSlider || 0);
+  if (Math.abs(k) < 1e-8 && !(+x.lensVignette)) { status('Lens: Distortion is 0 — nothing to apply. Use Full alone.'); return; }
+  const h0 = history.index;
+  x.radialK = k;
+  x.uprightHu = Math.abs(k) > 1e-8 ? [1, 0, 0, 0, 1, 0, 0, 0, 1] : null;
+  x.pts = [[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]];
+  x.upright = 'lens';
+  x.lensApply = true;
+  x.plumbMode = false; x.guideMode = false; x.plumbs = []; x.guides = [];
+  x._deferCommit = true;
+  await applyMeshXf();
+  // Lens pixels are on the layer; no history entry yet.
+  const lu = autoUprightCmd('full');
+  if (lu?.applyP) await lu.applyP;
+  if (!lu || lu.mode === 'none') {
+    const refuse = ($('#status')?.textContent || '').trim();
+    commit('Lens distortion');
+    updateHistoryPanel();
+    if (/refused|already look|no long straight|Upright \(/i.test(refuse)) status(`Lens applied (one undo). ${refuse}`);
+    else status('Lens applied (one undo). Full upright found nothing to correct.');
+    return;
+  }
+  if (history.index - h0 >= 2) squashHistory(h0, 'Lens + Full');
+  else if (history.index > h0) {
+    history.entries[history.index].label = 'Lens + Full';
+    updateHistoryPanel();
+  }
+  status('Lens + Full applied (one undo).');
+}
 function mxfBarParts() {
   const x = state.mxf, warp = x.mode === 'warp';
   const ls = x.lensSlider ?? 0, lv = x.lensVignette ?? 0;
-  const lensRow = warp ? '' : `<span class="seg lens-seg" title="Manual lens: Distortion applies before Upright (one undo). Positive straightens barrel; negative straightens pincushion.">`
-    + `<label class="inline">Distortion <input type="range" id="mxfLensDist" min="-100" max="100" step="1" value="${ls}"/><input type="number" id="mxfLensDistN" min="-100" max="100" step="1" value="${ls}" style="width:3.2em"/></label>`
-    + `<label class="inline">Vignette <input type="range" id="mxfLensVig" min="0" max="100" step="1" value="${lv}" title="Corner darkening amount (applied with Lens)"/></label>`
-    + `<button data-cmd="mxfPlumb" class="${x.plumbMode ? 'on' : ''}" title="Draw 1–3 edges that should be straight; solves Distortion from their bend">Plumb</button>`
-    + ((x.plumbMode && (x.plumbs || []).length >= 1) ? `<button data-cmd="mxfPlumbSolve">Solve Distortion</button>` : '')
-    + `<button data-cmd="mxfLensApply" class="primary" title="Apply Distortion (and Vignette) as one undo, then run Full/Vertical">Apply Lens</button></span>`;
+  const hasLens = Math.abs(ls) >= 1 || Math.abs(lv) >= 1;
+  const lensBtns = hasLens
+    ? `<button data-cmd="mxfLensApplyFull" class="primary" id="mxfLensApplyFullBtn" title="Apply Distortion (and Vignette), then Full upright — one undo (Enter when Distortion ≠ 0)">Apply Lens + Full</button>`
+      + `<button data-cmd="mxfLensApply" title="Apply Distortion (and Vignette) only — one undo; then click Full / Vertical">Apply Lens</button>`
+    : `<button data-cmd="mxfLensApply" class="primary" title="Set Distortion ≠ 0 first (or use Plumb). Applies Distortion + Vignette as one undo">Apply Lens</button>`;
+  const lensRow = warp ? '' : `<span class="seg lens-seg" title="Manual lens: Distortion before Upright. Positive = barrel; negative = pincushion. Apply Lens + Full is one undo when Distortion ≠ 0.">`
+    + `<label class="inline">Distortion <input type="range" id="mxfLensDist" min="-100" max="100" step="1" value="${ls}" title="Barrel (+) / pincushion (−). Live preview."/><input type="number" id="mxfLensDistN" min="-100" max="100" step="1" value="${ls}" style="width:3.2em" title="Type Distortion −100…100, Enter previews"/></label>`
+    + `<label class="inline">Vignette <input type="range" id="mxfLensVig" min="0" max="100" step="1" value="${lv}" title="Corner darkening (baked with Apply Lens)"/></label>`
+    + `<button data-cmd="mxfPlumb" class="${x.plumbMode ? 'on' : ''}" title="Draw 1–3 edges that should be straight; Enter/Solve sets Distortion from bend (refuses when held-out edges do not improve)">Plumb</button>`
+    + ((x.plumbMode && (x.plumbs || []).length >= 1) ? `<button data-cmd="mxfPlumbSolve" title="Solve Distortion from plumb lines (Enter also works)">Solve Distortion</button>` : '')
+    + lensBtns + `</span>`;
+  const enterHint = x.plumbMode ? 'Enter solves Distortion'
+    : x.guideMode ? ((x.guides || []).length >= 2 ? 'Enter applies guides' : 'draw ≥2 guides')
+    : hasLens ? 'Enter = Apply Lens + Full' : 'Enter applies corners';
   const hint = warp ? 'Drag grid points to bend the layer'
     : x.plumbMode ? `Plumb: ${(x.plumbs || []).length}/3 lines · draw along curved edges that should be straight`
     : x.guideMode ? `Guided: ${(x.guides || []).length}/4 guides${(x.guides || []).length >= 2 ? ' · Enter applies' : ' · draw along edges'}`
-    : 'Drag the corners';
+    : hasLens ? `Distortion ${ls > 0 ? '+' : ''}${ls} · drag corners or Apply Lens + Full`
+    : 'Drag the corners · A/L/V/F = Auto/Level/Vertical/Full';
+  const uprightTips = [
+    ['autoUpright', 'auto', 'Auto', 'Auto (A): upright verticals, or Level when none. Refuses when lines are missing or disagree.'],
+    ['uprightLevel', 'level', 'Level', 'Level (L): rotate so horizontals are level. Refuses tilts over ~15° (use Full/Guides for keystone).'],
+    ['uprightVertical', 'vertical', 'Vertical', 'Vertical (V): make verticals upright and parallel. Refuses when verticals are missing or already straight.'],
+    ['uprightFull', 'full', 'Full', 'Full (F): verticals + horizontals together. Refuses when that would make horizontals worse, or when lines are too few / already nearly level.'],
+  ];
   return [`<span class="tool-title">${warp ? 'Warp' : 'Perspective'}</span>`,
-    warp ? '' : `<span class="seg" title="Upright from the photo's straight lines">${[['autoUpright', 'auto', 'Auto', 'Make the vertical lines upright (levels from the horizontals when there are no verticals)'], ['uprightLevel', 'level', 'Level', 'Rotate so the horizontal lines are level'], ['uprightVertical', 'vertical', 'Vertical', 'Make the vertical lines upright and parallel'], ['uprightFull', 'full', 'Full', 'Straighten the verticals and the horizontals together']].map(([c, m, n, t]) => `<button data-cmd="${c}" class="${x.upright === 'auto' && lastUpright?.req === m ? 'on' : ''}" title="${t}">${n}</button>`).join('')}</span>`,
-    warp ? '' : `<button data-cmd="mxfGuides" class="${x.guideMode ? 'on' : ''}" title="Draw 2–4 lines along edges that should be vertical or horizontal">Guides</button>`,
+    warp ? '' : `<span class="seg" title="Upright from the photo's straight lines (keys A L V F while panel is open)">${uprightTips.map(([c, m, n, t]) => `<button data-cmd="${c}" class="${x.upright === 'auto' && lastUpright?.req === m ? 'on' : ''}" title="${t}">${n}</button>`).join('')}</span>`,
+    warp ? '' : `<button data-cmd="mxfGuides" class="${x.guideMode ? 'on' : ''}" title="Draw 2–4 lines along edges that should be vertical or horizontal (G)">Guides</button>`,
     warp ? '' : `<button data-cmd="mxfSuggestGuides" title="Pick 2–4 strong vertical/horizontal edges for you (editable; Enter applies)">Suggest guides</button>`,
     lensRow,
-    warp ? '' : `<span class="seg" title="After an upright correction: crop away the empty corners, fill them from nearby pixels, or leave them transparent">${[['crop', 'Crop edges'], ['fill', 'Fill edges'], ['keep', 'Keep']].map(([k, n]) => `<button data-cmd="uprightEdges_${k}" class="${state.opts.uprightEdges === k ? 'on' : ''}">${n}</button>`).join('')}</span>`,
+    warp ? '' : `<span class="seg" title="After upright: crop empty corners (default), fill from nearby pixels, or keep transparent">${[['crop', 'Crop edges', 'Crop empty corners after upright (default; closest to Lightroom Constrain Crop)'], ['fill', 'Fill edges', 'Fill empty corners from nearby pixels'], ['keep', 'Keep', 'Leave empty corners transparent']].map(([k, n, t]) => `<button data-cmd="uprightEdges_${k}" class="${state.opts.uprightEdges === k ? 'on' : ''}" title="${t}">${n}</button>`).join('')}</span>`,
     warp ? `<span class="seg">${[3, 4, 5].map((n) => `<button data-cmd="mxfGrid${n}" class="${x.n === n ? 'on' : ''}" title="${n}×${n} control points">${n}×${n}</button>`).join('')}</span>` : '',
-    `<span class="muted">${hint} · Enter applies · Esc cancels</span>`,
+    `<span class="muted">${hint} · ${enterHint} · Esc cancels</span>`,
     (x.guideMode && (x.guides || []).length >= 2 ? `<button data-cmd="mxfGuidedApply" class="primary">Apply guides</button>` : ''),
-    `<button data-cmd="mxfReset">Reset</button>`, `<button data-cmd="mxfApply" class="primary">Apply</button>`, `<button data-cmd="mxfCancel">Cancel</button>`];
+    `<button data-cmd="mxfReset" title="Reset corners / guides / Distortion preview">Reset</button>`,
+    `<button data-cmd="mxfApply" class="${hasLens ? '' : 'primary'}" title="Apply current corner drag (not Distortion — use Apply Lens)">Apply</button>`,
+    `<button data-cmd="mxfCancel" title="Cancel (Esc) — discards this Perspective session">Cancel</button>`];
 }
 function drawMeshBox(toS) {
   const x = state.mxf, warp = x.mode === 'warp';
@@ -4525,8 +4616,30 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); objSelCancel(); return; }
   }
   if (state.mxf) {
-    if (e.key === 'Enter') { e.preventDefault(); if (state.mxf.plumbMode && (state.mxf.plumbs || []).length >= 1) { solvePlumbOnMxf(state.mxf); return; } if (state.mxf.guideMode && (state.mxf.guides || []).length >= 2) finishGuidedUpright(state.mxf); else run('mxfApply'); return; }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (state.mxf.plumbMode && (state.mxf.plumbs || []).length >= 1) { solvePlumbOnMxf(state.mxf); return; }
+      if (state.mxf.guideMode && (state.mxf.guides || []).length >= 2) { finishGuidedUpright(state.mxf); return; }
+      // v1.25: Distortion ≠ 0 → Apply Lens + Full (one undo); else apply corner drag
+      if (state.mxf.mode === 'perspective' && (Math.abs(state.mxf.lensSlider || 0) >= 1 || Math.abs(state.mxf.lensVignette || 0) >= 1)) {
+        void applyLensThenFullFromMxf(); return;
+      }
+      run('mxfApply'); return;
+    }
     if (e.key === 'Escape') { e.preventDefault(); run('mxfCancel'); return; }
+    // v1.25: letter shortcuts while Perspective is open (mouse-first panel; skip when typing in an input)
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && state.mxf.mode === 'perspective') {
+      const t = (e.target && e.target.tagName) || '';
+      if (t !== 'INPUT' && t !== 'TEXTAREA' && t !== 'SELECT') {
+        const k = e.key.toLowerCase();
+        if (k === 'a') { e.preventDefault(); run('autoUpright'); return; }
+        if (k === 'l') { e.preventDefault(); run('uprightLevel'); return; }
+        if (k === 'v') { e.preventDefault(); run('uprightVertical'); return; }
+        if (k === 'f') { e.preventDefault(); run('uprightFull'); return; }
+        if (k === 'g') { e.preventDefault(); run('mxfGuides'); return; }
+        if (k === 'p') { e.preventDefault(); run('mxfPlumb'); return; }
+      }
+    }
   }
   if (state.xf) {
     if (e.key === 'Enter') { e.preventDefault(); run('xfApply'); return; }
@@ -4612,6 +4725,7 @@ const cmds = {
   mxfPlumb: () => { const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.plumbMode = !x.plumbMode; x.guideMode = false; x.plumbs = x.plumbs || []; if (!x.plumbMode) { /* keep plumbs for solve */ } buildOptionsBar(); requestRender(); if (x.plumbMode) status('Plumb line: drag along 1–3 edges that should be straight (snaps to detected edges). Solve sets Distortion.'); },
   mxfPlumbSolve: () => { const x = state.mxf; if (!x) return; solvePlumbOnMxf(x); },
   mxfLensApply: () => { void applyLensFromMxf(); },
+  mxfLensApplyFull: () => { void applyLensThenFullFromMxf(); },
   mxfGuidedApply: () => { const x = state.mxf; if (x) finishGuidedUpright(x); },
   mxfSuggestGuides: needDoc(() => {
     if (!state.mxf) startMeshXf('perspective');
@@ -4619,8 +4733,8 @@ const cmds = {
     applySuggestedGuides(x);
   }),
   guidedUpright: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.guideMode = true; x.guides = []; x.pts0 = null; buildOptionsBar(); requestRender(); status('Guided upright: drag along 2–4 edges that should be vertical or horizontal (Enter applies after two). Suggest guides picks them for you.'); }),
-  perspectiveLens: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.plumbMode = false; x.guideMode = false; x.lensSlider = x.lensSlider ?? 0; buildOptionsBar(); requestRender(); status('Lens distortion: drag Distortion (live preview). Apply Lens (one undo), then Full/Vertical. Or use Plumb to solve Distortion from edges.'); }),
-  plumbLine: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.plumbMode = true; x.guideMode = false; x.plumbs = []; buildOptionsBar(); requestRender(); status('Plumb line: drag along 1–3 edges that should be straight. Enter/Solve sets Distortion; Apply Lens, then Full.'); }),
+  perspectiveLens: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.plumbMode = false; x.guideMode = false; x.lensSlider = x.lensSlider ?? 0; buildOptionsBar(); requestRender(); status('Lens distortion: drag Distortion (live preview). When ≠ 0, Apply Lens + Full is one undo (Enter). Or Apply Lens only, then Full/Vertical. Plumb solves Distortion from edges.'); }),
+  plumbLine: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.plumbMode = true; x.guideMode = false; x.plumbs = []; buildOptionsBar(); requestRender(); status('Plumb line: drag along 1–3 edges that should be straight. Enter/Solve sets Distortion; then Apply Lens + Full (one undo).'); }),
 
   suggestGuides: needDoc(() => { run('mxfSuggestGuides'); }),
   mxfGrid3: () => mxfGrid(3), mxfGrid4: () => mxfGrid(4), mxfGrid5: () => mxfGrid(5),
@@ -4823,6 +4937,8 @@ const SHORTCUTS = {
   'mod+alt+n': 'new', 'mod+shift+alt+n': 'layerNew', 'mod+alt+t': 'freeTransform', 'mod+shift+m': 'curves',
   'shift+f7': 'invertSelection', 'mod+shift+alt+c': 'copyMerged', 'mod+alt+0': 'zoom100',
   'f1': 'userGuide', 'x': 'swapColors', 'd': 'resetColors', '?': 'shortcuts', 'shift+?': 'shortcuts',
+  // v1.25: upright (avoid Ctrl+Shift+U = grayscale)
+  'mod+shift+alt+a': 'autoUpright', 'mod+shift+alt+f': 'uprightFull',
 };
 /** Neutral spec ('Ctrl+Shift+N') → combo ('mod+shift+n'), in comboOf()'s modifier order. */
 function specCombo(spec) {
@@ -4849,7 +4965,7 @@ const MENUS = [
   ['Image', [['Image size…', 'imageSize'], ['Resize to preset…', 'resizePresets'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], ['Crop with preset', 'cropPresetTool'], '-',
     ['Rotate 90° clockwise', 'rotateCW'], ['Rotate 90° counter-clockwise', 'rotateCCW'], ['Rotate 180°', 'rotate180'],
     ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Auto enhance', 'autoEnhance', 'Ctrl+Shift+L'], ['Auto enhance options…', 'autoEnhanceOptions'], ['Auto white balance', 'autoWhiteBalance'], ['Auto white balance options…', 'autoWBOptions'],
-    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], ['Auto upright', 'autoUpright'], ['Upright: level (horizontals)', 'uprightLevel'], ['Upright: vertical', 'uprightVertical'], ['Upright: full (verticals + horizontals)', 'uprightFull'], ['Guided upright', 'guidedUpright'], ['Suggest upright guides', 'suggestGuides'], ['Lens distortion (Perspective)', 'perspectiveLens'], ['Plumb line (lens)', 'plumbLine'], ['Crop away empty edges', 'cropEmptyEdges'], ['Fill empty edges', 'fillEmptyEdges'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
+    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], ['Auto upright', 'autoUpright', 'Ctrl+Alt+Shift+A'], ['Upright: level (horizontals)', 'uprightLevel'], ['Upright: vertical', 'uprightVertical'], ['Upright: full (verticals + horizontals)', 'uprightFull', 'Ctrl+Alt+Shift+F'], ['Guided upright', 'guidedUpright'], ['Suggest upright guides', 'suggestGuides'], ['Lens distortion (Perspective)', 'perspectiveLens'], ['Plumb line (lens)', 'plumbLine'], ['Crop away empty edges', 'cropEmptyEdges'], ['Fill empty edges', 'fillEmptyEdges'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
   ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
     ['Object select (drag a box)', 'objectSelectTool'], ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
@@ -7976,14 +8092,23 @@ function buildOptionsBar() {
   const x = state.mxf;
   if (x && x.mode === 'perspective') {
     const syncLens = (slider) => {
+      const prev = Math.abs(x.lensSlider || 0) >= 1;
       x.lensSlider = Math.max(-100, Math.min(100, +slider));
+      const now = Math.abs(x.lensSlider) >= 1;
       const r = bar.querySelector('#mxfLensDist'), n = bar.querySelector('#mxfLensDistN');
       if (r) r.value = x.lensSlider; if (n) n.value = x.lensSlider;
       previewLensOnMxf(x);
+      // v1.25: show/hide Apply Lens + Full when Distortion crosses 0
+      if (prev !== now) buildOptionsBar();
     };
     bar.querySelector('#mxfLensDist')?.addEventListener('input', (e) => syncLens(e.target.value));
     bar.querySelector('#mxfLensDistN')?.addEventListener('change', (e) => syncLens(e.target.value));
-    bar.querySelector('#mxfLensVig')?.addEventListener('input', (e) => { x.lensVignette = Math.max(0, Math.min(100, +e.target.value)); });
+    bar.querySelector('#mxfLensVig')?.addEventListener('input', (e) => {
+      const prev = Math.abs(x.lensVignette || 0) >= 1 || Math.abs(x.lensSlider || 0) >= 1;
+      x.lensVignette = Math.max(0, Math.min(100, +e.target.value));
+      const now = Math.abs(x.lensVignette) >= 1 || Math.abs(x.lensSlider || 0) >= 1;
+      if (prev !== now) buildOptionsBar();
+    });
   }
 }
 
@@ -9403,7 +9528,7 @@ window.tintwork = {
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
   exportSharpen: { apply: applyExportSharpen, optionsHTML: exportSharpOptionsHTML, label: exportSharpLabel, presets: EXPORT_SHARP_PRESETS, scaledSharpParams },
   finishGuidedUpright, uprightFromGuides, snapUprightGuide, suggestUprightGuides, applySuggestedGuides, get lastSuggestGate() { return lastSuggestGate; }, scoreSegmentsAfter, bestVerticalPairGuides, diversifyTop2Verticals,
-  lensSliderToK, lensKToSlider, solvePlumbOnMxf, applyLensFromMxf, previewLensOnMxf, plumbSamplesFromGuides, scoreLensThenFullResidual, scoreLensThenFullStats, scoreApplyMeasureStats, scoreApplyMeasureResidual, refineDistortionByPostFull, splitDetectedPlumbSets, addPlumbGuide, LENS_DISTORTION_K,
+  lensSliderToK, lensKToSlider, solvePlumbOnMxf, applyLensFromMxf, applyLensThenFullFromMxf, plumbRefuseStatus, previewLensOnMxf, plumbSamplesFromGuides, scoreLensThenFullResidual, scoreLensThenFullStats, scoreApplyMeasureStats, scoreApplyMeasureResidual, refineDistortionByPostFull, splitDetectedPlumbSets, addPlumbGuide, LENS_DISTORTION_K,
   setProof, setProofWarn, get proofMode() { return proofMode; }, get proofWarn() { return proofWarn; }, PROOF_PAPERS,
   batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
