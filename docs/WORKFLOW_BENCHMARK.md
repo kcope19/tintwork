@@ -14,7 +14,7 @@ v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York):
 | Job 18 Guided upright | match on 2-guide / 4 steps | 2–4 guides; preview ≥2; Enter/Apply/4th; **5** steps for 2-guide | **match** Lightroom Guided 5; quality closer when 3–4 guides help (not re-measured on held-out) |
 | Soft proof / heal / Full / job 14 | trails | unchanged (deliberately) | **trails** |
 
-**Summary (v1.16): output sharpening closes a named print gap without claiming ICC; Guided gains multi-guide capacity (2-guide costs +1 Enter vs v1.13). No heal%/Full cycle. npm test: see release note.**
+**Summary (v1.16): output sharpening closes a named print gap without claiming ICC; Guided gains multi-guide capacity (2-guide costs +1 Enter vs v1.13). No heal%/Full cycle. npm test: **1066**.**
 
 **Test-change disclosure:** `v116-test` new (13 checks). `v113-test` / `v17-test` Guided: preview + Enter (not auto-apply on 2nd); v17 wall scan y=1600 under Keep — disclosed. `v112`/`v114`/`v115` APP_VERSION pins accept 1.16.0.
 

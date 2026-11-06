@@ -12,7 +12,7 @@ Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, 
 
 ## v1.16.0 update (2026-11-06, America/New_York)
 
-v1.16 is non-AI polish (no heal%/Full≤0.5° cycle; no new AI). Verified hunches first: RAW brush **Auto mask** already existed (not rebuilt). Soft-proof ICC still infeasible in-browser without profiles. Shipped: **export output sharpening** and **Guided upright 2–4 guides**. `scripts/v116-test.mjs` has 13 checks. Full `npm test` count reported after the green run.
+v1.16 is non-AI polish (no heal%/Full≤0.5° cycle; no new AI). Verified hunches first: RAW brush **Auto mask** already existed (not rebuilt). Soft-proof ICC still infeasible in-browser without profiles. Shipped: **export output sharpening** and **Guided upright 2–4 guides**. `scripts/v116-test.mjs` has 13 checks. Full `npm test`: **1066** checks (1052 in v1.15 + 13 v116 + disclosed Guided harness tweaks).
 
 | # | Finding | Severity | Evidence | Fix | Status |
 |---|---|---|---|---|---|
@@ -29,9 +29,9 @@ v1.16 is non-AI polish (no heal%/Full≤0.5° cycle; no new AI). Verified hunche
 
 **Test-change disclosure:** `v113-test` and `v17-test` Guided checks loosened — preview then Enter (not auto-apply on 2nd); options bar may show `1/4 guides`; wall scan uses y=1600 under Keep (content ends ~1824). `v112`/`v114`/`v115` version pins accept 1.16.0.
 
-### Live verification (v1.16.0)
+### Live verification (v1.16.0, 2026-11-06 America/New_York)
 
-- Filled in after tag/push (live 3/3 + screenshots).
+- Pending push; filled after live 3/3.
 
 ## v1.15.0 update (2026-11-05, America/New_York)
 
