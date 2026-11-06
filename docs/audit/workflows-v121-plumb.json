@@ -1,0 +1,44 @@
+{
+  "when": "2026-11-06T18:58:41.556Z",
+  "results": {
+    "library": {
+      "baseFull": 0.8565050572024477,
+      "plumb": {
+        "k": -0.2,
+        "slider": 133.3,
+        "radialK": -0.19995000000000002
+      },
+      "afterPlumbFull": 3.1255800406676952,
+      "upright": {
+        "mode": "full",
+        "k": 0
+      }
+    },
+    "brick": {
+      "baseFull": 1.4341079096348996,
+      "plumb": {
+        "k": 0,
+        "slider": 0,
+        "radialK": 0
+      },
+      "afterPlumbFull": 2.110187005612474,
+      "upright": {
+        "mode": "full",
+        "k": 0
+      }
+    },
+    "c4": {
+      "baseFull": 0.23395332832824567,
+      "plumb": {
+        "k": 0,
+        "slider": 0,
+        "radialK": 0
+      },
+      "afterPlumbFull": 4.725015897203072,
+      "upright": {
+        "mode": "none",
+        "k": 0
+      }
+    }
+  }
+}
