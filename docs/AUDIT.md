@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.21.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.22.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,22 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.22.0 update (2026-11-06, America/New_York)
+
+Perspective Plumb uses **full-res** ridge samples and chooses Distortion by **minimizing post-Full residual** (search around the plumb estimate). Auto Full radial stays gated. Cathedral mixed Suggest not restored (still hurts V).
+
+| ID | Finding | Kind | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F61 | Plumb ridge on ≤640 preview under-samples long edges. | quality | v1.21 plumb | `plumbSamplesFromGuides` prefers `x.src` full-res; preview fallback. | v1.22.0 |
+| F62 | Analytical plumb k alone can miss the Distortion that helps Full (wrong sign / too strong). | quality | library/brick sweeps | `refineDistortionByPostFull`: ladder + beat base0 ≥0.05°; mild among near-best; |slider|≤40. | v1.22.0 |
+| F63 | Library Distortion path still >0.5° (best measured +10 → 0.73°). | quality | fine sweep / v122-test | Disclose trail; keep mild +10. | disclosed |
+
+**Not done:** library Full/Distortion ≤0.5°; cathedral mixed Suggest; auto ungate of radial; Adaptive Wide Angle.
+
+**Test-change disclosure:** `v122-test` new (23). Pins accept 1.22.0. No bars loosened.
+
+### Live verification (v1.22.0, pending)
 
 ## v1.21.0 update (2026-11-06, America/New_York)
 

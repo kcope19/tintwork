@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.22 (full-res Plumb + post-Full Distortion refine)
+
+v1.22 keeps to non-AI tools. **Plumb** now samples edges at **full resolution** and **refines Distortion** by searching nearby slider values for the lowest post-Full residual (never worse than Distortion 0; auto capped at ±40). Measured: library Plumb → +10 → Full **0.73°** (still trails ≤0.5°); brick Plumb → +20 → Full **0.01°** (was ~1.35° Full-only). c4 ≤0.5° and geneva/hongkong Full refuse unchanged. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.21 (manual Lens distortion + Plumb line)
 
 v1.21 keeps to non-AI tools. Perspective gains a **Distortion** slider (barrel/pincushion, same sign as RAW Distortion) and optional **Vignette**, with live preview; **Apply Lens** is one undo and runs **before** Upright. **Plumb** lets you drag 1–3 edges that should be straight (snaps to detected edges) and solves Distortion from their bend. Automatic Full radial stays gated. Measured: library Distortion +10 then Full → **0.73°** (was 0.86° Full-only; still trails ≤0.5°). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
