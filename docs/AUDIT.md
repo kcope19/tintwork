@@ -27,7 +27,7 @@ v1.16 is non-AI polish (no heal%/Full≤0.5° cycle; no new AI). Verified hunche
 
 **Not done:** ICC soft proof; edge-aware auto-mask *as a new feature* (already present on RAW brushes); heal >79%; Full ≤0.5°; AI subject.
 
-**Test-change disclosure:** `v113-test` and `v17-test` Guided checks loosened — no longer expect auto-apply on the 2nd guide; expect preview then Enter (options bar may show `1/4 guides`). `v112`/`v114`/`v115` version pins accept 1.16.0.
+**Test-change disclosure:** `v113-test` and `v17-test` Guided checks loosened — preview then Enter (not auto-apply on 2nd); options bar may show `1/4 guides`; wall scan uses y=1600 under Keep (content ends ~1824). `v112`/`v114`/`v115` version pins accept 1.16.0.
 
 ### Live verification (v1.16.0)
 

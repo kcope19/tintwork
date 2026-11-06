@@ -114,7 +114,8 @@ if (menuHas) {
   if (prev.mxf && prev.guides >= 2) await page.keyboard.press('Enter');
   await page.waitForFunction(() => !window.tintwork.mxf, null, { timeout: 15000 }).catch(() => {});
   await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); });
-  const e = await T(async () => { const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), x = c.getContext('2d'); const scan = (y, dir) => { const d = x.getImageData(0, y, c.width, 1).data; for (let k = 0; k < c.width; k++) { const i = dir > 0 ? k : c.width - 1 - k, j = i * 4; if (d[j + 3] > 200 && d[j] < 110 && d[j + 1] < 100) return i; } return -1; }; return [scan(360, 1), scan(2040, 1), scan(360, -1), scan(2040, -1)]; });
+  // Keep leaves empty bottom after straighten; scan mid-building (was y=2040, past content ~1824). Same ≤6 px verticality bar.
+  const e = await T(async () => { const t = window.tintwork; await t.compositeSettled?.(); const c = t.compositeCanvas(), x = c.getContext('2d'); const scan = (y, dir) => { const d = x.getImageData(0, y, c.width, 1).data; for (let k = 0; k < c.width; k++) { const i = dir > 0 ? k : c.width - 1 - k, j = i * 4; if (d[j + 3] > 200 && d[j] < 110 && d[j + 1] < 100) return i; } return -1; }; return [scan(360, 1), scan(1600, 1), scan(360, -1), scan(1600, -1)]; });
   check(e.every((v) => v > 0) && Math.abs(e[0] - e[1]) <= 6 && Math.abs(e[2] - e[3]) <= 6, `guided upright makes both walls vertical (left ${e[0]}→${e[1]}, right ${e[2]}→${e[3]})`);
   const id = await T(() => window.tintwork.uprightFromGuides([[0, 0], [100, 0], [100, 100], [0, 100]], [[[10, 0], [10, 100]], [[90, 0], [90, 100]]]));
   check(Array.isArray(id) && id.every(([x, y], i) => Math.abs(x - [0, 100, 100, 0][i]) < 1e-6 && Math.abs(y - [0, 0, 100, 100][i]) < 1e-6), 'guides that are already vertical leave the image unchanged');
