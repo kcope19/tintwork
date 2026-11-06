@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.21 (manual Lens distortion + Plumb line)
+
+v1.21 keeps to non-AI tools. Perspective gains a **Distortion** slider (barrel/pincushion, same sign as RAW Distortion) and optional **Vignette**, with live preview; **Apply Lens** is one undo and runs **before** Upright. **Plumb** lets you drag 1–3 edges that should be straight (snaps to detected edges) and solves Distortion from their bend. Automatic Full radial stays gated. Measured: library Distortion +10 then Full → **0.73°** (was 0.86° Full-only; still trails ≤0.5°). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.20 (WebKit tests restored; lens-aware Full measured & stayed gated)
 
 v1.20 keeps to non-AI tools. **Host WebKit deps** are installed again so `npm test` runs the full desktop/mobile WebKit suite without `TW_SKIP_WEBKIT`. **Lens-aware Full** was measured with force-apply of `kEst`: on library it *worsened* fixed seeds (0.86°→1.54°), so radial stays gated (`k=0`) with a compare-gate left in place for a future win. geneva/hongkong Full still refuse; c4 Full ≤0.5° on fixed vertical seeds. Suggest frame can take mixed when safe. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).

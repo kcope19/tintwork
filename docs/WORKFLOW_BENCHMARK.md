@@ -6,6 +6,24 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.21 scorecard (manual Lens + Plumb; auto radial still gated)
+
+| Area | v1.20 | v1.21 | Verdict |
+|---|---|---|---|
+| Manual Distortion + Vignette in Perspective | — | live preview; Apply Lens = 1 undo; before Upright | **new** |
+| Plumb line (1–3 edges → Distortion) | — | snap + `solveRadialFromPlumb` (mild-prefer) | **new** |
+| Library Full-only | 0.86° | 0.86° | **trails** 0.5° |
+| Library Distortion+10 → Full | — | **0.73°** | **closer**; still trails 0.5° |
+| Brick Full | ~1.27° | trails (auto); Distortion helps some seeds | **trails** 0.5° |
+| c4 Full | 0.23° | 0.23° | **match** ≤0.5° |
+| geneva / hongkong Full | refuse | refuse | **match** |
+| Steps vs LR Distortion + Upright | — | Apply Lens + Full = **2** after open (same); Plumb adds draws | **match** (manual path) |
+| Full npm test / WebKit | 1121 | **1121+15** (recount in live) | pending |
+
+**Lens disclosure:** Force-auto radial still hurts library (v1.20). Mild Distortion (+10, k≈−0.015) then Full is the best measured safe gain on library fixed seeds. Plumb can set Distortion; strong |k| still worsens Full — prefer mild values and check the preview.
+
+**Test-change disclosure:** `v121-test` new (15). Pins accept 1.21.0. No quality bars loosened. Auto Full radial remains gated.
+
 ## v1.20 scorecard (WebKit restored; lens-aware Full measured)
 
 | Area | v1.19 | v1.20 | Verdict |

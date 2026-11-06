@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.20.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.21.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,30 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.21.0 update (2026-11-06, America/New_York)
+
+Manual Lens distortion + Plumb line (no AI). Auto Full radial stays gated.
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F58 | Auto radial fit fails / hurts library when force-applied. | quality | v1.20 force 0.86°→1.54° | Manual Distortion slider + Apply Lens (1 undo) before Upright; live preview; optional Vignette. | v1.21.0 |
+| F59 | Need a non-AI way to set Distortion from bent edges. | friction | LR manual Distortion | Plumb tool: 1–3 edges, snap, `solveRadialFromPlumb` (mild-prefer). | v1.21.0 |
+| F60 | Library Full still >0.5°. | quality | fixed seeds | Distortion +10 then Full → **0.73°** (best safe measured). Still trails 0.5°. | disclosed |
+
+### What I might be wrong about
+- A better plumb sample (full-res ridge, multi-k verify against Full residual) might reach ≤0.5° on library.
+- Brick’s residual may be H/keystone more than radial; Distortion alone may not be the right lever.
+- Cathedral mixed Suggest still not restored (left for v1.22 if safe).
+
+**Not done:** auto ungate of radial; library/brick Full ≤0.5°; cathedral mixed Suggest; Adaptive Wide Angle.
+
+**Test-change disclosure:** `v121-test` new (15). Pins accept 1.21.0. No bars loosened.
+
+### Live verification (v1.21.0, pending deploy)
+
+- Local `v121-test`: **15/15**.
+- Full npm test / live 3× / `121-live-*.png` after push.
 
 ## v1.20.0 update (2026-11-06, America/New_York)
 
