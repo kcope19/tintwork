@@ -6,6 +6,39 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.18 scorecard (Suggest guides + mixed V+H Guided quality)
+
+Tune subset: `library.jpg`, `v117-cathedral.jpg`. Validate / held-out: `v117-*` + `geneva` / `brick` / `c4` / `hongkong`. Measure: worst residual tilt (°) of hand-picked V/H seeds after **top-2 hand guides** vs **Suggest** (`docs/audit/workflows-v118-suggest.json`, `v118-suggest-remeasure.log`).
+
+| Photo | top-2 hand (°) | Suggest (°) | Δ | Guides |
+|---|---:|---:|---:|---|
+| v117-flat | 0.10 | 0.24 | +0.14 | 2V |
+| v117-interior | 1.00 | 1.00 | 0.00 | 2V (mixed gated off) |
+| v117-cathedral | 1.09 | 0.65 | **−0.44** | 2V+2H |
+| v117-frame | 1.20 | 1.00 | −0.21 | 2V |
+| library (tune) | 4.65 | 0.78 | **−3.87** | 2V+2H |
+| c4 | 18.17 | 18.28 | +0.11 | 2V |
+| brick | 16.90 | 16.95 | +0.05 | 2V |
+| v117-lowangle | 1.90 | 3.15 | +1.25 | 2V (ranking trails hand) |
+| geneva | 4.28 | 4.72 | +0.43 | 2V |
+| hongkong | 1.03 | 1.00 | −0.04 | 2V |
+
+| Area | v1.17 | v1.18 | Verdict |
+|---|---|---|---|
+| Guided quality (mixed V+H) | hand-only; mixed un-gated | Suggest + VP mixed; probe gate | **closer** (library −3.9°; cathedral −0.4°) |
+| Suggest steps after open | n/a (hand 5) | Suggest + Enter = **2** | **beats** LR Guided hand path on steps |
+| Job 18 hand Guided steps | 5 | 5 (unchanged) | **match** LR Guided 5 |
+| Full ≤0.5° / lens-aware Full | trails; radial gated | **not shipped** (do-no-harm kept) | **trails** (disclosed) |
+| lowangle / geneva Suggest vs hand | — | +1.25° / +0.43° | **trails** hand pick on those two |
+
+**Summary:** Suggest closes the “draw four lines” friction and wins big on library-style mixed keystone when the gate allows. Interior harmful mixed was gated off after tune/validate split. Lens-aware Full deferred. npm test: see AUDIT live section.
+
+**Test-change disclosure:** `v118-test` new (17). Version pins in `v112`/`v114`/`v115`/`v116`/`v117` accept 1.18.0. No quality bars loosened. Optional lens-aware Full **not** enabled on held-out.
+
+**What I might be wrong about**
+- Probe scores are detected edges, not the same as human seed edges; a gate that looks safe on the probe can still leave a small Δ vs hand top-2 (lowangle).
+- “Beats LR on steps” assumes the user trusts Suggest without editing; editing guides adds steps back toward the hand path.
+
 ## v1.17 scorecard (perspective: refuse cancel, constrain-crop, guide snap, grid)
 
 Held-out set: `v117-lowangle`, `lookup`, `station`, `interior`, `flat`, `geo`, `cathedral`, `frame`, `curvy` (+ `station`). Baseline before fixes in `docs/audit/workflows-v117-baseline.json`.

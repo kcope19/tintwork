@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.18 (Suggest guides, mixed V+H Guided quality)
+
+v1.18 keeps to non-AI tools. **Suggest guides** picks 2–4 diverse vertical/horizontal edges for Guided upright (Enter applies; editable). Mixed V+H is accepted only when a probe says it beats a pure-vertical pair without hurting verticals — gated so held-out interiors stay safe. Suggest path is **2 actions** after open (vs Lightroom Guided hand path ~5). Lens-aware Full was **not** shipped (do-no-harm gate unchanged). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.17 (perspective: refuse, constrain-crop, guide snap, grid)
 
 v1.17 keeps to non-AI tools and focuses on upright/perspective. Measured on nine new CC0 held-out architecture photos first. Upright refuse no longer leaves Perspective open; Crop edges may keep a free aspect when that preserves more of the photo; Guided lines snap to detected edges; manual Perspective shows a thirds grid. Full upright ≤0.5° was not retuned. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).

@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.17.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.18.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,31 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.18.0 update (2026-11-06, America/New_York)
+
+Guided upright quality + **Suggest guides** (no AI). Tuned on library/cathedral; validated on v117 held-out + earlier reals. Optional lens-aware Full **deferred** — geneva Full still refuses (do-no-harm).
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F50 | Guided multi-guide quality needed intentional mixed V+H; users had to draw 2–4 lines (job 18 / LR Guided steps). | friction / quality | v117 note; library top-2 4.65° | `suggestUprightGuides` + `applySuggestedGuides`: diversify long V/H, VP inliers, probe-scored candidates; Image menu + options-bar **Suggest guides**; Enter/edit. | v1.18.0 |
+| F51 | Naive mixed V+H overfit interiors / brick-like H probes (interior +4.2° vs top-2). | quality / safety | `workflows-v118-suggest` early rows | Architecture bias: prefer ≥2V; accept mixed only if probe beats pure-V by ≥0.25° **and** (V improves ≥0.15° **or** H improves ≥2°) without worsening V by >0.5°. | v1.18.0 |
+| F52 | `scoreSegmentsAfter` double-divided by `w` → bogus ~112° scores and false “no stable correction”. | bug | flat scoreGuides before fix | Use Cartesian `applyH` x,y directly (already divided). | v1.18.0 |
+
+### What I might be wrong about
+- The mixed gate is heuristic; a photo where H truly needs a 1° improvement may stay on pure-V.
+- Suggest’s pure-V pair can trail a careful hand pick (lowangle +1.25°, geneva +0.43°) even when mixed is correctly refused.
+- Lens distortion still dominates brick/c4 residuals (~17–18°); Suggest cannot fix that without a lens model.
+
+**Not done:** lens-aware Full (gated attempt deferred; do-no-harm refusal kept on held-out); Full ≤0.5°; Adaptive Wide Angle–style freehand; ICC.
+
+**Test-change disclosure:** `v118-test` new (17). Pins accept 1.18.0. No quality bars loosened. Lens-aware Full not enabled (disclose: would need held-out proof it never hurts geneva/brick).
+
+### Live verification (v1.18.0, 2026-11-06 America/New_York)
+
+- Local `npm test`: **1096** checks (1079 in v1.17 + 17 v118).
+- Live site / 3× `v118-test` / screenshots filled after deploy.
+
 
 ## v1.17.0 update (2026-11-06, America/New_York)
 

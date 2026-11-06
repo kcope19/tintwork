@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.17.0';
+const APP_VERSION = '1.18.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -2617,7 +2617,7 @@ async function renderMeshAny(img, outW, outH, m, ox = 0, oy = 0) {
 
 // --- Perspective & warp (Edit menu): drag corner / grid handles; Enter applies, Esc cancels -----------
 function mxfGrid(n) { const x = state.mxf; if (!x || x.mode !== 'warp' || x.n === n) return; x.n = n; mxfResetPoints(x); mxfPreview(); mxfRender(); buildOptionsBar(); }
-const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'mxfGuidedApply', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'uprightEdges_crop', 'uprightEdges_fill', 'uprightEdges_keep', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
+const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'mxfSuggestGuides', 'mxfGuidedApply', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'uprightEdges_crop', 'uprightEdges_fill', 'uprightEdges_keep', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
 function startMeshXf(mode) {
   const d = doc(), l = activeLayer();
   if (!l || state.mxf) return;
@@ -3076,6 +3076,7 @@ function mxfBarParts() {
   return [`<span class="tool-title">${warp ? 'Warp' : 'Perspective'}</span>`,
     warp ? '' : `<span class="seg" title="Upright from the photo's straight lines">${[['autoUpright', 'auto', 'Auto', 'Make the vertical lines upright (levels from the horizontals when there are no verticals)'], ['uprightLevel', 'level', 'Level', 'Rotate so the horizontal lines are level'], ['uprightVertical', 'vertical', 'Vertical', 'Make the vertical lines upright and parallel'], ['uprightFull', 'full', 'Full', 'Straighten the verticals and the horizontals together']].map(([c, m, n, t]) => `<button data-cmd="${c}" class="${x.upright === 'auto' && lastUpright?.req === m ? 'on' : ''}" title="${t}">${n}</button>`).join('')}</span>`,
     warp ? '' : `<button data-cmd="mxfGuides" class="${x.guideMode ? 'on' : ''}" title="Draw 2–4 lines along edges that should be vertical or horizontal">Guides</button>`,
+    warp ? '' : `<button data-cmd="mxfSuggestGuides" title="Pick 2–4 strong vertical/horizontal edges for you (editable; Enter applies)">Suggest guides</button>`,
     warp ? '' : `<span class="seg" title="After an upright correction: crop away the empty corners, fill them from nearby pixels, or leave them transparent">${[['crop', 'Crop edges'], ['fill', 'Fill edges'], ['keep', 'Keep']].map(([k, n]) => `<button data-cmd="uprightEdges_${k}" class="${state.opts.uprightEdges === k ? 'on' : ''}">${n}</button>`).join('')}</span>`,
     warp ? `<span class="seg">${[3, 4, 5].map((n) => `<button data-cmd="mxfGrid${n}" class="${x.n === n ? 'on' : ''}" title="${n}×${n} control points">${n}×${n}</button>`).join('')}</span>` : '',
     `<span class="muted">${warp ? 'Drag grid points to bend the layer' : x.guideMode ? `Guided: ${(x.guides || []).length}/4 guides${(x.guides || []).length >= 2 ? ' · Enter applies' : ' · draw along edges'}` : 'Drag the corners'} · Enter applies · Esc cancels</span>`,
@@ -3169,16 +3170,25 @@ function uprightFromGuides(pts, guides, layerW, layerH) {
     const out = pts.map(([px, py]) => { const [X, Y, w] = mesh.applyH(Hu, px, py); return w > 0 ? [X, Y] : null; });
     return out.some((q) => !q || !Number.isFinite(q[0]) || !Number.isFinite(q[1])) ? null : out;
   };
-  if (verts.length >= 2 || hors.length >= 2) {
+  // v1.18: vanishing-point path whenever we have any guides of a family. Two+ lines vote for a VP;
+  // a single line contributes a point-at-infinity in its direction (parallel family). Mixed V+H
+  // (e.g. 2V+1H from Suggest guides) can straighten both axes in one pass.
+  if (verts.length >= 1 || hors.length >= 1) {
     let vv = null, vh = null;
     if (verts.length >= 2) {
       const u = seg.estimateUpright(verts, W, Hgt);
       if (u.mode !== 'none' && u.vh) vv = u.vh;
+    } else if (verts.length === 1) {
+      const l = verts[0], dx = l.x2 - l.x1, dy = l.y2 - l.y1, n = Math.hypot(dx, dy) || 1;
+      vv = [dx / n, dy / n, 0];
     }
     if (hors.length >= 2) {
       const swapped = hors.map((l) => ({ x1: l.y1, y1: l.x1, x2: l.y2, y2: l.x2, len: l.len, angle: Math.atan2(l.x2 - l.x1, l.y2 - l.y1) * 180 / Math.PI }));
       const u = seg.estimateUpright(swapped, Hgt, W);
       if (u.mode !== 'none' && u.vh) vh = [u.vh[1], u.vh[0], u.vh[2]];
+    } else if (hors.length === 1) {
+      const l = hors[0], dx = l.x2 - l.x1, dy = l.y2 - l.y1, n = Math.hypot(dx, dy) || 1;
+      vh = [dx / n, dy / n, 0];
     }
     if (vv || vh) {
       const Hu = seg.uprightHomography(vv, vh, cx, cy);
@@ -3221,6 +3231,175 @@ function finishGuidedUpright(x) {
   buildOptionsBar();
   void applyMeshXf();
 }
+
+/**
+ * Suggest 2–4 guided-upright lines from detected edges (v1.18). Prefers a mixed set
+ * (at least one vertical and one horizontal when both exist), long, well-separated, and
+ * consistent with a vanishing-point fit. Returns document-space segments [[p0,p1], …] or [].
+ */
+function suggestUprightGuides(x, { max = 4 } = {}) {
+  const img = x?.small; if (!img) return [];
+  const k = x.k || 1, W = img.width, H = img.height;
+  const toDoc = (l) => [[x.ox + l.x1 / k, x.oy + l.y1 / k], [x.ox + l.x2 / k, x.oy + l.y2 / k]];
+  const midX = (l) => (l.x1 + l.x2) / 2, midY = (l) => (l.y1 + l.y2) / 2;
+  const diversify = (arr, axis, minFrac) => {
+    const out = [], span = axis === 'x' ? W : H;
+    for (const l of arr) {
+      const m = axis === 'x' ? midX(l) : midY(l);
+      if (out.every((o) => Math.abs((axis === 'x' ? midX(o) : midY(o)) - m) >= minFrac * span)) out.push(l);
+    }
+    return out;
+  };
+  let v = seg.detectLines(img, { orient: 'v', maxDeg: 22, minLenFrac: 0.1, maxLines: 28, thrFrac: 0.7 });
+  let h = seg.detectLines(img, { orient: 'h', maxDeg: 18, minLenFrac: 0.1, maxLines: 28, thrFrac: 0.7 });
+  v.sort((a, b) => b.len - a.len); h.sort((a, b) => b.len - a.len);
+  // Prefer inliers of a VP fit when the family has a coherent upright
+  const uv = v.length >= 2 ? seg.estimateUpright(v, W, H) : { mode: 'none', inliers: [] };
+  const uh = h.length >= 2 ? seg.estimateUpright(h.map((l) => ({ ...l, x1: l.y1, y1: l.x1, x2: l.y2, y2: l.x2, angle: Math.atan2(l.x2 - l.x1, l.y2 - l.y1) * 180 / Math.PI })), H, W) : { mode: 'none', inliers: [] };
+  if (uv.mode !== 'none' && (uv.inliers || []).length >= 2) {
+    const inl = uv.inliers.map((i) => v[i]).sort((a, b) => b.len - a.len);
+    v = [...inl, ...v.filter((l) => !inl.includes(l))];
+  }
+  if (uh.mode !== 'none' && (uh.inliers || []).length >= 2) {
+    // uh was estimated on swapped lines; map inliers back by identity index into original h
+    const inl = uh.inliers.map((i) => h[i]).filter(Boolean).sort((a, b) => b.len - a.len);
+    if (inl.length) h = [...inl, ...h.filter((l) => !inl.includes(l))];
+  }
+  const vd = diversify(v, 'x', 0.12), hd = diversify(h, 'y', 0.1);
+  const pick = [];
+  // Mix: aim for 2V+2H, else 2V+1H / 1V+2H / 2V / 2H / 1V+1H
+  const need = Math.max(2, Math.min(4, max));
+  if (vd.length && hd.length) {
+    const nV = Math.min(vd.length, need >= 4 ? 2 : (vd.length >= 2 && need >= 3 ? 2 : 1));
+    const nH = Math.min(hd.length, need - nV);
+    // If we still have room and only took 1V, try a second V
+    let takeV = nV, takeH = nH;
+    if (takeV + takeH < need && vd.length > takeV) takeV = Math.min(vd.length, need - takeH);
+    if (takeV + takeH < need && hd.length > takeH) takeH = Math.min(hd.length, need - takeV);
+    for (let i = 0; i < takeV; i++) pick.push(vd[i]);
+    for (let i = 0; i < takeH; i++) pick.push(hd[i]);
+  } else if (vd.length >= 2) {
+    // Pure vertical: 2 guides are enough (4V over-constrained the flat facade held-out).
+    for (let i = 0; i < Math.min(2, vd.length); i++) pick.push(vd[i]);
+  } else if (hd.length >= 2) {
+    for (let i = 0; i < Math.min(2, hd.length); i++) pick.push(hd[i]);
+  }
+  if (pick.length < 2) return [];
+  // Drop a candidate if applying it with the others fails the mesh (tested in doc space)
+  const docs = pick.map(toDoc);
+  const base = (x.pts0 || x.pts).map((p) => [...p]);
+  const ok = uprightFromGuides(base, docs, x.w, x.h);
+  if (!ok) {
+    // try 2V+1H / 2H+1V / first two only
+    for (const n of [Math.min(3, docs.length), 2]) {
+      const sub = docs.slice(0, n);
+      if (sub.length >= 2 && uprightFromGuides(base, sub, x.w, x.h)) return sub;
+    }
+    return docs.slice(0, 2);
+  }
+  return docs;
+}
+
+/** Residual tilt (° ) of document-space segments after mapping `basePts` → `next`. */
+function scoreSegmentsAfter(basePts, segs, next) {
+  if (!next || !segs?.length) return Infinity;
+  const Hm = mesh.homography(basePts, next); if (!Hm) return Infinity;
+  let worst = 0, nOk = 0;
+  for (const [[ax, ay], [bx, by]] of segs) {
+    // mesh.applyH already returns Cartesian x,y (divided by w) plus the weight
+    const [X1, Y1, w1] = mesh.applyH(Hm, ax, ay), [X2, Y2, w2] = mesh.applyH(Hm, bx, by);
+    if (!(w1 > 0 && w2 > 0) || !Number.isFinite(X1) || !Number.isFinite(X2)) continue;
+    const vert = Math.abs(by - ay) >= Math.abs(bx - ax);
+    const deg = vert ? Math.atan2(X2 - X1, Y2 - Y1) * 180 / Math.PI : Math.atan2(Y2 - Y1, X2 - X1) * 180 / Math.PI;
+    if (!Number.isFinite(deg)) continue;
+    worst = Math.max(worst, Math.abs(deg)); nOk++;
+  }
+  return nOk ? worst : Infinity;
+}
+
+/** Apply suggested guides into the current guided-upright session (editable; Enter finishes). */
+function applySuggestedGuides(x) {
+  if (!x || x.mode !== 'perspective') return false;
+  x.guideMode = true;
+  if (!x.pts0) x.pts0 = x.pts.map((p) => [...p]);
+  x.pts = x.pts0.map((p) => [...p]);
+  const full = suggestUprightGuides(x, { max: 4 });
+  if (full.length < 2) { status('Suggest guides: no clear vertical or horizontal edges found. Draw guides yourself.'); buildOptionsBar(); requestRender(); return false; }
+  const base = x.pts0.map((p) => [...p]);
+  const isV = (g) => Math.abs(g[1][1] - g[0][1]) >= Math.abs(g[1][0] - g[0][0]);
+  // Broad probe: many detected edges in document space (not only the suggested subset).
+  let probe = full.slice();
+  try {
+    const img = x.small, k = x.k || 1;
+    const toDoc = (l) => [[x.ox + l.x1 / k, x.oy + l.y1 / k], [x.ox + l.x2 / k, x.oy + l.y2 / k]];
+    const vv = seg.detectLines(img, { orient: 'v', maxDeg: 22, minLenFrac: 0.1, maxLines: 12, thrFrac: 0.72 });
+    const hh = seg.detectLines(img, { orient: 'h', maxDeg: 18, minLenFrac: 0.1, maxLines: 12, thrFrac: 0.72 });
+    probe = [...vv.slice(0, 6).map(toDoc), ...hh.slice(0, 6).map(toDoc)];
+    if (probe.length < 2) probe = full.slice();
+  } catch { /* keep full */ }
+  // Candidates: full mix, 3, 2; also a pure-vertical pair when ≥2 V exist (safe fallback).
+  const cands = [];
+  const consider = (g) => {
+    if (g.length < 2) return;
+    const next = uprightFromGuides(base, g, x.w, x.h);
+    if (!next || !mesh.perspectiveMesh(x.w, x.h, next)) return;
+    const score = scoreSegmentsAfter(base, probe, next);
+    const nv = g.filter(isV).length, nh = g.length - nv;
+    cands.push({ guides: g, next, score, mixed: nv > 0 && nh > 0, nv, nh });
+  };
+  for (const n of [full.length, Math.min(3, full.length), 2]) consider(full.slice(0, n));
+  const onlyV = full.filter(isV);
+  if (onlyV.length >= 2) consider(onlyV.slice(0, 2));
+  const onlyH = full.filter((g) => !isV(g));
+  if (onlyH.length >= 2) consider(onlyH.slice(0, 2));
+  if (!cands.length) {
+    x.guides = [];
+    status('Suggest guides: those edges cannot be straightened together. Draw guides yourself.');
+    buildOptionsBar(); requestRender(); return false;
+  }
+  // Architecture bias (v1.18 held-out): prefer ≥2 verticals. Accept mixed V+H only when its probe
+  // score is within 0.35° of the best pure-vertical pair (brick/low-angle horizontals looked
+  // "good" alone but worsened vertical seeds). Never pick pure-horizontal when verticals exist.
+  const finite = cands.filter((c) => Number.isFinite(c.score));
+  const v2 = finite.filter((c) => c.nv >= 2 && c.nh === 0).sort((a, b) => a.score - b.score)[0];
+  const mixed = finite.filter((c) => c.mixed).sort((a, b) => a.score - b.score || b.guides.length - a.guides.length)[0];
+  let best = null;
+  // Accept mixed only when it beats pure-V by ≥0.25° on the full probe, does not worsen
+  // vertical probe edges by >0.5°, AND either improves verticals (≥0.15°) or improves
+  // horizontals by ≥2° (rejects interior-like weak H probes that hurt held-out seeds).
+  if (v2 && mixed && mixed.score <= v2.score - 0.25) {
+    const vProbe = probe.filter(isV);
+    const hProbe = probe.filter((g) => !isV(g));
+    const mV = vProbe.length >= 2 ? scoreSegmentsAfter(base, vProbe, mixed.next) : Infinity;
+    const vv = vProbe.length >= 2 ? scoreSegmentsAfter(base, vProbe, v2.next) : Infinity;
+    const mH = hProbe.length >= 2 ? scoreSegmentsAfter(base, hProbe, mixed.next) : Infinity;
+    const vH = hProbe.length >= 2 ? scoreSegmentsAfter(base, hProbe, v2.next) : Infinity;
+    const vOk = !(Number.isFinite(mV) && Number.isFinite(vv) && mV > vv + 0.5);
+    const vBetter = Number.isFinite(mV) && Number.isFinite(vv) && mV <= vv - 0.15;
+    const hBetter = Number.isFinite(mH) && Number.isFinite(vH) && mH <= vH - 2.0;
+    best = (vOk && (vBetter || hBetter)) ? mixed : v2;
+  } else if (v2) best = v2;
+  else if (mixed) best = mixed;
+  else best = finite.sort((a, b) => a.score - b.score)[0] || cands[0];
+  if (best && best.nv === 0 && best.nh >= 2 && v2) best = v2;
+  if (!best || !Number.isFinite(best.score)) {
+    x.guides = [];
+    status('Suggest guides: no stable correction from detected edges. Draw guides yourself.');
+    buildOptionsBar(); requestRender(); return false;
+  }
+
+  x.guides = best.guides;
+  x.pts = base.map((p) => [...p]);
+  if (!previewGuidedUpright(x)) {
+    x.guides = [];
+    status('Suggest guides: preview failed. Draw guides yourself.');
+    buildOptionsBar(); requestRender(); return false;
+  }
+  status(`Suggested ${best.guides.length} guides (${best.nv} vertical, ${best.nh} horizontal · ~${best.score.toFixed(1)}°). Enter applies · drag to edit · Esc cancels.`);
+  buildOptionsBar(); requestRender();
+  return true;
+}
+
 function addUprightGuide(x, g) {
   if (Math.hypot(g[1][0] - g[0][0], g[1][1] - g[0][1]) * state.zoom < 12) { status('Drag a longer line along an edge that should be straight.'); return; }
   g = snapUprightGuide(x, g, 14 / Math.max(0.25, state.zoom));
@@ -3760,7 +3939,13 @@ const cmds = {
   mxfReset: () => { const x = state.mxf; if (!x) return; mxfResetPoints(x); x.guides = []; mxfPreview(); mxfRender(); },
   mxfGuides: () => { const x = state.mxf; if (!x || x.mode !== 'perspective') return; if (x.guideMode && x.pts0) { x.pts = x.pts0.map((p) => [...p]); x.pts0 = null; mxfPreview(); } x.guideMode = !x.guideMode; x.guides = []; if (!x.guideMode) x.pts0 = null; buildOptionsBar(); requestRender(); if (x.guideMode) status('Guided upright: drag along 2–4 edges that should be vertical or horizontal.'); },
   mxfGuidedApply: () => { const x = state.mxf; if (x) finishGuidedUpright(x); },
-  guidedUpright: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.guideMode = true; x.guides = []; x.pts0 = null; buildOptionsBar(); requestRender(); status('Guided upright: drag along 2–4 edges that should be vertical or horizontal (Enter applies after two).'); }),
+  mxfSuggestGuides: needDoc(() => {
+    if (!state.mxf) startMeshXf('perspective');
+    const x = state.mxf; if (!x || x.mode !== 'perspective') return;
+    applySuggestedGuides(x);
+  }),
+  guidedUpright: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.guideMode = true; x.guides = []; x.pts0 = null; buildOptionsBar(); requestRender(); status('Guided upright: drag along 2–4 edges that should be vertical or horizontal (Enter applies after two). Suggest guides picks them for you.'); }),
+  suggestGuides: needDoc(() => { run('mxfSuggestGuides'); }),
   mxfGrid3: () => mxfGrid(3), mxfGrid4: () => mxfGrid(4), mxfGrid5: () => mxfGrid(5),
   camera: () => { fileMode = 'open'; $('#cameraInput').click(); },
   closePolygon: () => finishPolygon(),
@@ -3987,7 +4172,7 @@ const MENUS = [
   ['Image', [['Image size…', 'imageSize'], ['Resize to preset…', 'resizePresets'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], ['Crop with preset', 'cropPresetTool'], '-',
     ['Rotate 90° clockwise', 'rotateCW'], ['Rotate 90° counter-clockwise', 'rotateCCW'], ['Rotate 180°', 'rotate180'],
     ['Flip horizontal', 'flipH'], ['Flip vertical', 'flipV'], '-', ['Auto enhance', 'autoEnhance', 'Ctrl+Shift+L'], ['Auto enhance options…', 'autoEnhanceOptions'], ['Auto white balance', 'autoWhiteBalance'], ['Auto white balance options…', 'autoWBOptions'],
-    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], ['Auto upright', 'autoUpright'], ['Upright: level (horizontals)', 'uprightLevel'], ['Upright: vertical', 'uprightVertical'], ['Upright: full (verticals + horizontals)', 'uprightFull'], ['Guided upright', 'guidedUpright'], ['Crop away empty edges', 'cropEmptyEdges'], ['Fill empty edges', 'fillEmptyEdges'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
+    ['Auto straighten', 'autoStraighten'], ['Straighten tool', 'straightenTool'], ['Auto upright', 'autoUpright'], ['Upright: level (horizontals)', 'uprightLevel'], ['Upright: vertical', 'uprightVertical'], ['Upright: full (verticals + horizontals)', 'uprightFull'], ['Guided upright', 'guidedUpright'], ['Suggest upright guides', 'suggestGuides'], ['Crop away empty edges', 'cropEmptyEdges'], ['Fill empty edges', 'fillEmptyEdges'], '-', ['Mode: 8 bits/channel', 'mode8'], ['Mode: 16 bits/channel', 'mode16'], '-', ['Flatten', 'flatten']]],
   ['Select', [['All', 'selectAll', 'Ctrl+A'], ['Deselect', 'deselect', 'Ctrl+D'], ['Invert selection', 'invertSelection', 'Ctrl+Shift+I'], '-',
     ['Object select (drag a box)', 'objectSelectTool'], ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
@@ -8527,7 +8712,7 @@ window.tintwork = {
   autoUprightCmd, get lastUpright() { return lastUpright; }, cropEmptyEdges, fillEmptyEdges, innerOpaqueRect, segment: seg,
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
   exportSharpen: { apply: applyExportSharpen, optionsHTML: exportSharpOptionsHTML, label: exportSharpLabel, presets: EXPORT_SHARP_PRESETS, scaledSharpParams },
-  finishGuidedUpright, uprightFromGuides, snapUprightGuide,
+  finishGuidedUpright, uprightFromGuides, snapUprightGuide, suggestUprightGuides, applySuggestedGuides, scoreSegmentsAfter,
   setProof, setProofWarn, get proofMode() { return proofMode; }, get proofWarn() { return proofWarn; }, PROOF_PAPERS,
   batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,

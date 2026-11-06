@@ -151,7 +151,7 @@ const worst = (es) => Math.max(...es.map((e) => (e.deg == null ? 0 : Math.abs(e.
   const about = await T(() => window.tintwork.APP_VERSION);
   check(about === '1.12.0' || about === '1.13.0' || about === '1.14.0' || about === '1.15.0' || about === '1.16.0' || about === '1.11.0' || typeof about === 'string', `APP_VERSION present (${about})`);
   // this tree is 1.14.0; keep accepting 1.12/1.13 so a TW_ROOT checkout of those tags still passes the pin
-  if (ROOT === HERE) check(about === '1.17.0' || about === '1.17.0' || about === '1.16.0' || about === '1.15.0' || about === '1.14.0' || about === '1.13.0' || about === '1.12.0', `APP_VERSION is 1.12+ (${about})`);
+  if (ROOT === HERE) check(about === '1.18.0' || about === '1.17.0' || about === '1.16.0' || about === '1.15.0' || about === '1.14.0' || about === '1.13.0' || about === '1.12.0', `APP_VERSION is 1.12+ (${about})`);
   const ug = readFileSync(path.join(HERE, 'docs/USER_GUIDE.md'), 'utf8');
   check(!/photoshop|adobe/i.test(ug), 'USER_GUIDE has no Photoshop/Adobe brand names');
 }
