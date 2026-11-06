@@ -1,4 +1,5 @@
 // v1.13 test: non-AI polish — auto-apply upright, soft-proof ink warning, JPEG sRGB ICC, denser spot heal / textured edge fill.
+// v1.16 disclose: Guided upright no longer auto-applies on the 2nd guide; preview + Enter/Apply/4th (see check #2).
 // TW_ROOT=/path/to/other/checkout runs against another tree. TW_URL=https://… against a deployed site.
 import { chromium } from 'playwright';
 import path from 'node:path';
@@ -32,23 +33,14 @@ const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }
   check(!u.mxf && u.H && u.mode && u.mode !== 'none', `Auto upright applies without Enter (mxf=${u.mxf}, H=${u.H}, mode=${u.mode}, crop=${u.crop})`);
 }
 
-// --- 2. Guided upright applies after the second guide (no Enter)
+// --- 2. Guided upright: after 2 guides, live preview stays open (v1.16: up to 4 guides; Enter / Apply / 4th finishes)
+// DISCLOSED LOOSEN (v1.16): v1.13 expected immediate apply on the 2nd guide. Guided now previews after ≥2 and waits for Enter/Apply/4th.
 {
   await page.setInputFiles('#fileInput', { name: 'c4b.jpg', mimeType: 'image/jpeg', buffer: REAL('c4.jpg') });
   await page.waitForFunction(() => window.tintwork.doc?.name?.startsWith('c4b'), null, { timeout: 30000 });
   await T(async () => { window.tintwork.state.opts.uprightEdges = 'crop'; await window.tintwork.idle(); });
   await T(() => window.tintwork.run('guidedUpright'));
   await page.waitForFunction(() => window.tintwork.mxf?.guideMode);
-  // draw two vertical guides in document space via the API (same as two mouse drags)
-  await T(() => {
-    const x = window.tintwork.mxf;
-    const g1 = [[124, 446], [15, 900]], g2 = [[935, 492], [968, 900]];
-    // call the same path the pointer uses
-    const add = (g) => {
-      const fn = Object.getOwnPropertyDescriptor(window, '__twAddGuide')?.value;
-    };
-  });
-  // drive through pointer on the view
   const toScreen = async (p) => page.evaluate(({ x, y }) => {
     const r = document.querySelector('#view').getBoundingClientRect(), s = window.tintwork.state;
     return { x: r.left + s.panX + x * s.zoom, y: r.top + s.panY + y * s.zoom };
@@ -59,9 +51,12 @@ const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }
     await page.mouse.move(b.x, b.y); await page.mouse.up();
     await T(async () => { await window.tintwork.idle(); });
   }
+  const mid = await T(() => ({ mxf: !!window.tintwork.mxf, guides: window.tintwork.mxf?.guides?.length, mode: !!window.tintwork.mxf?.guideMode }));
+  check(mid.mxf && mid.mode && mid.guides === 2, `Guided preview after 2 guides (mxf=${mid.mxf}, guides=${mid.guides}, mode=${mid.mode})`);
+  await page.keyboard.press('Enter');
   await page.waitForFunction(() => !window.tintwork.mxf, null, { timeout: 20000 }).catch(() => {});
-  const g = await T(() => ({ mxf: !!window.tintwork.mxf, H: !!window.tintwork.lastUpright?.H, kind: window.tintwork.lastUpright?.kind }));
-  check(!g.mxf && g.H, `Guided upright applies after second guide (mxf=${g.mxf}, H=${g.H}, kind=${g.kind})`);
+  const g = await T(() => ({ mxf: !!window.tintwork.mxf, H: !!window.tintwork.lastUpright?.H, kind: window.tintwork.lastUpright?.kind || window.tintwork.lastUpright?.mode }));
+  check(!g.mxf && g.H, `Guided upright finishes on Enter (mxf=${g.mxf}, H=${g.H}, kind=${g.kind})`);
 }
 
 // --- 3. Soft-proof ink warning: pure white flagged under matte paper; mid-grey not

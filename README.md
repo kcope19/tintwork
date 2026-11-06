@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.16 (export output sharpening, Guided 2–4 guides)
+
+v1.16 keeps to non-AI tools. **Output sharpening** on Export / presets / batch: Screen, Matte paper or Glossy paper at Low / Standard / High (after resize, before watermark; skipped on 16-bit PNG). **Guided upright** accepts up to four guides with a live preview after two; Enter, Apply guides, or the fourth guide finishes. Soft-proof ICC, heal % and Full ≤0.5° were not revisited. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.13 (auto-apply upright, ink warning, sRGB embed, heal/fill)
 
 v1.13 keeps to non-AI tools. Auto / Level / Vertical / Full / Guided upright **apply immediately** (no extra Enter), so Auto upright is two steps like Lightroom's. Soft proof gains an approximate **ink warning** overlay. JPEG exports embed an sRGB ICC profile; PNG exports always carry an sRGB chunk. Spot heal searches more carefully (still **79%** on the USDA portrait with the grain guard — same as v1.12); Fill empty edges mirrors nearby pixels before smoothing. `npm test`: **1013** checks. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).

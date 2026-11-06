@@ -1,3 +1,4 @@
+<!-- v1.16: output sharpening + Guided 2–4 guides. Soft proof/heal/Full still trail. -->
 <!-- v1.15: adversarial polish — Done+feather one undo; Export defaults PNG 16-bit on 16-bit docs. Scorecard: undo bug fixed; job 14/heal/Full still trail. -->
 # Tintwork vs. paid editors: living comparison
 
@@ -6,6 +7,10 @@ This document compares Tintwork with current paid editors at each milestone. It 
 Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One / Lightroom (where relevant), and Photopea (as the closest web reference).
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
+
+## v1.16 (2026-11-06)
+
+Non-AI. **Output sharpening** on Export / presets / batch: Screen, Matte paper, Glossy paper × Low / Standard / High (unsharp after resize; not a printer profile). **Guided upright** accepts 2–4 guides with live preview; Enter / Apply guides / 4th finishes. Soft proof still approximate (no ICC). Heal / Full / AI unchanged.
 
 ## v1.15 (2026-11-05)
 

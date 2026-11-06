@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.15.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.16.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,29 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.16.0 update (2026-11-06, America/New_York)
+
+v1.16 is non-AI polish (no heal%/Full≤0.5° cycle; no new AI). Verified hunches first: RAW brush **Auto mask** already existed (not rebuilt). Soft-proof ICC still infeasible in-browser without profiles. Shipped: **export output sharpening** and **Guided upright 2–4 guides**. `scripts/v116-test.mjs` has 13 checks. Full `npm test` count reported after the green run.
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F44 | Export / batch had no output sharpening for screen or print (AUDIT ranked print gap). | gap | AUDIT print workflow; COMPARISON export | File ▸ Export **Output sharpening**: Off + Screen/Matte/Glossy × Low/Std/High; after resize, before watermark; web/print presets default screen-std / matte-std; batch inherits preset sharpen; skipped on PNG 16-bit with a note. | v1.16.0 |
+| F45 | Guided upright hard-capped at 2 guides and applied immediately (job 18 quality vs multi-guide tools). | friction / quality | job 18 notes; LR Guided up to 4 | Draw **2–4** guides; live preview after ≥2; **Enter** / **Apply guides** / 4th finishes. Multi V/H uses vanishing-point upright; 2-guide keeps 4-point fallback. | v1.16.0 |
+
+### What I might be wrong about
+- Output sharpen amounts are approximate (unsharp mask), not printer-profile “print sharpening”. Glossy vs matte differ only by amount/radius/threshold tables I chose; they were not measured against a lab print.
+- Radius floors so short (~800 px) exports still change pixels; a 4k export uses a larger radius. Someone who wants crunchier thumbnails may want a lower floor.
+- Guided 3–4 guide VP path depends on `estimateUpright`; mixed or short guides can fall back to the 2-guide 4-point path — quality gain is not guaranteed on every photo.
+- Job 18 two-vertical case is now **5 steps** (menu + 2 drags + Enter) vs v1.13’s 4; matches Lightroom Guided’s documented 5, but is one click more than Pixelmator Pro’s 4.
+
+**Not done:** ICC soft proof; edge-aware auto-mask *as a new feature* (already present on RAW brushes); heal >79%; Full ≤0.5°; AI subject.
+
+**Test-change disclosure:** `v113-test` Guided check loosened — no longer expects auto-apply on the 2nd guide; expects preview then Enter. `v114`/`v115` version pins accept 1.16.0.
+
+### Live verification (v1.16.0)
+
+- Filled in after tag/push (live 3/3 + screenshots).
 
 ## v1.15.0 update (2026-11-05, America/New_York)
 
@@ -233,7 +256,7 @@ Updated for v1.12. Batch again can repeat an Open-tabs / files subset. Full refu
 2. **Content-aware / generative fill and remove** for real texture. Healing removes 79% on the real portrait, and the empty-edge fill smears.
 3. **Upright Full on real photos:** the leaning ladder no longer steers it (library 2.24° → 0.75°), but it still misses 0.5° on all three photos with strong horizontals. It has no lens-distortion model (the library's shelf edge bends by about 1°), and photos dominated by slanted design elements (job 31's diagonal fins) defeat it: there Full makes the horizontals worse. A "do no harm" check and a distortion-aware fit are the next steps.
 4. **AI denoise and camera-matching profiles for RAW.**
-5. **Print workflow:** ICC printer profiles, a printer gamut warning, output sharpening, CMYK export. v1.10 has only an approximate paper-white / ink-black proof.
+5. **Print workflow:** ICC printer profiles, a printer gamut warning, CMYK export. v1.16 adds approximate **output sharpening** (screen/matte/glossy × strength) on 8-bit export/batch; soft proof stays approximate (no ICC).
 6. **Batch works on whole folders only.** Batch again repeats the last batch in 4 steps in a new session (Lightroom 4, Pixelmator Pro 3), but there is no "export the selected photos with this preset", because Tintwork has no library of photos to select from.
 7. Edge-aware local adjustment brushes (Lightroom-style masks with auto-mask).
 

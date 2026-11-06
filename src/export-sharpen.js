@@ -1,5 +1,5 @@
 /**
- * Output sharpening for export / batch (v1.16). Approximate Lightroom-style screen / matte / glossy
+ * Output sharpening for export / batch (v1.16). Approximate screen / matte / glossy
  * amounts at three strengths. Applied after resize, before watermark. Not a printer profile.
  * Radius scales gently with the long edge so a 4k export is not over-sharpened vs a 1200 px web file.
  */

@@ -6,6 +6,22 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.16 scorecard (export output sharpening; Guided 2–4 guides)
+
+| Area | v1.15 | v1.16 | Verdict |
+|---|---|---|---|
+| Export / batch output sharpen | none | Screen/Matte/Glossy × Low/Std/High (+ Off); presets + batch | **closer** to print/web export (still trails ICC print sharpen) |
+| Job 18 Guided upright | match on 2-guide / 4 steps | 2–4 guides; preview ≥2; Enter/Apply/4th; **5** steps for 2-guide | **match** Lightroom Guided 5; quality closer when 3–4 guides help (not re-measured on held-out) |
+| Soft proof / heal / Full / job 14 | trails | unchanged (deliberately) | **trails** |
+
+**Summary (v1.16): output sharpening closes a named print gap without claiming ICC; Guided gains multi-guide capacity (2-guide costs +1 Enter vs v1.13). No heal%/Full cycle. npm test: see release note.**
+
+**Test-change disclosure:** `v116-test` new (13 checks). `v113-test` Guided no longer auto-applies on 2nd guide (preview + Enter) — disclosed loosen. `v114`/`v115` APP_VERSION pins accept 1.16.0.
+
+**What I might be wrong about**
+- Calling export sharpen “closer” assumes users want unsharp-on-export; some prefer sharpen only in develop. Amounts were not A/B’d against LR Print Sharpening on paper.
+- Job 18 quality with 4 guides was smoke-tested (finishes + H) but not angle-measured against the old 2-guide result on a held-out facade.
+
 ## v1.15 scorecard (adversarial polish: Done+feather undo, 16-bit Export default)
 
 Local Chromium `?platform=win`, 2026-11-05 America/New_York. Audit-driven; not a feature stack.
