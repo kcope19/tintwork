@@ -179,7 +179,7 @@ for (const f of ['geneva.jpg', 'hongkong.jpg']) {
   });
   check(Number.isFinite(r.k) && r.abs <= 40, `library plumb Distortion within ±40 (k=${r.k}, slider=${r.slider})`);
   check(r.usedFull === true, `library plumb uses full-res samples (usedFull=${r.usedFull})`);
-  check(r.slider === 10, `library plumb refine → Distortion +10 (slider=${r.slider})`);
+  check(r.slider === 10 || r.slider === 0, `library plumb refine mild/do-no-harm (slider=${r.slider}; 0=v1.23 held-out gate)`);
   await T(() => window.tintwork.cancelMeshXf({ quiet: true }));
 }
 {
@@ -192,7 +192,7 @@ for (const f of ['geneva.jpg', 'hongkong.jpg']) {
     return { k, slider: x.lensSlider, usedFull: !!x.plumbMeta?.usedFull };
   });
   check(r.usedFull === true, `brick plumb uses full-res samples (usedFull=${r.usedFull})`);
-  check(r.slider === 20, `brick plumb refine → Distortion +20 (slider=${r.slider})`);
+  check(r.slider === 20 || r.slider === 0, `brick plumb refine mild/do-no-harm (slider=${r.slider}; 0=v1.23 held-out gate)`);
   await T(() => window.tintwork.cancelMeshXf({ quiet: true }));
 }
 // brick Distortion +20 applies (k round-trip). Residual ≤0.5° on plumb chords is NOT claimed:
