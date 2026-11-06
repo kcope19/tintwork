@@ -24,7 +24,10 @@ Plumb Distortion refine uses **true apply+measure** on held-out check-set ridges
 
 **Test-change disclosure:** `v124-test` new (31). Pins accept 1.24.0. No bars loosened.
 
-### Live verification (v1.24.0, pending)
+### Live verification (v1.24.0, pending push)
+
+- Full `npm test` (WebKit on): **1214** checks (1183 + 31 v124).
+- `v124-test`: **31/31** locally.
 
 ## v1.23.0 update (2026-11-06, America/New_York)
 

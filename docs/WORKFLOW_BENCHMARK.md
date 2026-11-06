@@ -17,7 +17,7 @@ v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York):
 | Library manual +10→Full (in-sample) | 0.73° | 0.73° | trails ≤0.5° |
 | Cathedral mixed Suggest | not restored | still refused (broad probe V 0.74°→1.19°) | **trails** (safe) |
 | c4 / geneva / hongkong | match | match | **match** |
-| Full npm test / WebKit | 1183 | *(pending)* | — |
+| Full npm test / WebKit | 1183 | **1214** ok, WebKit green | **match** (infra) |
 
 **Library ≤0.5° disclosure:** Under honest check-set apply+measure, Distortion never brings held-out worst under ~3°. Non-AI Distortion+Full cannot hit ≤0.5° on library; leave manual path and Plumb refuse.
 
