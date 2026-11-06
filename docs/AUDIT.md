@@ -31,9 +31,11 @@ Perspective/upright-only round (no AI, no heal% cycle). **Measured first** on 9 
 
 **Test-change disclosure:** `v117-test` new (13). `v112`/`v114`/`v115`/`v116` version pins accept 1.17.0. No quality bars loosened.
 
-### Live verification (v1.17.0)
+### Live verification (v1.17.0, 2026-11-06 about 11:28 AM America/New_York)
 
-- Live site filled after tag.
+- Live site reports `tintwork-shell-v1.17.0` / `APP_VERSION` 1.17.0.
+- `v117-test` against https://kcope19.github.io/tintwork/ : **13/13 × 3**.
+- Screenshots: `117-live-refuse-level.png`, `117-live-perspective-grid.png`, `117-live-guided-snap.png`.
 - `npm test`: **1079** checks (1066 in v1.16 + 13 v117).
 
 
