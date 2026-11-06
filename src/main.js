@@ -18,6 +18,7 @@ import { blendIndex, createDeep, cloneDeep, deepFromImageData, deepToImageData, 
 import { decodePNG, encodePNG, pngInfo } from './png.js';
 import { srgbIccBytes } from './srgb-icc.js';
 import { BUILTIN_PRESETS, RATIO_ONLY, allPresets, presetById, presetPixels, centredRatioRect, constrainRect, describePreset, saveCustomPreset, deleteCustomPreset, customPresets } from './presets.js';
+import { applyExportSharpen, exportSharpOptionsHTML, exportSharpLabel, EXPORT_SHARP_PRESETS, scaledSharpParams } from './export-sharpen.js';
 import { formatName, variantSize, uniqueNamer, zipFiles } from './batch.js';
 import { IS_MAC, PLATFORM, primaryMod, keyLabel, platformText, comboOf, RESERVED } from './platform.js';
 import { isRawName, isPsdName, isPsdBytes, readPSDAsync, writePSDAsync, openRawSession, setDevelopEnv, setDevelopEngine, developEngineInfo, getDevelopEnginePref, developBenchmark, RAW_EXTS, PSD_EXTS } from './codecs.js';
@@ -25,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.16.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -2616,7 +2617,7 @@ async function renderMeshAny(img, outW, outH, m, ox = 0, oy = 0) {
 
 // --- Perspective & warp (Edit menu): drag corner / grid handles; Enter applies, Esc cancels -----------
 function mxfGrid(n) { const x = state.mxf; if (!x || x.mode !== 'warp' || x.n === n) return; x.n = n; mxfResetPoints(x); mxfPreview(); mxfRender(); buildOptionsBar(); }
-const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'uprightEdges_crop', 'uprightEdges_fill', 'uprightEdges_keep', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
+const MXF_SAFE = new Set(['mxfApply', 'mxfCancel', 'mxfGuides', 'mxfGuidedApply', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'uprightEdges_crop', 'uprightEdges_fill', 'uprightEdges_keep', 'mxfGrid3', 'mxfGrid4', 'mxfGrid5', 'mxfReset', 'undo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'swapColors', 'resetColors']);
 function startMeshXf(mode) {
   const d = doc(), l = activeLayer();
   if (!l || state.mxf) return;
@@ -3059,10 +3060,11 @@ function mxfBarParts() {
   const x = state.mxf, warp = x.mode === 'warp';
   return [`<span class="tool-title">${warp ? 'Warp' : 'Perspective'}</span>`,
     warp ? '' : `<span class="seg" title="Upright from the photo's straight lines">${[['autoUpright', 'auto', 'Auto', 'Make the vertical lines upright (levels from the horizontals when there are no verticals)'], ['uprightLevel', 'level', 'Level', 'Rotate so the horizontal lines are level'], ['uprightVertical', 'vertical', 'Vertical', 'Make the vertical lines upright and parallel'], ['uprightFull', 'full', 'Full', 'Straighten the verticals and the horizontals together']].map(([c, m, n, t]) => `<button data-cmd="${c}" class="${x.upright === 'auto' && lastUpright?.req === m ? 'on' : ''}" title="${t}">${n}</button>`).join('')}</span>`,
-    warp ? '' : `<button data-cmd="mxfGuides" class="${x.guideMode ? 'on' : ''}" title="Draw two lines along edges that should be vertical (or horizontal)">Guides</button>`,
+    warp ? '' : `<button data-cmd="mxfGuides" class="${x.guideMode ? 'on' : ''}" title="Draw 2–4 lines along edges that should be vertical or horizontal">Guides</button>`,
     warp ? '' : `<span class="seg" title="After an upright correction: crop away the empty corners, fill them from nearby pixels, or leave them transparent">${[['crop', 'Crop edges'], ['fill', 'Fill edges'], ['keep', 'Keep']].map(([k, n]) => `<button data-cmd="uprightEdges_${k}" class="${state.opts.uprightEdges === k ? 'on' : ''}">${n}</button>`).join('')}</span>`,
     warp ? `<span class="seg">${[3, 4, 5].map((n) => `<button data-cmd="mxfGrid${n}" class="${x.n === n ? 'on' : ''}" title="${n}×${n} control points">${n}×${n}</button>`).join('')}</span>` : '',
-    `<span class="muted">${warp ? 'Drag grid points to bend the layer' : x.guideMode ? ((x.guides || []).length ? 'Draw a second line' : 'Draw two lines along edges that should be vertical') : 'Drag the corners'} · Enter applies · Esc cancels</span>`,
+    `<span class="muted">${warp ? 'Drag grid points to bend the layer' : x.guideMode ? `Guided: ${(x.guides || []).length}/4 guides${(x.guides || []).length >= 2 ? ' · Enter applies' : ' · draw along edges'}` : 'Drag the corners'} · Enter applies · Esc cancels</span>`,
+    (x.guideMode && (x.guides || []).length >= 2 ? `<button data-cmd="mxfGuidedApply" class="primary">Apply guides</button>` : ''),
     `<button data-cmd="mxfReset">Reset</button>`, `<button data-cmd="mxfApply" class="primary">Apply</button>`, `<button data-cmd="mxfCancel">Cancel</button>`];
 }
 function drawMeshBox(toS) {
@@ -3086,39 +3088,96 @@ function drawMeshBox(toS) {
   vctx.restore();
 }
 /**
- * Guided upright: each guide is a line that should end up exactly vertical (or horizontal when drawn flatter than 45°).
- * Both guides are straightened about their midpoints; the 4 endpoints define a homography that is applied to the
- * current corner quad, so guides drawn on the preview compose with earlier corner drags.
+ * Guided upright (v1.16: 2–4 guides). Two guides still use a 4-point homography (each line straightened
+ * about its midpoint). Three or four guides classify as vertical / horizontal; two or more of a family
+ * vote for a vanishing point, then uprightHomography builds the correction so verticals and horizontals
+ * can be fixed in one pass.
  */
-function uprightFromGuides(pts, guides) {
+function uprightFromGuides(pts, guides, layerW, layerH) {
   if (guides.length < 2) return null;
+  const W = layerW || 1, Hgt = layerH || 1;
+  const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+  const toLine = ([[ax, ay], [bx, by]]) => {
+    const len = Math.hypot(bx - ax, by - ay);
+    return { x1: ax, y1: ay, x2: bx, y2: by, len, angle: Math.atan2(bx - ax, by - ay) * 180 / Math.PI, vert: Math.abs(by - ay) >= Math.abs(bx - ax) };
+  };
+  const lines = guides.map(toLine);
+  const verts = lines.filter((l) => l.vert), hors = lines.filter((l) => !l.vert);
+  const mapPts = (Hu) => {
+    const out = pts.map(([px, py]) => { const [X, Y, w] = mesh.applyH(Hu, px, py); return w > 0 ? [X, Y] : null; });
+    return out.some((q) => !q || !Number.isFinite(q[0]) || !Number.isFinite(q[1])) ? null : out;
+  };
+  if (verts.length >= 2 || hors.length >= 2) {
+    let vv = null, vh = null;
+    if (verts.length >= 2) {
+      const u = seg.estimateUpright(verts, W, Hgt);
+      if (u.mode !== 'none' && u.vh) vv = u.vh;
+    }
+    if (hors.length >= 2) {
+      const swapped = hors.map((l) => ({ x1: l.y1, y1: l.x1, x2: l.y2, y2: l.x2, len: l.len, angle: Math.atan2(l.x2 - l.x1, l.y2 - l.y1) * 180 / Math.PI }));
+      const u = seg.estimateUpright(swapped, Hgt, W);
+      if (u.mode !== 'none' && u.vh) vh = [u.vh[1], u.vh[0], u.vh[2]];
+    }
+    if (vv || vh) {
+      const Hu = seg.uprightHomography(vv, vh, cx, cy);
+      if (Hu) { const out = mapPts(Hu); if (out) return out; }
+    }
+  }
+  const use = guides.length === 2 ? guides : guides.slice(0, 2);
   const src = [], dst = [];
-  for (const [[ax, ay], [bx, by]] of guides.slice(-2)) {
+  for (const [[ax, ay], [bx, by]] of use) {
     const mx = (ax + bx) / 2, my = (ay + by) / 2, vert = Math.abs(by - ay) >= Math.abs(bx - ax);
     src.push([ax, ay], [bx, by]);
     dst.push(vert ? [mx, ay] : [ax, my], vert ? [mx, by] : [bx, my]);
   }
-  const H = mesh.homography(src, dst); if (!H) return null;
-  const out = pts.map(([px, py]) => { const [X, Y, w] = mesh.applyH(H, px, py); return w > 0 ? [X, Y] : null; });
-  return out.some((q) => !q || !Number.isFinite(q[0]) || !Number.isFinite(q[1])) ? null : out;
+  const Hm = mesh.homography(src, dst); if (!Hm) return null;
+  return mapPts(Hm);
 }
-function addUprightGuide(x, g) {
-  if (Math.hypot(g[1][0] - g[0][0], g[1][1] - g[0][1]) * state.zoom < 12) { status('Drag a longer line along an edge that should be straight.'); return; }
-  x.guides = [...(x.guides || []), g];
-  if (x.guides.length < 2) { status('Guided upright: now draw a second line.'); buildOptionsBar(); requestRender(); return; }
-  const next = uprightFromGuides(x.pts, x.guides), prev = x.pts;
-  x.guides = [];
-  if (!next || !mesh.perspectiveMesh(x.w, x.h, next)) { status('Those two lines cannot both be straightened: draw them on separate edges.'); buildOptionsBar(); requestRender(); return; }
+function previewGuidedUpright(x) {
+  if (!x || (x.guides || []).length < 2) return false;
+  const base = x.pts0 || x.pts;
+  const next = uprightFromGuides(base, x.guides, x.w, x.h);
+  if (!next || !mesh.perspectiveMesh(x.w, x.h, next)) return false;
+  const m = mxfBounds(mxfMesh({ ...x, pts: next }));
+  if (!m) return false;
   x.pts = next;
-  const m = mxfBounds(mxfMesh(x));
-  if (!m) { x.pts = prev; status('That correction is too extreme. Try guides on longer edges.'); buildOptionsBar(); requestRender(); return; }
-  x.guideMode = false; x.upright = 'guided';
   mxfPreview();
-  // v1.13: Guided applies as soon as the second line is drawn (still one Undo to revert; Perspective stays for free edits).
-  status('Guided upright: lines straightened.');
+  return true;
+}
+function finishGuidedUpright(x) {
+  if (!x || (x.guides || []).length < 2) { status('Guided upright: draw at least two lines.'); return; }
+  if (!x.pts0) x.pts0 = x.pts.map((p) => [...p]);
+  x.pts = x.pts0.map((p) => [...p]);
+  const n = x.guides.length;
+  const ok = previewGuidedUpright(x);
+  x.guides = [];
+  x.guideMode = false;
+  x.pts0 = null;
+  if (!ok) { status('Those guides cannot be straightened together: try longer edges or fewer lines.'); buildOptionsBar(); requestRender(); return; }
+  x.upright = 'guided';
+  status(`Guided upright: ${n} guide${n === 1 ? '' : 's'} straightened.`);
   buildOptionsBar();
   void applyMeshXf();
 }
+function addUprightGuide(x, g) {
+  if (Math.hypot(g[1][0] - g[0][0], g[1][1] - g[0][1]) * state.zoom < 12) { status('Drag a longer line along an edge that should be straight.'); return; }
+  if (!x.pts0) x.pts0 = x.pts.map((p) => [...p]);
+  x.guides = [...(x.guides || []), g];
+  const n = x.guides.length;
+  if (n < 2) { status('Guided upright: now draw a second line (up to four).'); buildOptionsBar(); requestRender(); return; }
+  const saved = x.pts;
+  x.pts = x.pts0.map((p) => [...p]);
+  if (!previewGuidedUpright(x)) {
+    x.pts = saved;
+    x.guides.pop();
+    status('That line cannot be combined with the others: try a longer edge.');
+    buildOptionsBar(); requestRender(); return;
+  }
+  if (n >= 4) { finishGuidedUpright(x); return; }
+  status(`Guided upright: ${n} of 4 guides · Enter applies · draw more for verticals and horizontals`);
+  buildOptionsBar();
+}
+
 const mxfHandler = {
   down(p, e) {
     const x = state.mxf, tol = (e.pointerType === 'touch' ? 22 : 10) / state.zoom;
@@ -3553,7 +3612,7 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); objSelCancel(); return; }
   }
   if (state.mxf) {
-    if (e.key === 'Enter') { e.preventDefault(); run('mxfApply'); return; }
+    if (e.key === 'Enter') { e.preventDefault(); if (state.mxf.guideMode && (state.mxf.guides || []).length >= 2) finishGuidedUpright(state.mxf); else run('mxfApply'); return; }
     if (e.key === 'Escape') { e.preventDefault(); run('mxfCancel'); return; }
   }
   if (state.xf) {
@@ -3636,8 +3695,9 @@ const cmds = {
   mxfApply: () => applyMeshXf(),
   mxfCancel: () => cancelMeshXf(),
   mxfReset: () => { const x = state.mxf; if (!x) return; mxfResetPoints(x); x.guides = []; mxfPreview(); mxfRender(); },
-  mxfGuides: () => { const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.guideMode = !x.guideMode; x.guides = []; buildOptionsBar(); requestRender(); if (x.guideMode) status('Guided upright: drag along two edges that should be vertical.'); },
-  guidedUpright: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.guideMode = true; x.guides = []; buildOptionsBar(); requestRender(); status('Guided upright: drag along two edges that should be vertical (e.g. building sides).'); }),
+  mxfGuides: () => { const x = state.mxf; if (!x || x.mode !== 'perspective') return; if (x.guideMode && x.pts0) { x.pts = x.pts0.map((p) => [...p]); x.pts0 = null; mxfPreview(); } x.guideMode = !x.guideMode; x.guides = []; if (!x.guideMode) x.pts0 = null; buildOptionsBar(); requestRender(); if (x.guideMode) status('Guided upright: drag along 2–4 edges that should be vertical or horizontal.'); },
+  mxfGuidedApply: () => { const x = state.mxf; if (x) finishGuidedUpright(x); },
+  guidedUpright: needDoc(() => { if (!state.mxf) startMeshXf('perspective'); const x = state.mxf; if (!x || x.mode !== 'perspective') return; x.guideMode = true; x.guides = []; x.pts0 = null; buildOptionsBar(); requestRender(); status('Guided upright: drag along 2–4 edges that should be vertical or horizontal (Enter applies after two).'); }),
   mxfGrid3: () => mxfGrid(3), mxfGrid4: () => mxfGrid(4), mxfGrid5: () => mxfGrid(5),
   camera: () => { fileMode = 'open'; $('#cameraInput').click(); },
   closePolygon: () => finishPolygon(),
@@ -4766,6 +4826,7 @@ function openExportDialog() {
     { label: 'Size', html: `<span class="ex-size"><select id="eSize" title="Export at the document size or resized"><option value="original">Original (${doc().width} × ${doc().height} px)</option><option value="long">Long edge (px)</option><option value="width">Width (px)</option><option value="scale">Scale (%)</option></select> <input type="number" id="eSizeV" min="1" max="30000" value="${Math.max(doc().width, doc().height)}" class="hidden" aria-label="New size" style="width:84px"/> <span id="eSizeOut" class="muted"></span></span>` },
     { label: 'Resolution', html: `<span><input type="number" id="eDpi" min="1" max="2400" value="${doc().dpi || 72}" style="width:72px" aria-label="Resolution in pixels per inch"/> ppi <span class="muted" id="eDpiInfo"></span></span>` },
     { label: 'Watermark', html: watermarkFieldHTML('eWm') },
+    { label: 'Output sharpening', html: `<select id="eSharp" title="Sharpen after resize for screen or print (approximate; not a printer profile)">${exportSharpOptionsHTML('off')}</select>` },
   ]);
   const fmt = body.querySelector('#eFmt'), q = body.querySelector('#eQ');
   // navigator.share needs a fresh user gesture, so the file is rendered ahead of time and the
@@ -4810,7 +4871,9 @@ function openExportDialog() {
   sizeV.addEventListener('input', () => { sizeInfo(); if (canShareFiles) prepare(); });
   dpiIn.addEventListener('input', sizeInfo); sizeInfo();
   const wmBox = body.querySelector('#eWm'); wireWatermarkField(body, 'eWm', () => { if (canShareFiles) prepare(); });
-  exportOpts = () => { const dpi = Math.max(1, Math.min(2400, Math.round(+dpiIn.value || 0))) || null; return { size: sizeOpts(), dpi: dpi === 72 && !doc().dpi ? null : dpi, watermark: wmBox.checked ? watermarkSettings() : null }; };
+  const sharpSel = body.querySelector('#eSharp');
+  exportOpts = () => { const dpi = Math.max(1, Math.min(2400, Math.round(+dpiIn.value || 0))) || null; return { size: sizeOpts(), dpi: dpi === 72 && !doc().dpi ? null : dpi, watermark: wmBox.checked ? watermarkSettings() : null, sharpen: sharpSel.value || 'off' }; };
+  sharpSel.addEventListener('change', () => { if (canShareFiles) prepare(); });
   // v1.8: saved presets (format, quality, size, ppi, watermark); the last one used is selected next time
   const pSel = body.querySelector('#ePreset');
   const fillPresets = (sel) => { pSel.innerHTML = `<option value="">(current settings)</option>${allExportPresets().map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('')}`; pSel.value = sel || ''; body.querySelector('#ePresetDel').disabled = !pSel.value || !!BUILTIN_EXPORT_PRESETS.find((b) => b.id === pSel.value); };
@@ -4821,9 +4884,10 @@ function openExportDialog() {
     if (sz) sizeV.value = sz.mode === 'long' ? sz.long : sz.mode === 'width' ? sz.w : sz.pct;
     dpiIn.value = p.dpi || doc().dpi || 72; wmBox.checked = !!p.watermark;
     if (p.watermark && typeof p.watermark === 'object') { const nw = saveWatermark(watermarkOfPreset(p)); body.querySelectorAll('[data-wmtext]').forEach((el) => { el.textContent = watermarkLabel(nw); }); } // the preset's own watermark becomes the current one
+    sharpSel.value = (p.sharpen && EXPORT_SHARP_PRESETS[p.sharpen] !== undefined) ? p.sharpen : 'off';
     sizeInfo(); if (canShareFiles) prepare();
   };
-  const presetFromForm = (name) => { const o = exportOpts(); return { name, type: fmt.value, quality: +q.value, size: o.size, dpi: +dpiIn.value || null, watermark: wmBox.checked ? watermarkSettings() : false }; };
+  const presetFromForm = (name) => { const o = exportOpts(); return { name, type: fmt.value, quality: +q.value, size: o.size, dpi: +dpiIn.value || null, watermark: wmBox.checked ? watermarkSettings() : false, sharpen: o.sharpen || 'off' }; };
   pSel.addEventListener('change', () => { const p = allExportPresets().find((x) => x.id === pSel.value); if (p) applyPreset(p); fillPresets(pSel.value); });
   body.querySelector('#ePresetSave').addEventListener('click', () => {
     const name = (prompt('Preset name', allExportPresets().find((x) => x.id === pSel.value)?.name || 'My export') || '').trim(); if (!name) return;
@@ -4837,7 +4901,12 @@ function openExportDialog() {
   fmt.addEventListener('change', () => {
     q.disabled = fmt.value.startsWith('image/png') || fmt.value === PSD_TYPE;
     const noSize = fmt.value === 'image/png16' || fmt.value === PSD_TYPE; sizeSel.disabled = noSize; if (noSize && sizeSel.value !== 'original') { sizeSel.value = 'original'; sizeSel.dispatchEvent(new Event('change')); }
-    dpiIn.disabled = fmt.value === 'image/webp' || fmt.value === PSD_TYPE; if (canShareFiles) prepare();
+    dpiIn.disabled = fmt.value === 'image/webp' || fmt.value === PSD_TYPE;
+    // Output sharpening is an 8-bit unsharp mask (JPEG / WebP / PNG 8-bit)
+    sharpSel.disabled = fmt.value === 'image/png16' || fmt.value === PSD_TYPE;
+    if (sharpSel.disabled) sharpSel.title = 'Output sharpening applies to 8-bit exports (JPEG, WebP, PNG)';
+    else sharpSel.title = 'Sharpen after resize for screen or print (approximate; not a printer profile)';
+    if (canShareFiles) prepare();
   });
   fmt.dispatchEvent(new Event('change'));
   q.addEventListener('input', () => { body.querySelector('#eQv').textContent = q.value; if (canShareFiles) prepare(); });
@@ -4849,10 +4918,10 @@ function openExportDialog() {
 }
 /** renderExport plus the export dialog's options: an optional resize ({ mode, long | w | pct }) and the ppi written
  * into the file (JPEG JFIF density / PNG pHYs). */
-async function renderExportWith(type, quality, { size = null, dpi = null, watermark = null } = {}) {
+async function renderExportWith(type, quality, { size = null, dpi = null, watermark = null, sharpen = 'off' } = {}) {
   let blob; await readyWatermark(watermark);
-  if (size && type !== 'image/png16' && type !== PSD_TYPE) { blob = (await renderVariant({ ...size, type, quality: Math.round(quality * 100), watermark })).blob; lastExportNotes = []; }
-  else blob = await renderExport(type, quality, { watermark });
+  if (size && type !== 'image/png16' && type !== PSD_TYPE) { blob = (await renderVariant({ ...size, type, quality: Math.round(quality * 100), watermark, sharpen })).blob; lastExportNotes = []; }
+  else blob = await renderExport(type, quality, { watermark, sharpen });
   if (dpi && (blob.type === 'image/jpeg' || blob.type === 'image/png')) blob = await withDpi(blob, dpi);
   if (blob.type === 'image/jpeg') blob = await withSrgbIcc(blob);
   if (blob.type === 'image/png') blob = await withPngSrgb(blob);
@@ -4864,20 +4933,26 @@ let lastExportNotes = [];
  * 'image/png16' writes a 16-bit PNG (png.js). 16-bit documents are composited in float (deep.js) and
  * dithered down for 8-bit formats so smooth gradients don't band.
  */
-async function renderExport(type, quality, { watermark = null } = {}) {
+async function renderExport(type, quality, { watermark = null, sharpen = 'off' } = {}) {
   const d = doc(), bg = type === 'image/jpeg' ? '#ffffff' : null;
   if (type === PSD_TYPE) { const r = await documentToPSD(d); lastExportNotes = r.notes; if (watermark) lastExportNotes = [...lastExportNotes, 'The watermark is not added to layered PSD files.']; return r.blob; }
   lastExportNotes = [];
   if (type === 'image/png16' || is16()) {
     const deep = compositeDeepDoc({ background: bg });
-    if (watermark) watermarkDeep(deep, watermark);
-    if (type === 'image/png16') return new Blob([encodePNG({ width: deep.width, height: deep.height, data: deep.data, depth: 16 })], { type: 'image/png' });
+    if (type === 'image/png16') {
+      if (sharpen && sharpen !== 'off') lastExportNotes.push('Output sharpening is skipped for 16-bit PNG (8-bit exports only).');
+      if (watermark) watermarkDeep(deep, watermark);
+      return new Blob([encodePNG({ width: deep.width, height: deep.height, data: deep.data, depth: 16 })], { type: 'image/png' });
+    }
     const out = makeCanvas(d.width, d.height); ctxOf(out).putImageData(deepToImageData(deep, { dither: true }), 0, 0);
+    if (sharpen && sharpen !== 'off') applyExportSharpen(out, sharpen);
+    if (watermark) drawWatermark(out, watermark);
     return new Promise((res) => out.toBlob((b) => { out.width = out.height = 0; res(b); }, type, quality));
   }
   const out = makeCanvas(doc().width, doc().height);
   // JPEG has no alpha channel: flatten onto white so transparent areas don't turn black
   composite(out, { background: type === 'image/jpeg' ? '#ffffff' : null, sync: true });
+  if (sharpen && sharpen !== 'off') applyExportSharpen(out, sharpen);
   if (watermark) drawWatermark(out, watermark);
   return new Promise((res) => out.toBlob((b) => { out.width = out.height = 0; res(b); }, type, quality));
 }
@@ -4887,7 +4962,7 @@ function exportWithLastPreset() {
   if (!p) { status('No export preset used yet: choose one in the Export dialog first.'); openExportDialog(); return null; }
   const name = (doc().name || 'image').replace(/\.[^.]+$/, '');
   status(`Exporting with “${p.name}”…`);
-  return exportImage(p.type, (p.quality ?? 90) / 100, name, { size: p.type === 'image/png16' || p.type === PSD_TYPE ? null : p.size || null, dpi: p.dpi || null, watermark: watermarkOfPreset(p) });
+  return exportImage(p.type, (p.quality ?? 90) / 100, name, { size: p.type === 'image/png16' || p.type === PSD_TYPE ? null : p.size || null, dpi: p.dpi || null, watermark: watermarkOfPreset(p), sharpen: p.sharpen || 'off' });
 }
 async function exportImage(type, quality, name, opts = {}) {
   if (opts.dpi == null && doc().dpi) opts = { ...opts, dpi: doc().dpi }; // a print crop's ppi goes into the file
@@ -7778,9 +7853,9 @@ function openAutoOptionsDialog(kind = 'enhance') {
 const LAST_BATCH_PRESET_KEY = 'tintwork.lastBatchPreset';
 const EXPORT_PRESETS_KEY = 'tintwork.exportPresets', LAST_EXPORT_PRESET_KEY = 'tintwork.lastExportPreset', WATERMARK_KEY = 'tintwork.watermark';
 const BUILTIN_EXPORT_PRESETS = [
-  { id: 'web', name: 'Web: JPEG 85, 2048 px long edge', type: 'image/jpeg', quality: 85, size: { mode: 'long', long: 2048 }, dpi: 72, watermark: false },
+  { id: 'web', name: 'Web: JPEG 85, 2048 px long edge', type: 'image/jpeg', quality: 85, size: { mode: 'long', long: 2048 }, dpi: 72, watermark: false, sharpen: 'screen-std' },
   { id: 'email', name: 'Email: JPEG 80, 1200 px long edge', type: 'image/jpeg', quality: 80, size: { mode: 'long', long: 1200 }, dpi: 72, watermark: false },
-  { id: 'print', name: 'Print: JPEG 95, full size, 300 ppi', type: 'image/jpeg', quality: 95, size: null, dpi: 300, watermark: false },
+  { id: 'print', name: 'Print: JPEG 95, full size, 300 ppi', type: 'image/jpeg', quality: 95, size: null, dpi: 300, watermark: false, sharpen: 'matte-std' },
   { id: 'png', name: 'Lossless PNG, full size', type: 'image/png', quality: 100, size: null, dpi: null, watermark: false },
 ];
 function userExportPresets() {
@@ -7790,7 +7865,8 @@ function allExportPresets() { return [...BUILTIN_EXPORT_PRESETS.map((p) => ({ ..
 function saveExportPreset(p) {
   const list = userExportPresets(), old = list.find((x) => x.name === p.name);
   const q = { id: old?.id || `u-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, name: String(p.name).slice(0, 80), type: p.type, quality: Math.max(1, Math.min(100, Math.round(p.quality ?? 90))),
-    size: p.size || null, dpi: p.dpi ? Math.max(1, Math.min(2400, Math.round(p.dpi))) : null, watermark: p.watermark && typeof p.watermark === 'object' ? presetWatermark(p.watermark) : !!p.watermark };
+    size: p.size || null, dpi: p.dpi ? Math.max(1, Math.min(2400, Math.round(p.dpi))) : null, watermark: p.watermark && typeof p.watermark === 'object' ? presetWatermark(p.watermark) : !!p.watermark,
+    sharpen: (p.sharpen && EXPORT_SHARP_PRESETS[p.sharpen] !== undefined) ? p.sharpen : 'off' };
   const next = [...list.filter((x) => x.id !== q.id), q];
   try { localStorage.setItem(EXPORT_PRESETS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   return q;
@@ -7983,6 +8059,7 @@ async function renderVariant(v, base = null) {
   const out = makeCanvas(w, h), x = out.getContext('2d'); x.imageSmoothingQuality = 'high';
   if (type === 'image/jpeg') { x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); }
   x.drawImage(cur, cx, cy, cw, chh, 0, 0, w, h); if (cur !== src) cur.width = 0;
+  if (v.sharpen && v.sharpen !== 'off') applyExportSharpen(out, v.sharpen);
   if (v.watermark) drawWatermark(out, v.watermark === true ? watermarkSettings() : v.watermark);
   if (type === PSD_TYPE) { const b = await flatPSD(out); out.width = 0; return { blob: b, w, h, ext: 'psd' }; }
   let blob = await new Promise((res) => out.toBlob(res, type, q)); out.width = 0;
@@ -8220,7 +8297,7 @@ function openBatchDialog() {
   body.querySelector('[data-wmedit="bWm"]').addEventListener('click', () => { presetWm = null; });
   const bp = body.querySelector('#bPreset'), lastBp = localStorage.getItem(LAST_BATCH_PRESET_KEY);
   const useExportPreset = (p) => {
-    const sz = p.size; list.splice(0, list.length, { ...(sz ? { ...sz } : { mode: 'original' }), type: p.type === PSD_TYPE ? 'image/png' : p.type, quality: p.quality ?? 90, ...(p.dpi ? { dpi: p.dpi } : {}) });
+    const sz = p.size; list.splice(0, list.length, { ...(sz ? { ...sz } : { mode: 'original' }), type: p.type === PSD_TYPE ? 'image/png' : p.type, quality: p.quality ?? 90, ...(p.dpi ? { dpi: p.dpi } : {}), ...(p.sharpen && p.sharpen !== 'off' ? { sharpen: p.sharpen } : {}) });
     ve.dispatchEvent(new CustomEvent('redraw'));
     presetWm = watermarkOfPreset(p); const box = body.querySelector('#bWm'); box.checked = !!presetWm;
     body.querySelectorAll('[data-wmtext]').forEach((el) => { el.textContent = watermarkLabel(presetWm || watermarkSettings()); });
@@ -8386,6 +8463,8 @@ window.tintwork = {
     stroke: async (st) => { const s = state.objSel; if (!s) return null; s.strokes.push({ fg: st.fg !== false, r: st.r || 12, pts: st.pts }); return objSelRun(); }, settled: () => objSelJob, done: objSelDone, cancel: objSelCancel, get state() { return state.objSel; } },
   autoUprightCmd, get lastUpright() { return lastUpright; }, cropEmptyEdges, fillEmptyEdges, innerOpaqueRect, segment: seg,
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
+  exportSharpen: { apply: applyExportSharpen, optionsHTML: exportSharpOptionsHTML, label: exportSharpLabel, presets: EXPORT_SHARP_PRESETS, scaledSharpParams },
+  finishGuidedUpright, uprightFromGuides,
   setProof, setProofWarn, get proofMode() { return proofMode; }, get proofWarn() { return proofWarn; }, PROOF_PAPERS,
   batchAgain, forgetBatchDirs, batchHandle, get lastBatchPrompts() { return lastBatchPrompts; }, LAST_BATCH_KEY,
   watermarkSettings, saveWatermark, drawWatermark, exportWithLastPreset, renderExportWith, readyWatermark, watermarkImageFromFile,
