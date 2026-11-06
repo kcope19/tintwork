@@ -10,7 +10,7 @@ v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York):
 
 | Area | v1.19 | v1.20 | Verdict |
 |---|---|---|---|
-| Full npm test / WebKit | skipped (`TW_SKIP_WEBKIT`) | **1111** ok, WebKit green | **match** (infra) |
+| Full npm test / WebKit | skipped (`TW_SKIP_WEBKIT`) | **1121** ok, WebKit green | **match** (infra) |
 | Library Full (fixed seeds) | ~0.86°; radial gated | 0.86°; force-radial **1.54°** (worse) → stay gated | **trails** 0.5°; safer gated |
 | Brick Full (fixed seeds) | ~1.27° | 1.27° (kEst=0) | **trails** 0.5° |
 | c4 Full (fixed V seeds) | — | **0.23°** | **match** ≤0.5° |

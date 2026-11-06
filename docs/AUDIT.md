@@ -16,7 +16,7 @@ WebKit test restore + measured lens-aware Full (stayed gated).
 
 | # | Finding | Severity | Evidence | Fix | Status |
 |---|---|---|---|---|---|
-| F55 | `npm test` skipped WebKit after Playwright reinstall (missing host libs; apt http mirror 500). | infra | TW_SKIP_WEBKIT; ldd not found | Point apt at HTTPS kernel.org/cloudfront mirrors; `install-dependencies.sh --autoinstall` for WPE/GTK WebKit. Full suite **1111** ok. | v1.20.0 |
+| F55 | `npm test` skipped WebKit after Playwright reinstall (missing host libs; apt http mirror 500). | infra | TW_SKIP_WEBKIT; ldd not found | Point apt at HTTPS kernel.org/cloudfront mirrors; `install-dependencies.sh --autoinstall` for WPE/GTK WebKit. Full suite **1121** ok (WebKit on). | v1.20.0 |
 | F56 | Lens-aware Full target library/brick ≤0.5°. | quality | fixed seeds job 27/28 | Force-apply kEst=-0.05 on library: 0.86°→**1.54°** (worse). Stay gated; compare-gate retained. | measured / gated |
 | F57 | Cathedral mixed gain from v1.18 not restored under full-res probe (mixed worsens V 0.74→1.21). | quality | dig on v117-cathedral | Leave pure-V; frame mixed −0.32° kept. | disclosed |
 
@@ -28,10 +28,12 @@ WebKit test restore + measured lens-aware Full (stayed gated).
 
 **Test-change disclosure:** `v120-test` new (10). Pins accept 1.20.0. Radial not ungated (disclose force-apply harm).
 
-### Live verification (v1.20.0, pending deploy)
+### Live verification (v1.20.0, 2026-11-06 about 1:35 PM America/New_York)
 
-- Local full `npm test` (WebKit on, no TW_SKIP_WEBKIT): **1121** ok (1111 + 10 v120).
-- Live 3× / `120-live-*.png` after push.
+- Live site reports `tintwork-shell-v1.20.0` / `APP_VERSION` 1.20.0 (Pages build `ce67225`, status built; prior `409a1c1` build errored, empty nudge commit fixed deploy).
+- `v120-test` against https://kcope19.github.io/tintwork/ : **10/10 × 3**.
+- Screenshots: `screenshots/120-live-library-full.png`, `120-live-c4-full.png`, `120-live-geneva-refuse.png`, `120-live-hongkong-refuse.png`.
+- Local full `npm test` (WebKit on, no TW_SKIP_WEBKIT): **1121** ok (recounted 2026-11-06; WORKFLOW_BENCHMARK had incorrectly said 1111).
 
 ## v1.19.0 update (2026-11-06, America/New_York)
 
