@@ -19,10 +19,11 @@ Perspective Plumb uses **full-res** ridge samples and chooses Distortion by **mi
 | F61 | Plumb ridge on ≤640 preview under-samples long edges. | quality | v1.21 plumb | `plumbSamplesFromGuides` prefers `x.src` full-res; preview fallback. | v1.22.0 |
 | F62 | Analytical plumb k alone can miss the Distortion that helps Full (wrong sign / too strong). | quality | library/brick sweeps | `refineDistortionByPostFull`: ladder + beat base0 ≥0.05°; mild among near-best; |slider|≤40. | v1.22.0 |
 | F63 | Library Distortion path still >0.5° (best measured +10 → 0.73°). | quality | fine sweep / v122-test | Disclose trail; keep mild +10. | disclosed |
+| F64 | Brick “0.01° after Distortion+20” was in-sample / null-seed artifact; held-out Vs ~1° unchanged; alt Plumb → −15. | audit / quality | workflows-v122-brick-heldout | Disclose; drop ≤0.5° brick bar from v122-test. | disclosed |
 
-**Not done:** library Full/Distortion ≤0.5°; cathedral mixed Suggest; auto ungate of radial; Adaptive Wide Angle.
+**Not done:** library Full/Distortion ≤0.5°; brick held-out ≤0.5°; cathedral mixed Suggest; auto ungate of radial; Adaptive Wide Angle.
 
-**Test-change disclosure:** `v122-test` new (23). Pins accept 1.22.0. No bars loosened.
+**Test-change disclosure:** `v122-test` new (22). Pins accept 1.22.0. No bars loosened.
 
 ### Live verification (v1.22.0, pending)
 

@@ -11,19 +11,21 @@ v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York):
 | Area | v1.21 | v1.22 | Verdict |
 |---|---|---|---|
 | Plumb sampling | ≤640 preview | **full-res** layer (preview fallback) | **closer** |
-| Distortion from Plumb | analytical `solveRadialFromPlumb` (mild) | + **refine by minimizing post-Full residual** (ladder around k0; beat Distortion 0 by ≥0.05°; mild among near-best; auto |slider|≤40) | **new** |
+| Distortion from Plumb | analytical `solveRadialFromPlumb` (mild) | + **refine by minimizing post-Full residual** (ladder around k0; beat Distortion 0 by ≥0.05°; mild among near-best; auto |Distortion|≤40) | **new** |
 | Library Distortion→Full | +10 → **0.73°** (manual) | Plumb refine → **+10** → **0.73°** | **closer**; still trails ≤0.5° |
-| Brick Distortion→Full | trails | Plumb refine → **+20** → **0.01°** (was Full-only 1.35°) | **match** ≤0.5° (manual Plumb path) |
+| Brick Distortion→Full | trails | Plumb refine → **+20**; in-sample plumb chords ~0.01° **overfit**; held-out detected Vs **~1.0°→~1.2°** (no gain); alt Plumb sign-flips to −15 | **trails** ≤0.5° (disclosed) |
 | c4 Full | 0.23° | 0.23° | **match** ≤0.5° |
 | geneva / hongkong Full | refuse | refuse | **match** |
 | Cathedral mixed Suggest | not restored | not restored (mixed still worsens V on full-res probe) | **trails** vs v1.18 |
 | Auto Full radial | gated | gated | **match** |
 | v117 held-out Full apply/refuse | — | same apply/refuse set as prior (no new refuse→apply or apply→refuse) | **match** |
-| Full npm test / WebKit | 1136 | *(pending recount)* | — |
+| Full npm test / WebKit | 1136 | **1158** ok, WebKit green | **match** (infra) |
+
+**Brick honesty (v1.22):** The fine-sweep / v122-test “0.01°” used edges that overlap the Plumb refine objective (and other seeds went `null` after warp). Held-out detected verticals on brick stay ~1° and do **not** improve under Distortion +20; an alternate Plumb pair refined to **−15** (sign flip). Do not treat brick as ≤0.5°. See `docs/audit/workflows-v122-brick-heldout.json`.
 
 **Refine disclosure:** Analytical `scoreLensThenFullResidual` can favour a stronger Distortion than apply+measure (library analytical ~+25 vs measured +10; brick analytical uncapped ~+85). Caps + mild-near-best keep Plumb picks on the measured-safe ridge. Library still trails ≤0.5° with Distortion alone.
 
-**Test-change disclosure:** `v122-test` new (23). Pins accept 1.22.0. No quality bars loosened. geneva/hongkong refuse and c4 ≤0.5° unchanged.
+**Test-change disclosure:** `v122-test` new (22). Pins accept 1.22.0. No quality bars loosened. geneva/hongkong refuse and c4 ≤0.5° unchanged.
 
 ## v1.21 scorecard (manual Lens + Plumb; auto radial still gated)
 
