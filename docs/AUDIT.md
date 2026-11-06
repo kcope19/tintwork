@@ -25,9 +25,12 @@ Upright/perspective **UX + step counts** (Windows mouse-first). Plumb/Upright re
 
 **Test-change disclosure:** `v125-test` new. Pins accept 1.25.0. No quality bars loosened.
 
-### Live verification (v1.25.0, pending deploy)
+### Live verification (v1.25.0, 2026-11-06 5:36 PM America/New_York)
 
-- Full `npm test` (WebKit on): **1239** ok (1214 + 25 v125). Pins accept 1.25.0. Live 3× + screenshots pending push.
+- Live site reports `tintwork-shell-v1.25.0` / `APP_VERSION` 1.25.0 (Pages build `8bdfdcf`, status built).
+- `v125-test` against https://kcope19.github.io/tintwork/ : **25/25 × 3**.
+- Full `npm test` (WebKit on): **1239** ok (1214 + 25).
+- Screenshots: `screenshots/125-live-library-plumb.png`, `125-live-library-lens-full-btn.png`, `125-live-library-lens-full.png`, `125-live-brick-plumb.png`, `125-live-c4-full.png`, `125-live-geneva-refuse.png`.
 
 ## v1.24.0 update (2026-11-06, America/New_York)
 
