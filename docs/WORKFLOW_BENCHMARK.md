@@ -6,6 +6,23 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.17 scorecard (perspective: refuse cancel, constrain-crop, guide snap, grid)
+
+Held-out set: `v117-lowangle`, `lookup`, `station`, `interior`, `flat`, `geo`, `cathedral`, `frame`, `curvy` (+ `station`). Baseline before fixes in `docs/audit/workflows-v117-baseline.json`.
+
+| Area | v1.16 | v1.17 | Verdict |
+|---|---|---|---|
+| Upright refuse UX | mesh left open (~25 s) | mesh cancelled; ~0.1–0.4 s | **match** friction with LR one-click (no stuck tool) |
+| Crop after upright | aspect-locked opaque | constrain-crop (aspect, or free if ≥15% area & mild AR) | **closer** (still trails LR Constrain Crop polish) |
+| Guided mouse precision | freehand only | snap to detected edges | **closer** (3/4-guide quality still trails when guides are poor) |
+| Manual perspective grid | none | thirds + midlines | **closer** |
+| Full ≤0.5° library/brick | trails | unchanged (radial gated) | **trails** |
+| Job 18 Guided steps | 5 (Enter) | 5 | **match** LR Guided 5 |
+
+**Summary:** refuse hang fixed (measured). Snap + grid + constrain-crop are UX/area. Full accuracy not improved. npm test: see release.
+
+**Competitors (features / steps, not pixel match):** Lightroom Upright Auto/Level/Vertical/Full/Guided + Constrain Crop (2 steps Auto). Photoshop Adaptive Wide Angle (more freehand). Affinity Perspective / Live Perspective. Tintwork still trails Full accuracy and Adaptive Wide Angle flexibility; refuse UX no longer trails a stuck tool.
+
 ## v1.16 scorecard (export output sharpening; Guided 2–4 guides)
 
 | Area | v1.15 | v1.16 | Verdict |

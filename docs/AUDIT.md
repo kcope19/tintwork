@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.16.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.17.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,31 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.17.0 update (2026-11-06, America/New_York)
+
+Perspective/upright-only round (no AI, no heal% cycle). **Measured first** on 9 new CC0 held-out photos (`v117-*.jpg`, seeds from line detection on the original before any upright) plus library/brick/geneva/hongkong. Baseline: `docs/audit/workflows-v117-baseline.json`.
+
+| # | Finding | Severity | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F46 | Auto / Level / Vertical / Full **refuse** left the Perspective session open, so Esc was required and scripted waits hit ~25 s. | bug / friction | baseline Level/Full REFUSE rows ~25100 ms on flat/station/geneva/geo | `cancelMeshXf({ quiet: true })` on refuse; status kept. Refuse now ~100–400 ms. | v1.17.0 |
+| F47 | Upright **Crop edges** always aspect-locked; on strong keystones it discarded most of the frame (e.g. flat 717×478 of 1280×853). | friction | baseline crop sizes; compare `innerOpaqueRect` free vs locked | Constrain-crop: keep aspect unless free-aspect opaque rect is ≥15% larger **and** aspect shift ≤1.35×. | v1.17.0 |
+| F48 | Guided upright mouse strokes often missed the true edge (job 18 quality / v1.16 3–4 guide path unmeasured for precision). | friction | offset guide before snap moved ~63 px on c4 | `snapUprightGuide` projects both ends onto a nearby detected V/H line. | v1.17.0 |
+| F49 | Manual Perspective had no grid while dragging corners. | friction | UX vs paid editors' transform overlays | Thirds + midline dashed grid inside the perspective quad (hidden in guide mode). | v1.17.0 |
+
+### What I might be wrong about
+- Constrain-crop free-aspect branch rarely fires on the held-out set (flat stayed aspect-locked because free AR was 3.2 vs 1.5). Area wins may be uncommon; the refuse fix is the clear measured win.
+- Guide snap can attach to the wrong parallel edge in dense facades (geo/curvy). Tol is 14/zoom px; no undo of a single snap without removing the guide.
+- Full ≤0.5° on library/brick was **not** retuned (radial stays gated). Auto-picked seeds on library differ from historical hand seeds — do not compare those ° directly to v1.12 scorecard rows.
+- 3- and 4-guide Guided often matched 2-guide when guides were the top detected lines (not hand-chosen V+H pairs). Quality gain needs intentional mixed guides.
+
+**Not done:** Full within 0.5°; radial warp on; Adaptive Wide Angle–style freehand; ICC.
+
+**Test-change disclosure:** `v117-test` new (13). `v112`/`v114`/`v115`/`v116` version pins accept 1.17.0. No quality bars loosened.
+
+### Live verification (v1.17.0)
+
+- Pending push.
 
 ## v1.16.0 update (2026-11-06, America/New_York)
 

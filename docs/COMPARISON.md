@@ -8,6 +8,10 @@ Reference products: Adobe Photoshop, Affinity Photo, Pixelmator Pro, Capture One
 
 Status key: ✅ done · 🟡 partial · ❌ not yet (milestone where planned)
 
+## v1.17 (2026-11-06)
+
+Perspective-only. Upright **refuse** cancels the mesh (no stuck tool). **Constrain-crop** after upright may keep free aspect when it preserves more area. Guided guides **snap** to detected edges. Manual Perspective shows a **thirds grid**. Full ≤0.5° and radial warp unchanged.
+
 ## v1.16 (2026-11-06)
 
 Non-AI. **Output sharpening** on Export / presets / batch: Screen, Matte paper, Glossy paper × Low / Standard / High (unsharp after resize; not a printer profile). **Guided upright** accepts 2–4 guides with live preview; Enter / Apply guides / 4th finishes. Soft proof still approximate (no ICC). Heal / Full / AI unchanged.

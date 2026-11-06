@@ -1,0 +1,114 @@
+{
+  "app": "1.17.0",
+  "results": [
+    {
+      "file": "v117-flat.jpg",
+      "cmd": "uprightLevel",
+      "ms": 147,
+      "mode": "none",
+      "H": false,
+      "cropFree": false,
+      "size": [
+        1280,
+        853
+      ],
+      "mxf": false
+    },
+    {
+      "file": "v117-station.jpg",
+      "cmd": "uprightFull",
+      "ms": 707,
+      "mode": "none",
+      "H": false,
+      "cropFree": false,
+      "size": [
+        1280,
+        960
+      ],
+      "mxf": false
+    },
+    {
+      "file": "geneva.jpg",
+      "cmd": "uprightFull",
+      "ms": 354,
+      "mode": "none",
+      "H": false,
+      "cropFree": false,
+      "size": [
+        1280,
+        853
+      ],
+      "mxf": false
+    },
+    {
+      "file": "v117-geo.jpg",
+      "cmd": "autoUpright",
+      "ms": 479,
+      "mode": "none",
+      "H": false,
+      "cropFree": false,
+      "size": [
+        1280,
+        854
+      ],
+      "mxf": false
+    },
+    {
+      "file": "v117-flat.jpg",
+      "cmd": "uprightVertical",
+      "ms": 418,
+      "mode": "keystone",
+      "H": true,
+      "crop": {
+        "x": 297,
+        "y": 3,
+        "w": 717,
+        "h": 478
+      },
+      "cropFree": false,
+      "size": [
+        717,
+        478
+      ],
+      "mxf": false
+    },
+    {
+      "file": "v117-lowangle.jpg",
+      "cmd": "uprightVertical",
+      "ms": 483,
+      "mode": "keystone",
+      "H": true,
+      "crop": {
+        "x": 289,
+        "y": 6,
+        "w": 701,
+        "h": 1051
+      },
+      "cropFree": false,
+      "size": [
+        701,
+        1051
+      ],
+      "mxf": false
+    },
+    {
+      "file": "v117-cathedral.jpg",
+      "cmd": "uprightVertical",
+      "ms": 315,
+      "mode": "rotate",
+      "H": true,
+      "crop": {
+        "x": 7,
+        "y": 6,
+        "w": 1264,
+        "h": 956
+      },
+      "cropFree": false,
+      "size": [
+        1264,
+        956
+      ],
+      "mxf": false
+    }
+  ]
+}

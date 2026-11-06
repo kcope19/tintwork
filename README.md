@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.17 (perspective: refuse, constrain-crop, guide snap, grid)
+
+v1.17 keeps to non-AI tools and focuses on upright/perspective. Measured on nine new CC0 held-out architecture photos first. Upright refuse no longer leaves Perspective open; Crop edges may keep a free aspect when that preserves more of the photo; Guided lines snap to detected edges; manual Perspective shows a thirds grid. Full upright ≤0.5° was not retuned. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.16 (export output sharpening, Guided 2–4 guides)
 
 v1.16 keeps to non-AI tools. **Output sharpening** on Export / presets / batch: Screen, Matte paper or Glossy paper at Low / Standard / High (after resize, before watermark; skipped on 16-bit PNG). **Guided upright** accepts up to four guides with a live preview after two; Enter, Apply guides, or the fourth guide finishes. Soft-proof ICC, heal % and Full ≤0.5° were not revisited. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
