@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.26.0';
+const APP_VERSION = '1.27.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -4132,8 +4132,9 @@ function applySuggestedGuides(x) {
   const mixedList = finite.filter((c) => c.mixed).sort((a, b) => a.score - b.score || b.guides.length - a.guides.length);
   let best = null;
   // Accept mixed only when it does not worsen VP-inlier verticals by >0.5°, and either improves
-  // those verticals (≥0.15°), improves inlier horizontals by ≥2°, or beats pure-V by ≥0.25° on
-  // the broad probe. Decorative edges in the broad V set no longer veto busy-facade mixes.
+  // those verticals (≥0.15°), improves inlier horizontals by ≥2°, or (v1.27) beats pure-V by
+  // ≥2° on the broad probe when the H probe is thin (<2 lines). Decorative edges in the broad
+  // V set no longer veto busy-facade mixes.
   if (v2 && mixedList.length) {
     // V gate: VP inliers (busy facades). H gate: broad horizontals so interior furniture
     // lines cannot invent a fake ≥2° H win (F51 / v1.18 interior refuse).
@@ -4162,9 +4163,14 @@ function applySuggestedGuides(x) {
         const slack = vBetter ? 0.75 : 0.25;
         top2Safe = bigH || !(Number.isFinite(onMix) && Number.isFinite(onV2) && onMix > onV2 + slack);
       }
-      const acceptMix = vOk && top2Safe && (overallBetter || vOnlyBetter || hBetter) && (vBetter || hBetter || vOnlyBetter);
+      // v1.27: overallBetter alone never fired (second AND required a directional flag).
+      // When the H probe is thin (<2) and the broad score wins by ≥2°, accept mix if V stays
+      // within vOk — unlocks held-out resid without reopening interior (thick H probe).
+      const thinH = !(Number.isFinite(mH) && Number.isFinite(vH));
+      const bigOverall = Number.isFinite(mixed.score) && Number.isFinite(v2.score) && mixed.score <= v2.score - 2.0;
+      const acceptMix = vOk && top2Safe && (vBetter || vOnlyBetter || hBetter || (overallBetter && thinH && bigOverall));
       const info = {
-        acceptMix, vOk, top2Safe, overallBetter, vOnlyBetter, hBetter, vBetter,
+        acceptMix, vOk, top2Safe, overallBetter, vOnlyBetter, hBetter, vBetter, thinH, bigOverall,
         mV, vv, mH, vH, mixedScore: mixed.score, v2score: v2.score,
         mixedN: mixed.guides.length, mixedNv: mixed.nv, mixedNh: mixed.nh, v2src: v2.source,
         source: mixed.source, gateV: vProbe.length, gateH: hProbe.length,

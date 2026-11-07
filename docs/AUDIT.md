@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.26.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.27.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,22 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.27.0 update (2026-11-07, America/New_York)
+
+Suggest guides: when the **H probe is thin** (<2 horizontals) and the broad mix score beats pure-V by **≥2°**, accept mixed if VP verticals stay within **vOk** (±0.5°). Fixes held-out **resid** (~15.8° pure-V → mixed ~3.4°) without reopening **interior** (thick H probe). Glass stays pure-V (vOk false).
+
+| ID | Finding | Kind | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F77 | Resid held-out Suggest left ~15.8° pure-V; mix had overallBetter (3.4 vs 15.8) and vOk but second acceptMix AND required a directional flag, so overallBetter never fired alone. | quality | workflows-v126-holdout-baseline; gate sim | thinH ∧ bigOverall (≥2°) path in acceptMix | v1.27.0 |
+
+**Not done:** glass held-out (~21.6°; mix hurts VP V); library ≤0.5°; auto radial ungate.
+
+**Test-change disclosure:** `v127-test` new. Pins 1.27.0. v126 pins accept 1.27.0. No validate-set quality bars loosened.
+
+### Live verification (v1.27.0, pending deploy)
+
+- Local gates + `v127-test` before push; live ×3 after Pages build.
 
 ## v1.26.0 update (2026-11-06, America/New_York)
 

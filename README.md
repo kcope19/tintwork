@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.27 (Suggest thin-H overall)
+
+v1.27 keeps to non-AI tools. **Suggest guides** now accepts a mixed V+H correction when the horizontal probe is thin (<2 lines) and the broad mix score beats a pure-vertical pair by ≥2°, as long as VP-inlier verticals stay within 0.5° of pure-V. Held-out **resid** moves from ~15.8° pure-V to a mixed suggest (~3.4° probe). Interior/brick/flat/lowangle/geneva stay pure-V; glass still refuses mix (VP verticals would worsen). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.25 (upright / perspective UX)
 
 v1.25 keeps to non-AI tools and focuses on **Windows mouse-first** upright/perspective friction. After **Plumb** or **Upright** refuses, the status bar shows a one-line plain-language reason (Plumb includes check-set **median/worst**). When Distortion ≠ 0, **Apply Lens + Full** is one click and **one undo** (Enter does the same). Perspective panel: A/L/V/F/G/P keys, clearer tooltips, default focus on Full, Esc/Enter clarified. USER_GUIDE perspective section documents when each mode works or refuses. Docs that cited library **0.73°** now mark it **in-sample**. Quality bars unchanged (library ≤0.5° still not reachable via Distortion; cathedral mixed still refused). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
