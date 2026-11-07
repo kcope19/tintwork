@@ -22,9 +22,10 @@ Suggest guides: when the **H probe is thin** (<2 horizontals) and the broad mix 
 
 **Test-change disclosure:** `v127-test` new. Pins 1.27.0. v126 pins accept 1.27.0. No validate-set quality bars loosened.
 
-### Live verification (v1.27.0, pending deploy)
+### Live verification (v1.27.0, 2026-11-07 about 4:50 PM America/New_York)
 
-- Local gates + `v127-test` before push; live ×3 after Pages build.
+- Live site reports `tintwork-shell-v1.27.0` / `APP_VERSION` 1.27.0 (Pages build `d4f37a3`, status built; earlier `99068a4` Pages build errored, retry landed).
+- `v127-test` against https://kcope19.github.io/tintwork/ : **19/19 × 3**.
 
 ## v1.26.0 update (2026-11-06, America/New_York)
 
