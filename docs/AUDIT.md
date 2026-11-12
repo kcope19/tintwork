@@ -25,6 +25,13 @@ Suggest guides: also mix diversified H with the **suggested vertical pair (sugV)
 
 **Test-change disclosure:** `v128-test` new (27). Pins accept 1.28.0. v127 glass pin accepts v1.28 vOk mixed. Full npm test **1307** ok (WebKit; 1280 + 27).
 
+### Live verification (v1.28.0, 2026-11-12 about 12:55 PM America/New_York)
+
+- Live site reports `tintwork-shell-v1.28.0` / `APP_VERSION` 1.28.0 (Pages build `46de0d5`, status built; run 43273358969).
+- `v128-test` against https://kcope19.github.io/tintwork/ : **27/27 × 3**.
+- Screenshots: `screenshots/128-live-glass-suggest.png` (Suggest 2V+2H · ~18.8°), `128-live-city-suggest.png` (2V+2H · ~0.8°), `128-live-cathedral-suggest.png` (2V+1H · ~1.2°), `128-live-interior-suggest.png` (pure-V · ~6.6°).
+
+
 ## v1.27.0 update (2026-11-07, America/New_York)
 
 Suggest guides: when the **H probe is thin** (<2 horizontals) and the broad mix score beats pure-V by **≥2°**, accept mixed if VP verticals stay within **vOk** (±0.5°). Fixes held-out **resid** (~15.8° pure-V → mixed ~3.4°) without reopening **interior** (thick H probe). Glass stays pure-V (vOk false).
