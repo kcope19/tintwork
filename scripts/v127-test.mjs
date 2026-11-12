@@ -36,11 +36,11 @@ await page.waitForFunction(() => window.tintwork && document.readyState === 'com
 await page.evaluate(() => window.tintwork.engineReady);
 const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }));
 
-check(await T(() => window.tintwork.APP_VERSION) === '1.27.0', `APP_VERSION is 1.27.0 (${await T(() => window.tintwork.APP_VERSION)})`);
+check(await T(() => window.tintwork.APP_VERSION) === '1.27.0' || await T(() => window.tintwork.APP_VERSION) === '1.28.0', `APP_VERSION is 1.27.0 (${await T(() => window.tintwork.APP_VERSION)})`);
 {
   const swText = await page.evaluate(async (base) => (await fetch(new URL('sw.js', base), { cache: 'no-store' })).text(), BASE);
   const m = /tintwork-shell-v([\d.]+)/.exec(swText);
-  check(m?.[1] === '1.27.0', `SW CACHE is 1.27.0 (${m?.[1]})`);
+  check(m?.[1] === '1.27.0' || m?.[1] === '1.28.0', `SW CACHE is 1.27.0 (${m?.[1]})`);
 }
 
 const open = async (file, as = file) => {
@@ -72,10 +72,12 @@ const suggest = async (file) => {
     `resid gate thinH+bigOverall+vOk (mS=${r.gate?.mixedScore?.toFixed?.(1)}, v2=${r.gate?.v2score?.toFixed?.(1)})`);
 }
 
-// glass still pure-V (vOk false)
+// glass: v1.27 stayed pure-V (top-2 mix failed vOk); v1.28 accepts sugV+H with vOk.
 {
   const r = await suggest('v126-glass.jpg');
-  check(r.ok && !r.mixed && r.nv >= 2, `glass Suggest pure-V (n=${r.n}, nh=${r.nh}, vOk=${r.gate?.vOk})`);
+  const ok127 = r.ok && !r.mixed && r.nv >= 2;
+  const ok128 = r.ok && r.mixed && r.nv >= 2 && r.nh >= 1 && r.gate?.vOk === true;
+  check(ok127 || ok128, `glass Suggest pure-V or vOk mixed (n=${r.n}, nh=${r.nh}, mixed=${r.mixed}, vOk=${r.gate?.vOk})`);
 }
 
 // city still mixed

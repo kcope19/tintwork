@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.27.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.28.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,21 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.28.0 update (2026-11-12, America/New_York)
+
+Suggest guides: also mix diversified H with the **suggested vertical pair (sugV)** when it differs from top-2. On **glass**, top-2 V + H still fails **vOk** (VP-inlier V 5.59°→8.67°); sugV + the same H is accepted: leftover **~21.6° → ~18.8°**, VP V **5.59° → ~4.89°** (better, not merely within slack). Gates are unchanged. Among already-accepted mixes, pick by leftover tilt (VP-V only as a 0.25° tie-break) so a slightly better VP-V cannot displace a several-degree leftover win.
+
+| ID | Finding | Kind | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F78 | Glass Suggest stayed pure-V at ~21.6° because mixes used only top-2 V; that 2V+2H candidate cut leftover to ~16.7° but worsened VP V 5.59°→8.67° (vOk refuse). The preferred sugV pair + the same H yields ~18.8° with VP V ~4.89°. | quality | workflows-v128-holdout-baseline; workflows-v128-cand-dump; workflows-v128-after | Enumerate H mixes for sugV as well as top-2; prefer leftover among accepted mixes. No gate loosened. | v1.28.0 |
+| F79 | Need fresh held-outs: resid was tuned in v1.27 (no longer held-out); glass is in-sample as of v1.28. | audit | LICENSES.md; workflows-v128-holdout-baseline | CC0 `v128-towers.jpg`, `v128-masonry.jpg`, `v128-balconies.jpg`; baseline recorded on v1.27.0 before any code change. | v1.28.0 |
+
+**Not done:** glass leftover still ~18.8° (trails a tight upright); library ≤0.5°; auto radial ungate. `v128-towers` baseline mixed leftover (~43.9°) is worse than its own pure-V (~32.2°) because vBetter can accept a mix that hurts overall — not fixed this round (held-out).
+
+**Disclosure:** glass is **in-sample** (motivated the sugV mix). resid has not been held-out since v1.27. city leftover ~5.0°→~0.8° is a side effect of the leftover-first picker, not a city-specific tune. Validate set (interior/brick/flat/lowangle/geneva pure-V; cathedral mixed ~1.2°) unchanged in mode. No quality bars loosened.
+
+**Test-change disclosure:** `v128-test` new (27). Pins accept 1.28.0. v127 glass pin accepts v1.28 vOk mixed. Full npm test **1307** ok (WebKit; 1280 + 27).
 
 ## v1.27.0 update (2026-11-07, America/New_York)
 

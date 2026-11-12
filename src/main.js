@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.27.0';
+const APP_VERSION = '1.28.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -4087,26 +4087,42 @@ function applySuggestedGuides(x) {
   // v1.19: ranked pure-V pairs + diversify top-2 (hand-style). Prefer top-2 unless ranked
   // beats it by ≥0.5° on the V-only probe (protects flat held-out from clever-but-wrong pairs).
   let top2 = [];
+  let ranked = [];
   try {
     const vProbeOnly = probe.filter(isV);
-    const ranked = bestVerticalPairGuides(x, { probe: vProbeOnly, minSepFrac: 0.12, maxLines: 8 });
+    ranked = bestVerticalPairGuides(x, { probe: vProbeOnly, minSepFrac: 0.12, maxLines: 8 });
     if (ranked.length >= 2) consider(ranked, 'ranked');
     top2 = diversifyTop2Verticals(x);
     if (top2.length >= 2) consider(top2, 'top2');
   } catch { /* keep existing cands */ }
   // v1.26 busy facades: try top-2 V with each diversified H (and H pairs) so a single bad
   // suggest-H does not block a viable mixed correction on cathedral-like scenes.
-  const vPair = (top2.length >= 2 ? top2 : onlyV.slice(0, 2));
+  // v1.28: also mix those H with the suggested upright V pair (sugV) when it differs
+  // from top-2. On glass, top-2 V + H worsens VP verticals and is refused, while the
+  // same H with sugV improves leftover tilt without making those verticals worse.
   const hCands = [];
   for (const h of hPool) hCands.push(h);
   for (const h of onlyH) {
     const m = (h[0][1] + h[1][1]) / 2;
     if (hCands.every((o) => Math.abs(((o[0][1] + o[1][1]) / 2) - m) >= 0.08 * (x.h || 1))) hCands.push(h);
   }
-  if (vPair.length >= 2) {
+  const midXPair = (g) => (g[0][0] + g[1][0]) / 2;
+  const pairKey = (pair) => pair.slice(0, 2).map((g) => midXPair(g).toFixed(1)).sort().join('|');
+  const vPairs = [];
+  const addVPair = (g, tag) => {
+    if (!g || g.length < 2) return;
+    const key = pairKey(g);
+    if (vPairs.some((p) => p.key === key)) return;
+    vPairs.push({ g: g.slice(0, 2), tag, key });
+  };
+  addVPair(top2, 'top2');
+  addVPair(onlyV, 'sugV');
+  // Ranked V + H is not mixed: on interior / lowangle a ranked pair can pass vBetter
+  // and flip a required pure-V validate photo to mixed. Glass is fixed by sugV + H.
+  for (const p of vPairs) {
     for (let i = 0; i < hCands.length; i++) {
-      consider([...vPair, hCands[i]], `mixH${i}`);
-      for (let j = i + 1; j < Math.min(hCands.length, i + 3); j++) consider([...vPair, hCands[i], hCands[j]], `mixH${i}_${j}`);
+      consider([...p.g, hCands[i]], `mix_${p.tag}_H${i}`);
+      for (let j = i + 1; j < Math.min(hCands.length, i + 3); j++) consider([...p.g, hCands[i], hCands[j]], `mix_${p.tag}_H${i}_${j}`);
     }
   }
   if (!cands.length) {
@@ -4176,7 +4192,13 @@ function applySuggestedGuides(x) {
         source: mixed.source, gateV: vProbe.length, gateH: hProbe.length,
       };
       if (acceptMix) {
-        if (!chosen || mV < chosen.mV - 0.05 || (Math.abs(mV - chosen.mV) <= 0.05 && mixed.score < chosen.score)) {
+        // v1.28: among mixes that already passed the gates, prefer leftover tilt.
+        // Use VP-V residual only as a tie-break within 0.25°. The older mV-first
+        // swap could pick a slightly better VP-V that was several degrees worse overall.
+        if (!chosen
+          || mixed.score < chosen.score - 0.25
+          || (mixed.score <= chosen.score + 0.25 && mV < chosen.mV - 0.05)
+          || (Math.abs(mixed.score - chosen.score) <= 0.25 && Math.abs(mV - chosen.mV) <= 0.05 && mixed.score < chosen.score)) {
           chosen = { ...mixed, mV, score: mixed.score };
           gateInfo = info;
         }

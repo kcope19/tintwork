@@ -1,0 +1,187 @@
+{
+  "note": "v1.28 glass-style guide enumeration on v1.27.0 (no code change). 2026-11-12 America/New_York.",
+  "rows": {
+    "v126-glass.jpg": {
+      "detect": {
+        "nV": 28,
+        "nH": 28,
+        "vInl": 8,
+        "hInl": 13,
+        "uv": "keystone",
+        "uh": "keystone",
+        "vPool": 2,
+        "hPool": 3,
+        "nPairs": 1,
+        "nCands": 7
+      },
+      "ref": {
+        "v2name": "sugV",
+        "v2score": 21.631933423398916,
+        "vv": 5.594655652954265,
+        "vH": 3.5368230291039353,
+        "onV2": 21.631933423398916
+      },
+      "nWinNoWorseV": 3,
+      "nAcceptExistingMix": 3,
+      "nVOkOverallMix": 3,
+      "wins": [
+        {
+          "name": "sugV+H0_1",
+          "n": "2V+2H",
+          "score": 18.582,
+          "mV": 4.795,
+          "mH": 3.795,
+          "vOk": true,
+          "vNotWorse": true,
+          "vBetter": true,
+          "hBetter": false,
+          "acceptExisting": true,
+          "top2Safe": true
+        },
+        {
+          "name": "sugV+H0_2",
+          "n": "2V+2H",
+          "score": 19.598,
+          "mV": 5.066,
+          "mH": 3.528,
+          "vOk": true,
+          "vNotWorse": true,
+          "vBetter": true,
+          "hBetter": false,
+          "acceptExisting": true,
+          "top2Safe": true
+        },
+        {
+          "name": "sugV+H1_2",
+          "n": "2V+2H",
+          "score": 20.32,
+          "mV": 5.233,
+          "mH": 4.029,
+          "vOk": true,
+          "vNotWorse": true,
+          "vBetter": true,
+          "hBetter": false,
+          "acceptExisting": true,
+          "top2Safe": true
+        }
+      ],
+      "acceptExistingMix": [
+        {
+          "name": "sugV+H0_1",
+          "n": "2V+2H",
+          "score": 18.582,
+          "mV": 4.795,
+          "mH": 3.795,
+          "vOk": true,
+          "vNotWorse": true,
+          "vBetter": true,
+          "hBetter": false,
+          "acceptExisting": true,
+          "top2Safe": true
+        },
+        {
+          "name": "sugV+H0_2",
+          "n": "2V+2H",
+          "score": 19.598,
+          "mV": 5.066,
+          "mH": 3.528,
+          "vOk": true,
+          "vNotWorse": true,
+          "vBetter": true,
+          "hBetter": false,
+          "acceptExisting": true,
+          "top2Safe": true
+        },
+        {
+          "name": "sugV+H1_2",
+          "n": "2V+2H",
+          "score": 20.32,
+          "mV": 5.233,
+          "mH": 4.029,
+          "vOk": true,
+          "vNotWorse": true,
+          "vBetter": true,
+          "hBetter": false,
+          "acceptExisting": true,
+          "top2Safe": true
+        }
+      ],
+      "vOkOverallMix": [
+        {
+          "name": "sugV+H0_1",
+          "n": "2V+2H",
+          "score": 18.582,
+          "mV": 4.795,
+          "mH": 3.795,
+          "vOk": true,
+          "vNotWorse": true,
+          "vBetter": true,
+          "hBetter": false,
+          "acceptExisting": true,
+          "top2Safe": true
+        },
+        {
+          "name": "sugV+H0_2",
+          "n": "2V+2H",
+          "score": 19.598,
+          "mV": 5.066,
+          "mH": 3.528,
+          "vOk": true,
+          "vNotWorse": true,
+          "vBetter": true,
+          "hBetter": false,
+          "acceptExisting": true,
+          "top2Safe": true
+        },
+        {
+          "name": "sugV+H1_2",
+          "n": "2V+2H",
+          "score": 20.32,
+          "mV": 5.233,
+          "mH": 4.029,
+          "vOk": true,
+          "vNotWorse": true,
+          "vBetter": true,
+          "hBetter": false,
+          "acceptExisting": true,
+          "top2Safe": true
+        }
+      ],
+      "bestOverall": {
+        "name": "sugV+H0_1",
+        "n": "2V+2H",
+        "score": 18.582,
+        "mV": 4.795,
+        "mH": 3.795,
+        "vOk": true,
+        "vNotWorse": true,
+        "vBetter": true,
+        "hBetter": false,
+        "acceptExisting": true,
+        "top2Safe": true
+      },
+      "bestVsafe": {
+        "name": "sugV+H0_1",
+        "n": "2V+2H",
+        "score": 18.582,
+        "mV": 4.795,
+        "mH": 3.795,
+        "vOk": true,
+        "vNotWorse": true,
+        "vBetter": true,
+        "hBetter": false,
+        "acceptExisting": true,
+        "top2Safe": true
+      },
+      "pureVtop": [
+        {
+          "name": "sugV",
+          "n": "2V+0H",
+          "score": 21.632,
+          "mV": 5.595,
+          "mH": 3.537
+        }
+      ]
+    }
+  }
+}

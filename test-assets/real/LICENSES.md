@@ -58,5 +58,20 @@ Downloaded **after** shipping the v1.26 Suggest busy-facade gate; seed edges / S
 | | https://commons.wikimedia.org/wiki/File:City_Facade_(Unsplash).jpg | orig 6000×4000; stored as 1280 long-edge thumb | | |
 | v126-glass.jpg | File:Dark glass facade (Unsplash).jpg | CC0 | Mike Wilson (@mkwlsn) | held-out: dark glass facade |
 | | https://commons.wikimedia.org/wiki/File:Dark_glass_facade_(Unsplash).jpg | orig 4081×2721; stored as 1280 long-edge thumb | | |
-| v126-resid.jpg | File:Modern residential facade (Unsplash).jpg | CC0 | Samuel Zeller (@samuelzeller) | held-out: modern residential facade |
+| v126-resid.jpg | File:Modern residential facade (Unsplash).jpg | CC0 | Samuel Zeller (@samuelzeller) | **no longer held-out** (tuned in v1.27 thin-H overall mix) |
 | | https://commons.wikimedia.org/wiki/File:Modern_residential_facade_(Unsplash).jpg | orig 5225×3483; stored as 1280 long-edge thumb | | |
+
+> **v1.27 disclosure:** `v126-resid.jpg` was a v1.26 held-out photo. The v1.27 thin-H overall mix was tuned against it, so it is no longer held-out. `v126-city.jpg` and `v126-glass.jpg` were measured only (not tuned) in v1.27.
+
+## v1.28 held-out upright set (downloaded 2026-11-12, America/New_York)
+
+Downloaded **after** planning the v1.28 glass-facade pass and **before** any further Suggest change. Seed Suggest results recorded on current v1.27.0 before any tune. Unsplash publication dates are all before 5 June 2017 (CC0).
+
+| File | Commons file | Licence | Author | Role |
+|---|---|---|---|---|
+| v128-towers.jpg | File:Glass london skyscrapers (Unsplash).jpg | CC0 | Samuel Zeller samuelzeller | held-out: looking-up glass towers (London) |
+| | https://commons.wikimedia.org/wiki/File:Glass_london_skyscrapers_(Unsplash).jpg | orig 3264×4896; stored as 1280 long-edge thumb | Unsplash 17 March 2016 | |
+| v128-masonry.jpg | File:Brown apartment building (Unsplash).jpg | CC0 | Rene Bieder renebieder | held-out: angled masonry apartment facade |
+| | https://commons.wikimedia.org/wiki/File:Brown_apartment_building_(Unsplash).jpg | orig 4000×2667; stored as 1280 long-edge thumb | Unsplash 10 June 2016 | |
+| v128-balconies.jpg | File:Stern white balconies (Unsplash).jpg | CC0 | Drew Patrick Miller drewpatrickmiller | held-out: busy repeating balcony facade |
+| | https://commons.wikimedia.org/wiki/File:Stern_white_balconies_(Unsplash).jpg | orig 6016×4016; stored as 1280 long-edge thumb | Unsplash 22 January 2016 | |

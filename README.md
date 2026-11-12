@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.28 (Suggest sugV mixes + leftover picker)
+
+v1.28 keeps to non-AI tools. **Suggest guides** now also mixes horizontals with the *suggested* vertical pair, not only diversify top-2. On **glass**, top-2 V + H still fails vOk (VP verticals would worsen 5.59°→8.67°), but the same H with the suggested V pair is mixed: leftover **~21.6° → ~18.8°**, and VP verticals improve **5.59° → ~4.89°**. Gates (vOk, vBetter, hBetter, thinH) are unchanged. Among mixes that already pass the gates, the picker prefers leftover tilt (VP-V is a 0.25° tie-break), which also cuts **city** leftover ~5.0° → ~0.8° without changing resid (~3.4°) or the pure-V validate set. **Glass is no longer held-out** (this change was motivated by it). Three new CC0 held-outs (`v128-towers`, `v128-masonry`, `v128-balconies`) were measured before any change and were not used to tune. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.27 (Suggest thin-H overall)
 
 v1.27 keeps to non-AI tools. **Suggest guides** now accepts a mixed V+H correction when the horizontal probe is thin (<2 lines) and the broad mix score beats a pure-vertical pair by ≥2°, as long as VP-inlier verticals stay within 0.5° of pure-V. Held-out **resid** moves from ~15.8° pure-V to a mixed suggest (~3.4° probe). Interior/brick/flat/lowangle/geneva stay pure-V; glass still refuses mix (VP verticals would worsen). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).

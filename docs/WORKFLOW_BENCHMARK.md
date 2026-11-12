@@ -6,6 +6,26 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.28 scorecard (sugV mixes + leftover picker for glass)
+
+Tune: glass (in-sample as of this release). Validate: interior, brick, flat, lowangle, geneva (must stay pure-V); cathedral mixed ~1.2°; city mixed; resid mixed ~3.4° (resid no longer held-out since v1.27). New held-outs (measured on v1.27.0 before any change; not used to tune): `v128-towers`, `v128-masonry`, `v128-balconies`.
+
+| Photo | Suggest (v1.27) | Suggest (v1.28) | Notes |
+|---|---|---|---|
+| v126-glass (in-sample) | pure-V ~21.6° | **mixed** ~18.8° (2V+2H) | VP V 5.59°→**4.89°** (not worse). The 16.7° top-2 mix still fails vOk (8.67°). |
+| v126-city | mixed ~5.0° | mixed ~0.8° (2V+2H) | leftover-first picker among already-accepted mixes; vOk held |
+| v126-resid | mixed ~3.4° | mixed ~3.4° | unchanged |
+| v117-interior / brick / flat / lowangle / geneva | pure-V | pure-V | unchanged |
+| v117-cathedral | mixed ~1.2° (2V+1H) | mixed ~1.2° (2V+1H) | unchanged mode |
+| v117-frame / library / c4 | mixed | mixed | c4 leftover ~2.2°→~1.9°; frame ~1.0°→~0.9° |
+| v128-towers (holdout) | mixed ~43.9° | mixed ~43.9° | baseline only; leftover worse than its pure-V ~32.2° (disclosed) |
+| v128-masonry (holdout) | pure-V ~0.1° | pure-V ~0.1° | baseline only |
+| v128-balconies (holdout) | mixed ~5.4° | mixed ~3.7° | not tuned; measured after the general change |
+
+**Disclosure:** no vOk / vBetter / hBetter / thinH gate was loosened. Radial lens stays gated. Library Full ≤0.5° was not chased via Distortion.
+
+**Test-change disclosure:** `v128-test` new (27). Pins accept 1.28.0. Full npm test **1307** ok (WebKit).
+
 ## v1.27 scorecard (thin-H overall mix for resid)
 
 Held-out resid: Suggest **mixed** when thin H probe + broad score ≥2° better than pure-V and vOk. Validate set unchanged from v1.26.
