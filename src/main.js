@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.28.0';
+const APP_VERSION = '1.29.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -4184,9 +4184,12 @@ function applySuggestedGuides(x) {
       // within vOk — unlocks held-out resid without reopening interior (thick H probe).
       const thinH = !(Number.isFinite(mH) && Number.isFinite(vH));
       const bigOverall = Number.isFinite(mixed.score) && Number.isFinite(v2.score) && mixed.score <= v2.score - 2.0;
-      const acceptMix = vOk && top2Safe && (vBetter || vOnlyBetter || hBetter || (overallBetter && thinH && bigOverall));
+      // v1.29: overall do-no-harm. A mix may pass a directional gate (e.g. VP-V slightly better)
+      // yet leave far more leftover tilt than pure-V (held-out v128-towers: 43.9° vs 32.2°).
+      const noOverallHarm = !(Number.isFinite(mixed.score) && Number.isFinite(v2.score) && mixed.score > v2.score + 1.0);
+      const acceptMix = vOk && top2Safe && noOverallHarm && (vBetter || vOnlyBetter || hBetter || (overallBetter && thinH && bigOverall));
       const info = {
-        acceptMix, vOk, top2Safe, overallBetter, vOnlyBetter, hBetter, vBetter, thinH, bigOverall,
+        acceptMix, vOk, top2Safe, noOverallHarm, overallBetter, vOnlyBetter, hBetter, vBetter, thinH, bigOverall,
         mV, vv, mH, vH, mixedScore: mixed.score, v2score: v2.score,
         mixedN: mixed.guides.length, mixedNv: mixed.nv, mixedNh: mixed.nh, v2src: v2.source,
         source: mixed.source, gateV: vProbe.length, gateH: hProbe.length,

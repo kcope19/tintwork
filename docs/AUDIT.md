@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.28.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.29.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,20 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.29.0 update (2026-11-14, America/New_York)
+
+Suggest guides: **overall do-no-harm** (`noOverallHarm`). A mixed V+H candidate is now refused when its leftover tilt is more than 1° worse than the pure-V choice, even if a directional gate (vBetter, vOnlyBetter, hBetter) passes. On `v128-towers`, VP-inlier V was slightly better with the mix (3.27° vs 3.50°), so vBetter accepted a mix that left **~43.9°** against pure-V **~32.2°**. Now towers stays pure-V at ~32.2°.
+
+| ID | Finding | Kind | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F80 | A mix could pass vBetter on a tiny VP-V gain while leaving ~11.7° more overall leftover than pure-V (`v128-towers`). | quality | workflows-v128-after (v1.28 row) | Add `noOverallHarm`: refuse a mix whose leftover exceeds pure-V by >1°. No other gate changed. | v1.29.0 |
+
+**Not done:** towers pure-V ~32.2° is still a large leftover (Suggest picks poor guides there); glass ~18.8°; library ≤0.5°; auto radial ungate. Fresh held-outs are needed again.
+
+**Disclosure:** `v128-towers` is **no longer held-out** (it motivated this change). All 14 other rows in the v1.28 suite keep the same mode and leftover (re-measured before and after the change on the same box). No quality bars loosened.
+
+**Test-change disclosure:** `v129-test` new. Version pins accept 1.29.0. The v128 towers check (Suggest returns ≥2 guides) still passes. Full npm test **1329** ok (WebKit; 1307 + 22).
 
 ## v1.28.0 update (2026-11-12, America/New_York)
 

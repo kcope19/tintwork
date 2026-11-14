@@ -6,6 +6,17 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.29 scorecard (Suggest overall do-no-harm)
+
+Tune: v128-towers (no longer held-out). Validate: every other v1.28 row must keep its mode and leftover.
+
+| Photo | Suggest (v1.28) | Suggest (v1.29) | Notes |
+|---|---|---|---|
+| v128-towers (in-sample now) | mixed ~43.9° (2V+1H) | **pure-V ~32.2°** | mix passed vBetter on VP V 3.27° vs 3.50° but was 11.7° worse overall; now refused |
+| all other 14 rows | as v1.28 | as v1.28 | unchanged mode and leftover |
+
+**Disclosure:** only the new `noOverallHarm` gate was added; no gate was loosened. Towers still trails a good upright.
+
 ## v1.28 scorecard (sugV mixes + leftover picker for glass)
 
 Tune: glass (in-sample as of this release). Validate: interior, brick, flat, lowangle, geneva (must stay pure-V); cathedral mixed ~1.2°; city mixed; resid mixed ~3.4° (resid no longer held-out since v1.27). New held-outs (measured on v1.27.0 before any change; not used to tune): `v128-towers`, `v128-masonry`, `v128-balconies`.
