@@ -24,6 +24,10 @@ Suggest guides: **overall do-no-harm** (`noOverallHarm`). A mixed V+H candidate 
 
 **Test-change disclosure:** `v129-test` new. Version pins accept 1.29.0. The v128 towers check (Suggest returns ≥2 guides) still passes. Full npm test **1329** ok (WebKit; 1307 + 22).
 
+### Live verification (v1.29.0, 2026-11-14 about 2:30 PM America/New_York)
+
+- Live site reports `tintwork-shell-v1.29.0` (Pages build `11615db`, status built). `TW_URL=https://kcope19.github.io/tintwork/ node scripts/v129-test.mjs`: 22/22, three times out of three.
+
 ## v1.28.0 update (2026-11-12, America/New_York)
 
 Suggest guides: also mix diversified H with the **suggested vertical pair (sugV)** when it differs from top-2. On **glass**, top-2 V + H still fails **vOk** (VP-inlier V 5.59°→8.67°); sugV + the same H is accepted: leftover **~21.6° → ~18.8°**, VP V **5.59° → ~4.89°** (better, not merely within slack). Gates are unchanged. Among already-accepted mixes, pick by leftover tilt (VP-V only as a 0.25° tie-break) so a slightly better VP-V cannot displace a several-degree leftover win.
