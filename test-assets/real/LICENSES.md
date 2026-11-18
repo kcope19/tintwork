@@ -75,3 +75,16 @@ Downloaded **after** planning the v1.28 glass-facade pass and **before** any fur
 | | https://commons.wikimedia.org/wiki/File:Brown_apartment_building_(Unsplash).jpg | orig 4000×2667; stored as 1280 long-edge thumb | Unsplash 10 June 2016 | |
 | v128-balconies.jpg | File:Stern white balconies (Unsplash).jpg | CC0 | Drew Patrick Miller drewpatrickmiller | held-out: busy repeating balcony facade |
 | | https://commons.wikimedia.org/wiki/File:Stern_white_balconies_(Unsplash).jpg | orig 6016×4016; stored as 1280 long-edge thumb | Unsplash 22 January 2016 | |
+
+## v1.30 held-out upright set (downloaded 2026-11-18, America/New_York)
+
+Downloaded **after** shipping v1.29.0 and **before** any v1.30 Suggest change. Chosen as towers-like (looking-up / converging high-rises). Seed Suggest results recorded on v1.29.0 in `docs/audit/workflows-v130-holdout-baseline.json` before any tune. Unsplash publication dates are before 5 June 2017 (CC0).
+
+| File | Commons file | Licence | Author | Role |
+|---|---|---|---|---|
+| v130-angle.jpg | File:Angle shot of skyscrapers (Unsplash).jpg | CC0 | S hanY shanylemen | held-out: angled skyscrapers |
+| | https://commons.wikimedia.org/wiki/File:Angle_shot_of_skyscrapers_(Unsplash).jpg | orig 4160×3120; stored as 1280 long-edge thumb | 2016-09-28 | |
+| v130-highrise.jpg | File:High rise building from below (Unsplash).jpg | CC0 | Hans Eiskonen eiskonen | held-out: high-rise from below |
+| | https://commons.wikimedia.org/wiki/File:High_rise_building_from_below_(Unsplash).jpg | orig 3733×2489; stored as 1280 long-edge thumb | 2015-05-22 | |
+| v130-below.jpg | File:Skyscrapers from below (Unsplash).jpg | CC0 | davide ragusa davideragusa | held-out: skyscrapers from below |
+| | https://commons.wikimedia.org/wiki/File:Skyscrapers_from_below_(Unsplash).jpg | orig 13009×8642; stored as 1280 long-edge thumb | 2016-05-02 | |
