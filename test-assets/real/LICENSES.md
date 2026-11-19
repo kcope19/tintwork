@@ -88,3 +88,16 @@ Downloaded **after** shipping v1.29.0 and **before** any v1.30 Suggest change. C
 | | https://commons.wikimedia.org/wiki/File:High_rise_building_from_below_(Unsplash).jpg | orig 3733×2489; stored as 1280 long-edge thumb | 2015-05-22 | |
 | v130-below.jpg | File:Skyscrapers from below (Unsplash).jpg | CC0 | davide ragusa davideragusa | held-out: skyscrapers from below |
 | | https://commons.wikimedia.org/wiki/File:Skyscrapers_from_below_(Unsplash).jpg | orig 13009×8642; stored as 1280 long-edge thumb | 2016-05-02 | |
+
+## v1.31 held-out upright set (downloaded 2026-11-19, America/New_York)
+
+Downloaded **after** shipping v1.30.0 and **before** any v1.31 Suggest change. Chosen as looking-up architecture (converging high-rises / facades from below). Seed Suggest results recorded on v1.30.0 in `docs/audit/workflows-v131-holdout-baseline.json` before any tune. Unsplash publication / Wayback capture dates are before 5 June 2017 (CC0).
+
+| File | Commons file | Licence | Author | Role |
+|---|---|---|---|---|
+| v131-canyon.jpg | File:Think Higher (Unsplash).jpg | CC0 | Nicolas Jehly le_photographe_francais | held-out: looking-up Manhattan tower canyon |
+| | https://commons.wikimedia.org/wiki/File:Think_Higher_(Unsplash).jpg | orig 5397×3598; stored as 1280 long-edge thumb | 2017-01-29 (Wayback 2017-04-28) | |
+| v131-willis.jpg | File:Willis Tower (Unsplash).jpg | CC0 | Noel Forte thenoelforte | held-out: Willis Tower from below |
+| | https://commons.wikimedia.org/wiki/File:Willis_Tower_(Unsplash).jpg | orig 4941×3294; stored as 1280 long-edge thumb | 2015-08-03 (Wayback 2017-05-04) | |
+| v131-white.jpg | File:Towering white facade (Unsplash).jpg | CC0 | Vitaly gooner | held-out: looking-up white window-grid facade |
+| | https://commons.wikimedia.org/wiki/File:Towering_white_facade_(Unsplash).jpg | orig 4852×3648; stored as 1280 long-edge thumb | taken 2016-06-07; Unsplash upload 2016-06-27 (Wayback 2017-05-05) | |
