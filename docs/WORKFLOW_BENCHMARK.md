@@ -6,6 +6,28 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.30 scorecard (Suggest same-row / shorter H candidates)
+
+Tune: v128-towers (in-sample). Held-outs `v130-angle`, `v130-highrise`, `v130-below` were measured on v1.29.0 before any code change and were not used to tune. Probe/gate line sets stay at minLenFrac 0.12; only the mix-candidate H pool changed. No acceptMix gate was loosened. Radial lens stays gated. Library Full ≤0.5° was not chased via Distortion.
+
+| Photo | Suggest (v1.29) | Suggest (v1.30) | Notes |
+|---|---|---|---|
+| v128-towers (in-sample) | pure-V ~32.2° | **mixed ~25.8°** (2V+1H) | other-facade floor line (same row, slightly shorter); VP V 3.50°→3.88° (vOk) |
+| v126-glass | mixed ~18.8° | mixed **~12.6°** (2V+2H) | VP V 5.59°→2.26° (better) |
+| v117-interior | pure-V ~6.6° | **mixed ~3.8°** (2V+2H) | door header + railing; VP V 0.42°→0.43° (vOk). Disclosed mode change. |
+| v117-cathedral | mixed ~1.2° (2V+1H) | mixed ~0.8° (2V+2H) | |
+| v126-city | mixed ~0.8° | mixed ~0.6° | |
+| c4 / library / frame | mixed | mixed | c4 ~1.9°→~1.7°; library ~3.6°→~3.5°; frame unchanged ~0.9° |
+| brick / flat / lowangle / geneva / masonry | pure-V | pure-V | unchanged |
+| balconies / resid | mixed | mixed | unchanged |
+| v130-highrise (**holdout**) | mixed ~27.0° | mixed **~23.5°** | not tuned; V 28.1°→23.5°. H-probe residual rose 1.68°→7.46°; overall worst improved. |
+| v130-angle (**holdout**) | pure-V ~18.6° | pure-V ~18.6° | unchanged |
+| v130-below (**holdout**) | mixed ~0.5° (2V+1H) | mixed ~0.4° (2V+2H) | not worse |
+
+**Disclosure:** no vOk / top2Safe / noOverallHarm / directional gate was loosened. Interior's new mix is a leftover win with V unchanged to 0.01°, from architectural edges (rail and door), not a loosened refuse. Highrise's H-probe residual got worse; the leftover figure is the worst probe edge, which improved because verticals improved more. Angle is unchanged, so this is not a complete win on every looking-up shot. Towers ~25.8° still **trails** a good upright.
+
+**Test-change disclosure:** `v130-test` new (31); v129 interior pin added one check (23). Pins accept 1.30.0. v118 and v126–v129 interior/towers pins accept a vOk mixed leftover improvement. Full npm test **1361** expected (1329 + 1 + 31; recount after `npm test`).
+
 ## v1.29 scorecard (Suggest overall do-no-harm)
 
 Tune: v128-towers (no longer held-out). Validate: every other v1.28 row must keep its mode and leftover.

@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.29.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.30.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,25 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.30.0 update (2026-11-19, America/New_York)
+
+Suggest guides: the mix-candidate horizontal pool keeps **same-row edges on a different facade** (Y-only diversity had dropped them) and slightly shorter edges (**minLenFrac 0.08**). The leftover probe and VP/H gates still use the 0.12-length set, and no acceptMix gate was loosened. Tuned on in-sample **v128-towers** (~32.2° → **~25.8°**, 2V+1H, vOk). Held-outs recorded on v1.29.0 before any change: highrise ~27.0° → **~23.5°**; angle unchanged ~18.6°; below ~0.5° → ~0.4°.
+
+| ID | Finding | Kind | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F81 | Looking-up towers Suggest stayed pure-V at ~32.2° because a useful same-row floor line on the other facade was dropped (Y-only H diversity) and sat just under the 0.12 length cut (~10.5% of the frame). | quality | workflows-v130-holdout-baseline; _v130-clean-search | Candidate H pool: minLenFrac 0.08 + X-or-Y diversity, cap 8. Probe/gate unchanged. | v1.30.0 |
+| F82 | Need fresh looking-up held-outs: towers is in-sample as of this round. | audit | LICENSES.md; workflows-v130-holdout-baseline | CC0 `v130-angle.jpg`, `v130-highrise.jpg`, `v130-below.jpg`; baseline on v1.29.0 before any code change. | v1.30.0 |
+
+**Not done:** towers mixed ~25.8° and highrise ~23.5° still trail a good upright. Angle held-out is unchanged at ~18.6° (V already ~0.65°; current H mixes do not move leftover). Library Full ≤0.5°; auto radial still gated.
+
+**Disclosure:** `v128-towers` remains in-sample (it motivated this change). Held-outs were not used to tune. Interior flipped from pure-V ~6.6° to mixed ~3.8° with VP V 0.42°→0.43° (vOk); the new H guides are the door header and railing. Highrise leftover improved while its H-probe residual rose 1.68°→7.46° (overall worst is now the verticals, which improved). No quality bars loosened.
+
+**Test-change disclosure:** `v130-test` new (31); v129 interior pin added one check (23). Version pins accept 1.30.0. v118 and v126–v129 interior/towers pins accept a vOk mixed leftover improvement. Full npm test **1361** expected (1329 + 1 + 31; recount after `npm test`).
+
+### Live verification (v1.30.0)
+
+Pending Pages deploy.
 
 ## v1.29.0 update (2026-11-14, America/New_York)
 

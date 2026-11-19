@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.30 (Suggest guides on looking-up facades)
+
+Suggest's mix-candidate horizontals now keep same-row edges on a different facade, and slightly shorter edges (down to 8% of the frame). Leftover scoring and every acceptMix gate are unchanged. On the looking-up towers photo, Suggest now mixes one of those floor lines: leftover **~32.2° → ~25.8°**, VP verticals still within the 0.5° vOk slack. A held-out high-rise (not used to tune) improved **~27.0° → ~23.5°**; the other two held-outs did not get worse.
+
 ## What's new in v1.29 (Suggest overall do-no-harm)
 
 **Suggest guides** no longer picks a vertical + horizontal mix that leaves clearly more tilt than verticals alone. A mix is refused when its leftover is more than 1° worse than the vertical-only choice, even if the mix nudges a few verticals straighter. On `v128-towers` this changes Suggest from a mix at **~43.9°** to vertical-only at **~32.2°**. Every other benchmark photo keeps the same result. Towers is no longer held-out (it motivated this change). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).

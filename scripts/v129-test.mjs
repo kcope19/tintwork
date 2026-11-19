@@ -38,11 +38,11 @@ await page.waitForFunction(() => window.tintwork && document.readyState === 'com
 await page.evaluate(() => window.tintwork.engineReady);
 const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }));
 
-check(await T(() => window.tintwork.APP_VERSION) === '1.29.0', `APP_VERSION is 1.29.0 (${await T(() => window.tintwork.APP_VERSION)})`);
+check(['1.29.0','1.30.0'].includes(await T(() => window.tintwork.APP_VERSION)), `APP_VERSION is 1.29.0 (${await T(() => window.tintwork.APP_VERSION)})`);
 {
   const swText = await page.evaluate(async (base) => (await fetch(new URL('sw.js', base), { cache: 'no-store' })).text(), BASE);
   const m = /tintwork-shell-v([\d.]+)/.exec(swText);
-  check(m?.[1] === '1.29.0', `SW CACHE is 1.29.0 (${m?.[1]})`);
+  check((m?.[1] === '1.29.0' || m?.[1] === '1.30.0'), `SW CACHE is 1.29.0 (${m?.[1]})`);
 }
 
 const open = async (file, as = file) => {
@@ -66,12 +66,13 @@ const suggest = async (file) => {
   return r;
 };
 
-// Towers: no longer mixed; leftover not worse than pure-V
+// Towers: leftover must stay ≤33° (v1.29 was pure-V ~32.2°; v1.30 may mix if vOk).
 {
   const r = await suggest('v128-towers.jpg');
-  check(r.ok && !r.mixed && r.nv >= 2, `towers Suggest pure-V (${r.nv}V+${r.nh}H)`);
   const m = /~([\d.]+)°/.exec(r.status || '');
-  check(m && Number(m[1]) <= 33.0, `towers leftover ≤33° (was ~43.9°; status ~${m?.[1]}°)`);
+  check(r.ok && r.nv >= 2, `towers Suggest ≥2V (${r.nv}V+${r.nh}H)`);
+  check(m && Number(m[1]) <= 33.0, `towers leftover ≤33° (status ~${m?.[1]}°)`);
+  check(!r.mixed || r.gate?.vOk === true, `towers mix only if vOk (${r.mixed}, vOk=${r.gate?.vOk})`);
 }
 // Gate exposes noOverallHarm on an accepted mix
 {
@@ -81,10 +82,19 @@ const suggest = async (file) => {
 // Every other row unchanged from v1.28
 for (const [f, mixed] of [['v128-balconies.jpg', true], ['v126-city.jpg', true], ['v126-resid.jpg', true],
   ['v117-cathedral.jpg', true], ['v117-frame.jpg', true], ['library.jpg', true], ['c4.jpg', true],
-  ['v128-masonry.jpg', false], ['v117-interior.jpg', false], ['brick.jpg', false], ['v117-flat.jpg', false],
+  ['v128-masonry.jpg', false], ['brick.jpg', false], ['v117-flat.jpg', false],
   ['v117-lowangle.jpg', false], ['geneva.jpg', false]]) {
   const r = await suggest(f);
   check(r.ok && r.mixed === mixed, `${f} Suggest ${mixed ? 'mixed' : 'pure-V'} as in v1.28 (${r.nv}V+${r.nh}H)`);
+}
+
+// Interior: v1.29 was pure-V; v1.30 may mix when leftover improves and vOk holds.
+{
+  const r = await suggest('v117-interior.jpg');
+  const m = /~([\d.]+)°/.exec(r.status || '');
+  const left = m ? Number(m[1]) : Infinity;
+  const ok = r.ok && r.nv === 2 && (!r.mixed || (r.gate?.vOk === true && left <= 4.5));
+  check(ok, `interior Suggest pure-V or vOk mixed ≤4.5° (${r.nv}V+${r.nh}H, leftover=${m?.[1]})`);
 }
 {
   const audit = readFileSync(path.join(HERE, 'docs/AUDIT.md'), 'utf8');

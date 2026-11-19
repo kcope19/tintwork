@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.29.0';
+const APP_VERSION = '1.30.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -4043,12 +4043,25 @@ function buildSuggestProbes(x, full) {
       probe = [...vv.slice(0, 6).map(det.toDoc), ...hh.slice(0, 6).map(det.toDoc)];
       gateV = (vInl.length >= 2 ? vInl : vv).slice(0, 6).map(det.toDoc);
       gateH = (hInl.length >= 2 ? hInl : hh).slice(0, 6).map(det.toDoc);
-      const hSrc = hInl.length >= 2 ? hInl : hh;
-      const span = x.h || det.H;
+      // v1.30: candidate H pool (not the probe/gate set) also takes slightly shorter
+      // edges and keeps same-row lines on a different facade. Y-only diversity was
+      // dropping the other tower's floor line on looking-up shots. Leftover scoring
+      // still uses hh / hInl at minLenFrac 0.12.
+      let hhCand = hh;
+      try {
+        const extra = seg.detectLines(det.img, { orient: 'h', maxDeg: 20, minLenFrac: 0.08, maxLines: 28, thrFrac: 0.7 });
+        extra.sort((a, b) => b.len - a.len);
+        if (extra.length) hhCand = extra;
+      } catch { /* keep hh */ }
+      // Prefer length-sorted hhCand (includes short edges). Prepending VP inliers
+      // evicted the other-facade floor line on looking-up towers (cap filled first).
+      const hSrc = hhCand;
+      const spanY = x.h || det.H, spanX = x.w || det.W;
+      const midXd = (d) => (d[0][0] + d[1][0]) / 2, midYd = (d) => (d[0][1] + d[1][1]) / 2;
       for (const l of hSrc) {
-        const d = det.toDoc(l); const m = (d[0][1] + d[1][1]) / 2;
-        if (hPool.every((o) => Math.abs(((o[0][1] + o[1][1]) / 2) - m) >= 0.1 * span)) hPool.push(d);
-        if (hPool.length >= 6) break;
+        const d = det.toDoc(l);
+        if (hPool.every((o) => Math.abs(midYd(o) - midYd(d)) >= 0.1 * spanY || Math.abs(midXd(o) - midXd(d)) >= 0.12 * spanX)) hPool.push(d);
+        if (hPool.length >= 8) break;
       }
     }
   } catch { /* keep defaults */ }
@@ -4103,8 +4116,8 @@ function applySuggestedGuides(x) {
   const hCands = [];
   for (const h of hPool) hCands.push(h);
   for (const h of onlyH) {
-    const m = (h[0][1] + h[1][1]) / 2;
-    if (hCands.every((o) => Math.abs(((o[0][1] + o[1][1]) / 2) - m) >= 0.08 * (x.h || 1))) hCands.push(h);
+    const my = (h[0][1] + h[1][1]) / 2, mx = (h[0][0] + h[1][0]) / 2;
+    if (hCands.every((o) => Math.abs(((o[0][1] + o[1][1]) / 2) - my) >= 0.08 * (x.h || 1) || Math.abs(((o[0][0] + o[1][0]) / 2) - mx) >= 0.12 * (x.w || 1))) hCands.push(h);
   }
   const midXPair = (g) => (g[0][0] + g[1][0]) / 2;
   const pairKey = (pair) => pair.slice(0, 2).map((g) => midXPair(g).toFixed(1)).sort().join('|');

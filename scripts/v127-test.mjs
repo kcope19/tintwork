@@ -36,11 +36,11 @@ await page.waitForFunction(() => window.tintwork && document.readyState === 'com
 await page.evaluate(() => window.tintwork.engineReady);
 const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }));
 
-check(await T(() => window.tintwork.APP_VERSION) === '1.27.0' || ['1.28.0','1.29.0'].includes(await T(() => window.tintwork.APP_VERSION)), `APP_VERSION is 1.27.0 (${await T(() => window.tintwork.APP_VERSION)})`);
+check(await T(() => window.tintwork.APP_VERSION) === '1.27.0' || ['1.28.0','1.29.0','1.30.0'].includes(await T(() => window.tintwork.APP_VERSION)), `APP_VERSION is 1.27.0 (${await T(() => window.tintwork.APP_VERSION)})`);
 {
   const swText = await page.evaluate(async (base) => (await fetch(new URL('sw.js', base), { cache: 'no-store' })).text(), BASE);
   const m = /tintwork-shell-v([\d.]+)/.exec(swText);
-  check(m?.[1] === '1.27.0' || (m?.[1] === '1.28.0' || m?.[1] === '1.29.0'), `SW CACHE is 1.27.0 (${m?.[1]})`);
+  check(m?.[1] === '1.27.0' || (m?.[1] === '1.28.0' || (m?.[1] === '1.29.0' || m?.[1] === '1.30.0')), `SW CACHE is 1.27.0 (${m?.[1]})`);
 }
 
 const open = async (file, as = file) => {
@@ -89,7 +89,10 @@ const suggest = async (file) => {
 // Validate set: interior/brick/flat/lowangle/geneva pure-V; cathedral/frame/library/c4 mixed
 {
   const r = await suggest('v117-interior.jpg');
-  check(r.ok && !r.mixed && r.nv === 2, `interior Suggest pure-V (n=${r.n}, nh=${r.nh})`);
+  // v1.30: mixed is allowed when leftover improves and VP-V stays within vOk (was 6.6° pure-V).
+  const left = Number(r.gate?.mixedScore ?? r.gate?.v2score);
+  const ok130 = r.ok && r.mixed && r.nv === 2 && r.gate?.vOk === true && Number.isFinite(left) && left <= 4.5;
+  check((r.ok && !r.mixed && r.nv === 2) || ok130, `interior Suggest pure-V or v1.30 vOk mixed (n=${r.n}, nh=${r.nh}, leftover=${Number.isFinite(left) ? left.toFixed(1) : '?'})`);
 }
 {
   const r = await suggest('brick.jpg');

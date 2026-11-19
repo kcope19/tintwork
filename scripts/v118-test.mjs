@@ -23,11 +23,11 @@ await page.waitForFunction(() => window.tintwork && document.readyState === 'com
 await page.evaluate(() => window.tintwork.engineReady);
 const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }));
 
-check(await T(() => window.tintwork.APP_VERSION) === '1.18.0' || await T(() => window.tintwork.APP_VERSION) === '1.19.0' || await T(() => window.tintwork.APP_VERSION) === '1.21.0' || await T(() => window.tintwork.APP_VERSION) === '1.22.0' || await T(() => window.tintwork.APP_VERSION) === '1.23.0' || await T(() => window.tintwork.APP_VERSION) === '1.24.0' || await T(() => window.tintwork.APP_VERSION) === '1.25.0' || await T(() => window.tintwork.APP_VERSION) === '1.26.0' || await T(() => window.tintwork.APP_VERSION) === '1.27.0' || ['1.28.0','1.29.0'].includes(await T(() => window.tintwork.APP_VERSION)) || await T(() => window.tintwork.APP_VERSION) === '1.20.0', `APP_VERSION is 1.18+ (${await T(() => window.tintwork.APP_VERSION)})`);
+check(await T(() => window.tintwork.APP_VERSION) === '1.18.0' || await T(() => window.tintwork.APP_VERSION) === '1.19.0' || await T(() => window.tintwork.APP_VERSION) === '1.21.0' || await T(() => window.tintwork.APP_VERSION) === '1.22.0' || await T(() => window.tintwork.APP_VERSION) === '1.23.0' || await T(() => window.tintwork.APP_VERSION) === '1.24.0' || await T(() => window.tintwork.APP_VERSION) === '1.25.0' || await T(() => window.tintwork.APP_VERSION) === '1.26.0' || await T(() => window.tintwork.APP_VERSION) === '1.27.0' || ['1.28.0','1.29.0','1.30.0'].includes(await T(() => window.tintwork.APP_VERSION)) || await T(() => window.tintwork.APP_VERSION) === '1.20.0', `APP_VERSION is 1.18+ (${await T(() => window.tintwork.APP_VERSION)})`);
 {
   const swText = await page.evaluate(async (base) => (await fetch(new URL('sw.js', base), { cache: 'no-store' })).text(), BASE);
   const m = /tintwork-shell-v([\d.]+)/.exec(swText);
-  check(m?.[1] === '1.18.0' || m?.[1] === '1.19.0' || m?.[1] === '1.21.0' || m?.[1] === '1.22.0' || m?.[1] === '1.23.0' || await T(() => window.tintwork.APP_VERSION) === '1.24.0' || m?.[1] === '1.24.0' || (m?.[1] === '1.25.0' || m?.[1] === '1.26.0' || m?.[1] === '1.27.0' || (m?.[1] === '1.28.0' || m?.[1] === '1.29.0')) || m?.[1] === '1.20.0', `SW CACHE is 1.18+ (${m?.[1]})`);
+  check(m?.[1] === '1.18.0' || m?.[1] === '1.19.0' || m?.[1] === '1.21.0' || m?.[1] === '1.22.0' || m?.[1] === '1.23.0' || await T(() => window.tintwork.APP_VERSION) === '1.24.0' || m?.[1] === '1.24.0' || (m?.[1] === '1.25.0' || m?.[1] === '1.26.0' || m?.[1] === '1.27.0' || (m?.[1] === '1.28.0' || (m?.[1] === '1.29.0' || m?.[1] === '1.30.0'))) || m?.[1] === '1.20.0', `SW CACHE is 1.18+ (${m?.[1]})`);
 }
 
 const open = async (file, as = file) => {
@@ -77,9 +77,13 @@ const open = async (file, as = file) => {
   const mid = await T(() => {
     const g = window.tintwork.mxf?.guides || [];
     const isV = (s) => Math.abs(s[1][1] - s[0][1]) >= Math.abs(s[1][0] - s[0][0]);
-    return { n: g.length, nv: g.filter(isV).length, nh: g.filter((s) => !isV(s)).length };
+    const status = document.getElementById('status')?.textContent || '';
+    const m = /~([\d.]+)°/.exec(status);
+    return { n: g.length, nv: g.filter(isV).length, nh: g.filter((s) => !isV(s)).length, leftover: m ? Number(m[1]) : null, vOk: window.tintwork.lastSuggestGate?.vOk };
   });
-  check(mid.nv >= 2 && mid.nh === 0, `interior gate → pure V (n=${mid.n}, nv=${mid.nv}, nh=${mid.nh})`);
+  // v1.30: mixed is allowed when leftover improves and VP-V stays within vOk (was 6.6° pure-V).
+  const ok130 = mid.nv >= 2 && mid.nh > 0 && mid.vOk === true && mid.leftover != null && mid.leftover <= 4.5;
+  check((mid.nv >= 2 && mid.nh === 0) || ok130, `interior gate → pure V or v1.30 vOk mixed (n=${mid.n}, nv=${mid.nv}, nh=${mid.nh}, leftover=${mid.leftover})`);
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => !window.tintwork.mxf, null, { timeout: 20000 }).catch(() => {});
   check(await T(() => !!window.tintwork.lastUpright?.H), 'interior Suggest+Enter applies');
