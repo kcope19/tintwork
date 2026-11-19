@@ -25,9 +25,11 @@ Suggest guides: the mix-candidate horizontal pool keeps **same-row edges on a di
 
 **Test-change disclosure:** `v130-test` new (31); v129 interior pin added one check (23). Version pins accept 1.30.0. v118 and v126–v129 interior/towers pins accept a vOk mixed leftover improvement. Full npm test **1361** expected (1329 + 1 + 31; recount after `npm test`).
 
-### Live verification (v1.30.0)
+### Live verification (v1.30.0, 2026-11-19 about 8:57 AM America/New_York)
 
-Pending Pages deploy.
+- Live site reports `tintwork-shell-v1.30.0` / `APP_VERSION` 1.30.0 (Pages build `694814b`, status built; run 44537812505).
+- `v130-test` against https://kcope19.github.io/tintwork/ : **31/31 × 3**.
+- Screenshots: `screenshots/130-live-towers-suggest.png` (Suggest 2V+1H · ~25.8°), `130-live-highrise-suggest.png` (2V+2H · ~23.5°), `130-live-angle-suggest.png` (pure-V · ~18.6°), `130-live-below-suggest.png` (2V+2H · ~0.4°), `130-live-glass-suggest.png` (2V+2H · ~12.6°), `130-live-interior-suggest.png` (2V+2H · ~3.8°).
 
 ## v1.29.0 update (2026-11-14, America/New_York)
 
