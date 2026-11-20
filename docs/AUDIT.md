@@ -30,6 +30,8 @@ canyon and white are held-out and were observed only. The 60% threshold came fro
 
 **Regression:** Suggest leftovers on the 21-photo set re-measured on v1.32 ([audit/workflows-v132-after.json](audit/workflows-v132-after.json)): all 21 photos identical to v1.31 (same leftover, guide count and mode; 0 differences). c4 Full ≤0.5° (v131-test) still passes.
 
+**Live verification:** `TW_URL=https://kcope19.github.io/tintwork/ node scripts/v132-test.mjs` → **32/32 × 3** on the live site (commit 8056984, tag v1.32.0, 2026-11-20 ~2:15 PM America/New_York). Screenshots: `screenshots/132-live-upright-low-kept.png`, `132-live-ctrl-s-choice.png`, `132-live-upright-filled.png`, `132-live-heic.png`.
+
 **Test-change disclosure:** `v132-test` new (32 checks). Pins accept 1.32.0. `windows-test`: Ctrl+S on an opened PNG now clicks **Save project** in the new choice before checking the `.tintwork` picker name (intended behaviour change; the PNG is still never overwritten). `v18`, `v19`, `v110`, `v117`: set `state.opts.uprightAsk = false` after load, which answers the low-kept dialog with Apply (crop), i.e. exactly the v1.31 result those tests measure; no expected values changed. `v15-test` timed out once under parallel load and passed alone (79 s) and in the serial `npm test`. Full serial `npm test` **1431** ok (WebKit; 1399 + 32). One earlier serial run had a single `v10-test` autosave-recovery timing failure; v10 then passed 3/3 alone and in the next full serial run.
 
 ## v1.31.0 update (2026-11-20, America/New_York)
