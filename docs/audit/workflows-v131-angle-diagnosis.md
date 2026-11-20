@@ -41,7 +41,7 @@ A version bump requires the new v131 held-outs to improve on net with none worse
 
 - **Do not chase angle’s 18.6°** by changing the worst-edge leftover metric or loosening gates. Verticals are already tight; Full also refuses.
 - **v131-white (~27.3°)** is a single looking-up grid facade and may have honest same-VP H room, but it is a held-out — do not tune on it. Re-measure only after a general change locked on other photos.
-- **v131-willis (~23.6°)**: investigate why pure-V guide pairs fail `uprightFromGuides`, and whether the un-gated mixed fallback should require the same acceptMix gates. Do not tune on this held-out.
+- **v131-willis (~23.6°)**: diagnosed and gated in v1.31.0 (see `workflows-v131-willis-gate.md`). Leftover unchanged; willis is no longer a fair held-out for this fallback path.
 - **v131-canyon (~12.8°)** is the third held-out check for whatever general change comes next.
 - Library Full ≤0.5° is still not a Distortion-only target. Auto radial stays gated.
 

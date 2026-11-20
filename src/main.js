@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.30.0';
+const APP_VERSION = '1.31.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -4074,6 +4074,7 @@ function buildSuggestProbes(x, full) {
 /** Apply suggested guides into the current guided-upright session (editable; Enter finishes). */
 let lastSuggestGate = null;
 function applySuggestedGuides(x) {
+  lastSuggestGate = null;
   if (!x || x.mode !== 'perspective') return false;
   x.guideMode = true;
   if (!x.pts0) x.pts0 = x.pts.map((p) => [...p]);
@@ -4164,7 +4165,7 @@ function applySuggestedGuides(x) {
   // those verticals (≥0.15°), improves inlier horizontals by ≥2°, or (v1.27) beats pure-V by
   // ≥2° on the broad probe when the H probe is thin (<2 lines). Decorative edges in the broad
   // V set no longer veto busy-facade mixes.
-  if (v2 && mixedList.length) {
+  const pickAcceptedMix = (v2base) => {
     // V gate: VP inliers (busy facades). H gate: broad horizontals so interior furniture
     // lines cannot invent a fake ≥2° H win (F51 / v1.18 interior refuse).
     const vProbe = gateV.length >= 2 ? gateV : probe.filter(isV);
@@ -4174,19 +4175,19 @@ function applySuggestedGuides(x) {
     let gateInfo = null;
     for (const mixed of mixedList) {
       const mV = vProbe.length >= 2 ? scoreSegmentsAfter(base, vProbe, mixed.next) : Infinity;
-      const vv = vProbe.length >= 2 ? scoreSegmentsAfter(base, vProbe, v2.next) : Infinity;
+      const vv = vProbe.length >= 2 ? scoreSegmentsAfter(base, vProbe, v2base.next) : Infinity;
       const mH = hProbe.length >= 2 ? scoreSegmentsAfter(base, hProbe, mixed.next) : Infinity;
-      const vH = hProbe.length >= 2 ? scoreSegmentsAfter(base, hProbe, v2.next) : Infinity;
+      const vH = hProbe.length >= 2 ? scoreSegmentsAfter(base, hProbe, v2base.next) : Infinity;
       const vOk = !(Number.isFinite(mV) && Number.isFinite(vv) && mV > vv + 0.5);
       const vBetter = Number.isFinite(mV) && Number.isFinite(vv) && mV <= vv - 0.15;
       const hBetter = Number.isFinite(mH) && Number.isFinite(vH) && mH <= vH - 2.0;
       const vOnlyBetter = Number.isFinite(mV) && Number.isFinite(vv) && mV <= vv - 0.15
         && (!(Number.isFinite(mH) && Number.isFinite(vH)) || mH <= vH + 1.0);
-      const overallBetter = mixed.score <= v2.score - 0.25;
+      const overallBetter = mixed.score <= v2base.score - 0.25;
       let top2Safe = true;
-      if (v2.source === 'top2') {
-        const onMix = scoreSegmentsAfter(base, v2.guides, mixed.next);
-        const onV2 = scoreSegmentsAfter(base, v2.guides, v2.next);
+      if (v2base.source === 'top2') {
+        const onMix = scoreSegmentsAfter(base, v2base.guides, mixed.next);
+        const onV2 = scoreSegmentsAfter(base, v2base.guides, v2base.next);
         const bigH = Number.isFinite(mH) && Number.isFinite(vH) && mH <= vH - 5.0;
         // v1.26: when VP-inlier V improves, allow 0.75° top-2 slack (busy facades); else 0.25°.
         const slack = vBetter ? 0.75 : 0.25;
@@ -4196,15 +4197,15 @@ function applySuggestedGuides(x) {
       // When the H probe is thin (<2) and the broad score wins by ≥2°, accept mix if V stays
       // within vOk — unlocks held-out resid without reopening interior (thick H probe).
       const thinH = !(Number.isFinite(mH) && Number.isFinite(vH));
-      const bigOverall = Number.isFinite(mixed.score) && Number.isFinite(v2.score) && mixed.score <= v2.score - 2.0;
+      const bigOverall = Number.isFinite(mixed.score) && Number.isFinite(v2base.score) && mixed.score <= v2base.score - 2.0;
       // v1.29: overall do-no-harm. A mix may pass a directional gate (e.g. VP-V slightly better)
       // yet leave far more leftover tilt than pure-V (held-out v128-towers: 43.9° vs 32.2°).
-      const noOverallHarm = !(Number.isFinite(mixed.score) && Number.isFinite(v2.score) && mixed.score > v2.score + 1.0);
+      const noOverallHarm = !(Number.isFinite(mixed.score) && Number.isFinite(v2base.score) && mixed.score > v2base.score + 1.0);
       const acceptMix = vOk && top2Safe && noOverallHarm && (vBetter || vOnlyBetter || hBetter || (overallBetter && thinH && bigOverall));
       const info = {
         acceptMix, vOk, top2Safe, noOverallHarm, overallBetter, vOnlyBetter, hBetter, vBetter, thinH, bigOverall,
-        mV, vv, mH, vH, mixedScore: mixed.score, v2score: v2.score,
-        mixedN: mixed.guides.length, mixedNv: mixed.nv, mixedNh: mixed.nh, v2src: v2.source,
+        mV, vv, mH, vH, mixedScore: mixed.score, v2score: v2base.score,
+        mixedN: mixed.guides.length, mixedNv: mixed.nv, mixedNh: mixed.nh, v2src: v2base.source,
         source: mixed.source, gateV: vProbe.length, gateH: hProbe.length,
       };
       if (acceptMix) {
@@ -4222,11 +4223,34 @@ function applySuggestedGuides(x) {
         gateInfo = info; // keep first (best broad score) refusal for diagnostics
       }
     }
+    return { chosen, gateInfo };
+  };
+  if (v2 && mixedList.length) {
+    const { chosen, gateInfo } = pickAcceptedMix(v2);
     lastSuggestGate = gateInfo;
     best = chosen || v2;
   } else if (v2) best = v2;
-  else if (mixedList[0]) best = mixedList[0];
-  else best = finite.sort((a, b) => a.score - b.score)[0] || cands[0];
+  else if (mixedList.length) {
+    // v1.31: every pure-V pair failed uprightFromGuides / perspectiveMesh, so there is no
+    // v2 to gate against. Do not take mixedList[0] ungated (a near-in-frame vertical VP
+    // is rejected by estimateUpright, and the 2-point plumb fallback often folds the mesh).
+    // Score mixed candidates against the uncorrected photo with the same acceptMix bars.
+    const identScore = scoreSegmentsAfter(base, probe, base);
+    if (Number.isFinite(identScore)) {
+      const v2ident = { next: base, score: identScore, source: 'identity', guides: [] };
+      const { chosen, gateInfo } = pickAcceptedMix(v2ident);
+      lastSuggestGate = gateInfo;
+      best = chosen || null;
+    }
+    if (!best) {
+      const g = lastSuggestGate;
+      const ms = Number.isFinite(g?.mixedScore) ? `~${g.mixedScore.toFixed(1)}°` : 'the mixed suggestion';
+      const vs = Number.isFinite(g?.v2score) ? `~${g.v2score.toFixed(1)}°` : 'leaving the photo as-is';
+      x.guides = [];
+      status(`Suggest guides: no usable upright pair, and mixed guides are not clearly better than leaving the photo as-is (${ms} vs ${vs}). Draw guides yourself.`);
+      buildOptionsBar(); requestRender(); return false;
+    }
+  } else best = finite.sort((a, b) => a.score - b.score)[0] || cands[0];
   if (best && best.nv === 0 && best.nh >= 2 && v2) best = v2;
   if (!best || !Number.isFinite(best.score)) {
     x.guides = [];

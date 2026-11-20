@@ -6,6 +6,23 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.31 scorecard (Suggest identity-gated mixed fallback)
+
+Pure safety fix. No acceptMix gate was loosened. Held-outs `v131-canyon`, `v131-willis`, `v131-white` were measured on v1.30.0 before any code change. willis was inspected for diagnosis only and was not used to tune. Radial lens stays gated. Library Full ≤0.5° was not chased via Distortion. The angle leftover metric was not changed.
+
+| Photo | Suggest (v1.30) | Suggest (v1.31) | Notes |
+|---|---|---|---|
+| v131-willis (diagnosis; leftover unchanged) | mixed ~23.6° (2V+2H), `lastSuggestGate` null | mixed **~23.6°** (2V+2H), now gated `v2src=identity`, acceptMix | Official pure-V pairs fail `uprightFromGuides` (in-frame VP rejected; 2-point fallback folds). Mix already beat identity by ~0.9° under existing bars. |
+| v131-canyon (**holdout**) | pure-V ~12.8° | pure-V ~12.8° | unchanged; still has a real v2 |
+| v131-white (**holdout**) | pure-V ~27.3° | pure-V ~27.3° | unchanged; still has a real v2 |
+| v130-angle | pure-V ~18.6° | pure-V ~18.6° | leftover metric unchanged |
+| all other v1.30 rows (towers, glass, interior, highrise, below, c4, library, …) | as v1.30 | as v1.30 | unchanged mode and leftover |
+| synthetic in-frame-VP facade | n/a (would have applied an ungated near-no-op mix) | **refuses** (~16.0° vs ~16.1° as-is) | general reproduction; not a photo-tune |
+
+**Disclosure:** no vOk / 1° mix-refusal / noOverallHarm / directional gate was loosened. willis is disclosed as the diagnosis target; thresholds were not fit to it. Numbers on the 21-photo set are the same. Willis ~23.6° still **trails** a good upright.
+
+**Test-change disclosure:** `v131-test` new. Pins accept 1.31.0. Full npm test **1399** ok (WebKit; 1361 + 38).
+
 ## v1.30 scorecard (Suggest same-row / shorter H candidates)
 
 Tune: v128-towers (in-sample). Held-outs `v130-angle`, `v130-highrise`, `v130-below` were measured on v1.29.0 before any code change and were not used to tune. Probe/gate line sets stay at minLenFrac 0.12; only the mix-candidate H pool changed. No acceptMix gate was loosened. Radial lens stays gated. Library Full ≤0.5° was not chased via Distortion.

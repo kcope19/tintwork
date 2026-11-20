@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.31 (Suggest mixed fallback is gated)
+
+v1.31 keeps to non-AI tools. When **Suggest guides** cannot form a usable upright pair (every official vertical pair fails to make a valid correction), it no longer applies a mixed vertical+horizontal suggestion unchecked. Mixes are scored against leaving the photo as-is, using the same acceptMix bars as usual (none were loosened). A synthetic looking-up facade with an in-frame vanishing point now refuses with both leftover numbers. On the looking-up willis photo (inspected for diagnosis only, not used to tune) leftover stays **~23.6°**, now with a recorded gate. Every other benchmark photo is unchanged. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+
 ## What's new in v1.30 (Suggest guides on looking-up facades)
 
 Suggest's mix-candidate horizontals now keep same-row edges on a different facade, and slightly shorter edges (down to 8% of the frame). Leftover scoring and every acceptMix gate are unchanged. On the looking-up towers photo, Suggest now mixes one of those floor lines: leftover **~32.2° → ~25.8°**, VP verticals still within the 0.5° vOk slack. A held-out high-rise (not used to tune) improved **~27.0° → ~23.5°**; the other two held-outs did not get worse.

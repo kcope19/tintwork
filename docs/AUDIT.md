@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.30.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.31.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,26 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.31.0 update (2026-11-20, America/New_York)
+
+Suggest guides: **identity-gated mixed fallback**. When every official pure-V pair (`top2` / `sugV` / `ranked`) fails `uprightFromGuides` or `perspectiveMesh`, Suggest used to take the best mixed candidate with **no acceptMix check** and `lastSuggestGate` left null. Mixes are now scored against the uncorrected photo with the **same** acceptMix bars (vOk, the 1° mix-refusal rule, noOverallHarm, directional wins). None of those bars were loosened. Radial lens stays gated. Library Full ≤0.5° was not chased via Distortion. The angle leftover metric was not changed.
+
+On looking-up shots like `v131-willis`, `estimateUpright` rejects a vertical vanishing point that falls inside the frame (here, in the sky just above the tower). The two-point “plumb each line” fallback then folds the mesh (corners map with `w < 0`). Of 105 detected vertical pairs, only 3 even produced a mesh, and those scored worse than doing nothing (~37–55° vs ~24.5°). The mixed path still “worked” because the H-only vanishing point produced a near-identity warp (~24.5° → **~23.6°**) that was applied ungated and looked like a successful 2V+2H suggestion. Forcing the in-frame VP is not a safe fix: it either still folds, or leaves ~71°.
+
+| ID | Finding | Kind | Evidence | Fix | Status |
+|---|---|---|---|---|---|
+| F83 | If every official pure-V pair failed `uprightFromGuides`, Suggest applied `mixedList[0]` with no acceptMix gate (`lastSuggestGate` null). | safety | workflows-v131-holdout-baseline (willis); `_v131-willis-vp`; synthetic in-frame-VP facade | Score those mixes against identity with the existing acceptMix bars; refuse with both leftover numbers when they do not clearly win. | v1.31.0 |
+
+**Not done:** willis leftover stays ~23.6° (the mix is only ~0.9° better than identity; verticals still trail). canyon ~12.8° and white ~27.3° unchanged. Angle remains ~18.6° (V already ~0.65°; do not change the leftover metric). Library Full ≤0.5°; auto radial still gated.
+
+**Disclosure:** `v131-willis` was **inspected for diagnosis only** and was **not used to tune** any threshold. Its leftover and mode are unchanged (~23.6°, 2V+2H); the only change is that the mix now records `v2src=identity` and `acceptMix=true` (it already met the existing bars vs doing nothing). canyon and white still have a real pure-V baseline and are unchanged. A synthetic looking-up facade (in-frame VP, level floors) reproduces the hole: the old path would have applied a near-no-op mix; v1.31 refuses because the mix is not clearly better (~16.0° vs ~16.1°). No quality bars loosened. This is a **pure safety fix**: every measured leftover on the 21-photo set is the same.
+
+**Test-change disclosure:** `v131-test` new. Version pins accept 1.31.0. Full npm test **1399** ok (WebKit; 1361 + 38).
+
+### Live verification (v1.31.0)
+
+Pending Pages deploy and `v131-test` × 3 on the live site.
 
 ## v1.30.0 update (2026-11-19, America/New_York)
 
