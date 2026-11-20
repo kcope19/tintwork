@@ -6,6 +6,28 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.32 scorecard (safe Auto upright, first-run fixes)
+
+No upright / Suggest math changed; no gate loosened. Kept share = crop rectangle ÷ photo area after Image ▸ Auto upright (Crop edges). canyon and white are held-out (observed, not tuned). The 60% ask-threshold is from the brief.
+
+| Photo | Size | v1.31: Auto upright (silent crop) | v1.32: kept % shown | v1.32: what happens |
+|---|---|---|---|---|
+| v128-towers | 853×1280 | 441×662, **26.7%** kept, 2 undo steps | **27%** | asks: Apply (crop to 27%) / Fill edges (100%) / Cancel; 1 undo step |
+| v130-below | 1280×850 | 963×639, **56.6%**, 2 undo steps | **57%** | asks (under 60%); 1 undo step |
+| v131-canyon (held-out, observed only) | 1280×853 | 642×428, **25.2%**, 2 undo steps | **25%** | asks; 1 undo step |
+| v131-white (held-out, observed only) | 1280×962 | 1259×946, **96.7%**, 2 undo steps | **97%** | applies directly, shows 97% in the status; 1 undo step |
+| c4 (regression) | 1280×1776 | 1101×1528, **74.0%**, 2 undo steps | **74%** | applies directly; 1 undo step |
+
+| Job | v1.31 | v1.32 | Verdict |
+|---|---|---|---|
+| Auto upright on a looking-up tower (towers) | silently crops to 27%; 2 undo steps | asks first: crop 27% / fill edges (100%) / cancel; 1 undo step | **improved** (warning; the crop itself still **trails** a good upright) |
+| Record upright in an action, batch it | not recorded (0 steps) | recorded with edge choice; replays in Batch without a dialog | **match** (new capability) |
+| First click on an opened photo | paints a Brush dab | Hand: nothing changes | **fixed** |
+| Ctrl+S on one opened JPEG | downloads a `.tintwork` project | asks: Export as image (JPEG, same name) / Save project | **fixed** |
+| Export default format for a JPEG | PNG | JPEG, source name | **fixed** |
+| Open an iPhone HEIC (Chrome/Edge) | generic "could not be read" | specific HEIC message + Most Compatible / JPEG steps | **improved** (native decode untested) |
+| Suggest leftovers, 21-photo set | as v1.31 | all 21 photos identical to v1.31 (same leftover, guide count and mode; 0 differences) | **match** |
+
 ## v1.31 scorecard (Suggest identity-gated mixed fallback)
 
 Pure safety fix. No acceptMix gate was loosened. Held-outs `v131-canyon`, `v131-willis`, `v131-white` were measured on v1.30.0 before any code change. willis was inspected for diagnosis only and was not used to tune. Radial lens stays gated. Library Full ≤0.5° was not chased via Distortion. The angle leftover metric was not changed.

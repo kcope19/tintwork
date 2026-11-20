@@ -8,7 +8,7 @@ export const PROJECT_TYPE = { description: 'Tintwork project', accept: { 'applic
 const RAW_ACCEPT = { 'image/x-camera-raw': ['.dng', '.cr2', '.cr3', '.crw', '.nef', '.nrw', '.arw', '.srf', '.sr2', '.raf', '.orf', '.rw2', '.rwl', '.pef', '.srw', '.erf', '.3fr', '.fff', '.iiq', '.mos', '.mef', '.mrw', '.x3f', '.kdc', '.dcr'] };
 const PSD_ACCEPT = { 'image/vnd.adobe.photoshop': ['.psd', '.psb'] };
 export const OPEN_TYPES = [
-  { description: 'Images, PSD, camera RAW and Tintwork projects', accept: { 'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'], 'image/webp': ['.webp'], ...PSD_ACCEPT, ...RAW_ACCEPT, 'application/x-tintwork+json': ['.tintwork'], 'application/json': ['.json'] } },
+  { description: 'Images, PSD, camera RAW and Tintwork projects', accept: { 'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'], 'image/webp': ['.webp'], 'image/heic': ['.heic', '.heif'], ...PSD_ACCEPT, ...RAW_ACCEPT, 'application/x-tintwork+json': ['.tintwork'], 'application/json': ['.json'] } },
   { description: 'Camera RAW', accept: RAW_ACCEPT },
   { description: 'PSD / PSB (layered)', accept: PSD_ACCEPT },
 ];

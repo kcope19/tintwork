@@ -166,7 +166,11 @@ check(p.save === 3 && png.size > 100 && png.text.startsWith('\u0089PNG') || png.
 await page.evaluate(() => { window.__pick.nextOpen = 'Holiday.png'; return window.tintwork.run('open'); });
 await page.waitForFunction(() => window.tintwork.doc?.fileKind === 'image', null, { timeout: 5000 }).catch(() => {});
 p = await P(); check(p.open === 1 && p.kind === 'image' && /Holiday/.test(p.name), `File ▸ Open uses the open picker (${p.name}, ${p.kind})`);
-await page.keyboard.press('Control+KeyS'); await page.waitForTimeout(400);
+// v1.32 (intended change): Ctrl+S on a single opened photo first asks photo vs project; Save project still goes
+// through the save picker with a .tintwork name, so the PNG is never overwritten with a project.
+await page.keyboard.press('Control+KeyS'); await page.waitForSelector('#modal:not(.hidden) #saveChoiceProject', { timeout: 5000 }).catch(() => {});
+if (await page.locator('#modal:not(.hidden) #saveChoiceProject').count()) await page.click('#saveChoiceProject');
+await page.waitForTimeout(400);
 p = await P(); check(p.save === 4 && /\.tintwork$/.test(p.lastSave.suggestedName), `Ctrl+S on an opened image asks for a project name ("${p.lastSave.suggestedName}") instead of overwriting the PNG`);
 // recent files
 await page.evaluate(() => window.tintwork.newDocument(64, 64, 'white', 'Scratch'));

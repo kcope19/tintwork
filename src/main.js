@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.31.0';
+const APP_VERSION = '1.32.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -38,7 +38,7 @@ const viewport = $('#viewport');
 // State
 // ---------------------------------------------------------------------------
 const state = {
-  tool: 'brush',
+  tool: 'hand', // v1.32: the first click on a just-opened photo must not paint
   zoom: 1, panX: 0, panY: 0,
   fg: '#e8553a', bg: '#ffffff',
   crop: null,         // pending crop rect (doc coords)
@@ -2746,23 +2746,70 @@ async function applyMeshXf() {
   }
   if (x.upright && x.upright !== 'lens') {
     lastUpright = { ...(lastUpright || {}), H: x.uprightHu || mesh.homography([[x.ox, x.oy], [x.ox + x.w, x.oy], [x.ox + x.w, x.oy + x.h], [x.ox, x.oy + x.h]], x.pts), k: x.radialK || 0, center: [x.ox + x.w / 2, x.oy + x.h / 2], rNorm2: (x.w / 2) ** 2 + (x.h / 2) ** 2, kind: x.upright, crop: null, filled: false };
-    const how = state.opts.uprightEdges;
-    if (how === 'crop') {
-      // v1.17 constrain-crop: prefer the aspect-locked opaque rect (document ratio), but if a free-aspect
-      // opaque rect keeps ≥15% more area and aspect shift is mild (≤1.35×), use that instead.
-      const locked = innerOpaqueRect({ keepRatio: true }), free = innerOpaqueRect({ keepRatio: false });
-      let preferFree = false;
-      if (locked && free && !locked.full && !free.full) {
-        const aL = locked.w * locked.h, aF = free.w * free.h, ar0 = doc().width / doc().height, ar1 = free.w / free.h;
-        const mild = Math.max(ar0 / ar1, ar1 / ar0) <= 1.35;
-        preferFree = mild && aF >= aL * 1.15;
-      }
-      const r = cropEmptyEdges({ label: 'Crop empty edges (upright)', quiet: true, keepRatio: !preferFree });
-      if (r) { lastUpright.crop = r; lastUpright.cropFree = preferFree; status(`Upright applied and cropped to ${r.w} × ${r.h} px so no empty corners show${preferFree ? ' (free aspect; more of the photo kept)' : ''}.`); }
+    const replay = recorder.replaying ? uprightReplay : null;
+    const how = replay?.edges || state.opts.uprightEdges, hU = history.index;
+    // v1.17 constrain-crop: prefer the aspect-locked opaque rect (document ratio), but if a free-aspect
+    // opaque rect keeps ≥15% more area and aspect shift is mild (≤1.35×), use that instead.
+    // v1.32: the kept share of the photo is computed first (for every edge mode) and shown; below
+    // UPRIGHT_KEEP_WARN the crop is not applied silently: the user picks crop / fill edges / cancel.
+    const locked = innerOpaqueRect({ keepRatio: true }), free = innerOpaqueRect({ keepRatio: false });
+    let preferFree = false;
+    if (locked && free && !locked.full && !free.full) {
+      const aL = locked.w * locked.h, aF = free.w * free.h, ar0 = doc().width / doc().height, ar1 = free.w / free.h;
+      const mild = Math.max(ar0 / ar1, ar1 / ar0) <= 1.35;
+      preferFree = mild && aF >= aL * 1.15;
     }
-    else if (how === 'fill') { if (fillEmptyEdges({ quiet: true })) { lastUpright.filled = true; status('Upright applied; empty corners filled from nearby pixels.'); } }
+    const rc = preferFree ? free : locked, D = doc();
+    const kept = !rc ? 0 : rc.full ? 1 : (rc.w * rc.h) / (D.width * D.height);
+    lastUpright.kept = Math.round(kept * 1000) / 1000; lastUpright.keptRect = rc && !rc.full ? { x: rc.x, y: rc.y, w: rc.w, h: rc.h } : null;
+    const pct = Math.round(kept * 100);
+    let choice = how;
+    if (how === 'crop' && kept < UPRIGHT_KEEP_WARN && !(rc && rc.full)) {
+      if (replay) choice = replay.low || 'crop';
+      else if (state.opts.uprightAsk === false) choice = 'crop';
+      else choice = await askUprightEdges(pct, rc);
+      lastUpright.asked = !replay && state.opts.uprightAsk !== false; lastUpright.choice = choice;
+    }
+    if (choice === 'cancel') {
+      // nothing of this upright stays: back to the state before it, and no redo entry is left behind
+      if (hU > 0 && history.entries[hU - 1]) { restore(hU - 1); history.entries.length = history.index + 1; updateHistoryPanel(); }
+      lastUpright.cancelled = true; lastUpright.mode = 'cancelled';
+      status(`Upright cancelled: cropping would have kept only ${pct}% of the photo. Try Fill edges, Guides, or Vertical / Level.`);
+      buildOptionsBar(); updateLayersPanel(); requestRender();
+      return;
+    }
+    if (choice === 'crop') {
+      const r = cropEmptyEdges({ label: 'Crop empty edges (upright)', quiet: true, keepRatio: !preferFree });
+      if (r) {
+        lastUpright.crop = r; lastUpright.cropFree = preferFree;
+        squashHistory(hU - 1, `${label} (cropped, ${pct}% kept)`);
+        status(`Upright applied and cropped to ${r.w} × ${r.h} px so no empty corners show: ${pct}% of the photo kept${preferFree ? ' (free aspect; more of the photo kept)' : ''}. One undo.`);
+      }
+    }
+    else if (choice === 'fill') {
+      if (fillEmptyEdges({ quiet: true })) { lastUpright.filled = true; squashHistory(hU - 1, `${label} (edges filled)`); status(`Upright applied; full canvas kept and empty corners filled from nearby pixels (a crop would have kept ${pct}%). One undo.`); }
+    }
+    else status(`Upright applied; empty corners left transparent (a crop would keep ${pct}% of the photo).`);
+    if (x.upright === 'auto' && lastUpright.req && !uprightNoRecord) recordStep({ t: 'upright', req: lastUpright.req, edges: how, ...(lastUpright.choice && lastUpright.choice !== how ? { low: lastUpright.choice } : {}) });
   }
   buildOptionsBar(); updateLayersPanel(); requestRender();
+}
+/** v1.32: below this kept share of the photo, an upright crop asks first (Apply crop / Fill edges / Cancel). */
+const UPRIGHT_KEEP_WARN = 0.6;
+/** Replay settings for a recorded upright step (edges mode and the low-kept choice). */
+let uprightReplay = null, uprightNoRecord = false; // Lens + Full is not recordable (the lens slider is per photo)
+/** v1.32: ask what to do when the upright crop would keep little of the photo. Resolves 'crop' | 'fill' | 'cancel'. */
+function askUprightEdges(pct, rc) {
+  return new Promise((resolve) => {
+    let done = false; const fin = (v) => { if (done) return; done = true; resolve(v); };
+    const body = document.createElement('div'); body.id = 'uprightKeepAsk';
+    body.innerHTML = `<p>Cropping away the empty corners would keep only <b id="uprightKeptPct">${pct}%</b> of the photo${rc ? ` (${rc.w} × ${rc.h} px of ${doc().width} × ${doc().height})` : ''}.</p>
+      <p class="muted">Fill edges keeps the whole canvas and fills the corners from nearby pixels (mirror + smooth, no AI). Cancel leaves the photo as it was. Each choice is one undo step.</p>
+      <div class="row-btns"><button type="button" id="uprightFillBtn">Fill edges (keep 100%)</button></div>`;
+    body.querySelector('#uprightFillBtn').addEventListener('click', () => { fin('fill'); closeModal(); });
+    showModal({ title: 'Upright would crop most of the photo', body, okLabel: `Apply (crop to ${pct}%)`, cancelLabel: 'Cancel', ok: () => fin('crop'), cancel: () => fin('cancel'), onClose: () => fin('cancel') });
+    if (!IS_TOUCH) setTimeout(() => $('#modalOk')?.focus(), 0);
+  });
 }
 /**
  * Auto upright (v1.8): detect near-vertical straight lines (gradient Hough on the ≤ 640 px preview copy), find where
@@ -3619,8 +3666,9 @@ async function applyLensThenFullFromMxf() {
   x._deferCommit = true;
   await applyMeshXf();
   // Lens pixels are on the layer; no history entry yet.
-  const lu = autoUprightCmd('full');
-  if (lu?.applyP) await lu.applyP;
+  uprightNoRecord = true; let lu;
+  try { lu = autoUprightCmd('full'); if (lu?.applyP) await lu.applyP; } finally { uprightNoRecord = false; }
+  if (lu?.cancelled) { status('Lens + Full cancelled: the crop would have kept too little of the photo. Nothing was changed.'); return; }
   if (!lu || lu.mode === 'none') {
     const refuse = ($('#status')?.textContent || '').trim();
     commit('Lens distortion');
@@ -4578,7 +4626,8 @@ view.addEventListener('pointerdown', (e) => {
   }
   if (pointers.size > 1 || gesture) return;
   const p = screenToDoc(e);
-  if (e.button === 1 || spaceDown || state.tool === 'hand') {
+  // v1.32: the Hand tool pans unless a session that takes the pointer is open (perspective guides, transform, colour sampler)
+  if (e.button === 1 || spaceDown || (state.tool === 'hand' && !colorRangeSampler && !state.mxf && !state.xf)) {
     drag = { pan: true, sx: e.clientX, sy: e.clientY, px: state.panX, py: state.panY };
     view.style.cursor = 'grabbing';
     return;
@@ -4830,6 +4879,7 @@ const cmds = {
   saveAs: needDoc(() => saveProjectAs()),
   place: needDoc(() => { fileMode = 'place'; $('#fileInput').click(); }),
   saveProject: needDoc(() => saveProject()),
+  save: needDoc(() => saveSmart()),
   export: needDoc(() => openExportDialog()),
   exportPSD: needDoc(() => exportImage(PSD_TYPE, 1, (doc().name || 'image').replace(/\.[^.]+$/, ''))),
   mode8: needDoc(() => setDepth(8)),
@@ -5044,7 +5094,7 @@ function run(name) {
 
 // Ctrl+V is handled by the paste event (so system-clipboard images work too).
 const SHORTCUTS = {
-  'mod+n': 'new', 'mod+o': 'open', 'mod+shift+o': 'place', 'mod+s': 'saveProject', 'mod+shift+s': 'saveAs', 'mod+shift+e': 'export', 'mod+shift+alt+e': 'exportLastPreset', 'mod+shift+alt+b': 'batchAgain',
+  'mod+n': 'new', 'mod+o': 'open', 'mod+shift+o': 'place', 'mod+s': 'save', 'mod+shift+s': 'saveAs', 'mod+shift+e': 'export', 'mod+shift+alt+e': 'exportLastPreset', 'mod+shift+alt+b': 'batchAgain',
   'mod+z': 'undo', 'mod+shift+z': 'redo', 'mod+y': 'redo',
   'mod+a': 'selectAll', 'mod+d': 'deselect', 'mod+shift+i': 'invertSelection', 'mod+alt+d': 'feather', 'shift+f6': 'feather', '\\': 'editMaskToggle', 'delete': 'clear', 'backspace': 'clear', 'alt+backspace': 'fillSelection',
   'mod+c': 'copy', 'mod+shift+c': 'copyMerged', 'mod+x': 'cut',
@@ -5079,7 +5129,7 @@ const shortcutLabel = (cmd, spec) => keyLabel(shortcutFor(cmd, spec));
 
 const MENUS = [
   ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Take photo (camera)…', 'camera'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
-    ['Open recent…', 'openRecent'], '-', ['Save', 'saveProject', 'Ctrl+S'], ['Save as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E'], ['Export with last preset', 'exportLastPreset', 'Ctrl+Alt+Shift+E'], ['Export watermark…', 'watermarkSettings'], ['Export layered PSD…', 'exportPSD'], ['Export multiple sizes…', 'exportMulti'], ['Batch process…', 'batch'], ['Batch again (last settings)', 'batchAgain', 'Ctrl+Alt+Shift+B'], '-',
+    ['Open recent…', 'openRecent'], '-', ['Save…', 'save', 'Ctrl+S'], ['Save project', 'saveProject'], ['Save project as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E'], ['Export with last preset', 'exportLastPreset', 'Ctrl+Alt+Shift+E'], ['Export watermark…', 'watermarkSettings'], ['Export layered PSD…', 'exportPSD'], ['Export multiple sizes…', 'exportMulti'], ['Batch process…', 'batch'], ['Batch again (last settings)', 'batchAgain', 'Ctrl+Alt+Shift+B'], '-',
     ['Next document', 'docNext', 'Ctrl+Tab'], ['Previous document', 'docPrev', 'Ctrl+Shift+Tab'], ['Close document', 'docClose', 'Ctrl+Alt+W']]],
   ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
     ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-',
@@ -6061,6 +6111,8 @@ function openExportDialog() {
   fillPresets(last ? last.id : ''); if (last) applyPreset(last);
   // v1.15: a 16-bit document defaults to PNG 16-bit so Export does not silently dither to 8-bit
   else if (is16()) { fmt.value = 'image/png16'; }
+  // v1.32: otherwise the format of the file that was opened (JPEG in, JPEG out)
+  else if (sourceExportType()) { fmt.value = sourceExportType(); }
   fmt.addEventListener('change', () => {
     q.disabled = fmt.value.startsWith('image/png') || fmt.value === PSD_TYPE;
     const noSize = fmt.value === 'image/png16' || fmt.value === PSD_TYPE; sizeSel.disabled = noSize; if (noSize && sizeSel.value !== 'original') { sizeSel.value = 'original'; sizeSel.dispatchEvent(new Event('change')); }
@@ -6162,7 +6214,7 @@ function openShortcutsDialog() {
     [`${K('new', 'Ctrl+N')} / ${K('layerNew', 'Ctrl+Shift+N')}`, 'New canvas / new layer'], [K('freeTransform', 'Ctrl+T'), 'Free transform'],
     [`${K('brightnessContrast', 'Ctrl+B')} / ${K('hueSaturation', 'Ctrl+U')} / ${K('levels', 'Ctrl+L')} / ${K('curves', 'Ctrl+M')} / ${K('invert', 'Ctrl+I')}`, 'Brightness-contrast / Hue-sat / Levels / Curves / Invert'],
     [`${K('zoomFit', 'Ctrl+0')} / ${K('zoom100', 'Ctrl+1')}`, 'Fit / 100%'], ['Enter / Esc', 'Apply / cancel crop'],
-    ['Arrows (Move tool)', platformText('Nudge layer (Shift = 10px)')], [`${K('saveProject', 'Ctrl+S')} / ${K('saveAs', 'Ctrl+Shift+S')} / ${K('export', 'Ctrl+Shift+E')}`, 'Save / save as / export'], [K('exportLastPreset', 'Ctrl+Alt+Shift+E'), 'Export with last preset'], [K('batchAgain', 'Ctrl+Alt+Shift+B'), 'Batch again with the last settings and folders'],
+    ['Arrows (Move tool)', platformText('Nudge layer (Shift = 10px)')], [`${K('save', 'Ctrl+S')} / ${K('saveAs', 'Ctrl+Shift+S')} / ${K('export', 'Ctrl+Shift+E')}`, 'Save / save as / export'], [K('exportLastPreset', 'Ctrl+Alt+Shift+E'), 'Export with last preset'], [K('batchAgain', 'Ctrl+Alt+Shift+B'), 'Batch again with the last settings and folders'],
   ];
   const note = `<p class="muted" id="kbNote">${IS_MAC ? 'Mac keyboard: ⌘ Command · ⌥ Option · ⇧ Shift.' : 'Ctrl / Alt / Shift keyboard (Windows, Linux, ChromeOS).'} ` +
     `Some combinations are kept by the browser or system (${(IS_MAC ? ['Ctrl+N', 'Ctrl+T', 'Ctrl+W', 'Ctrl+Q', 'Ctrl+M', 'Ctrl+Shift+N'] : ['Ctrl+N', 'Ctrl+T', 'Ctrl+W', 'Ctrl+Shift+N', 'Ctrl+Shift+I', 'Ctrl+Shift+C']).map(keyLabel).join(', ')}), so Tintwork shows an alternate for those. ` +
@@ -6194,7 +6246,8 @@ async function openFile(file, mode = 'open', { interactive = true, rawSettings =
     // layered PSD and camera RAW always open as a document (placing them would flatten the layers / skip develop)
     if (isPsdName(file.name) || file.type === PSD_TYPE) { if (mode === 'place' && doc()) toast('PSD files open as a new document so their layers are kept.', 4000); await openPSD(file, interactive); return; }
     if (isRawName(file.name)) { if (mode === 'place' && doc()) toast('Camera RAW files open as a new document.', 4000); await openRAW(file, interactive, rawSettings, fileHandleOf.get(file) || null); return; }
-    if (!file.type.startsWith('image/') && !/\.png$/i.test(file.name)) { status(`Unsupported file: ${file.name}`); return; }
+    const heic = isHeicFile(file);
+    if (!heic && !file.type.startsWith('image/') && !/\.png$/i.test(file.name)) { status(`Unsupported file: ${file.name}`); return; }
     if (mode !== 'place' || !doc()) {
       if (file.type === 'image/png' || /\.png$/i.test(file.name)) {
         const buf = new Uint8Array(await file.arrayBuffer()), info = pngInfo(buf);
@@ -6203,7 +6256,9 @@ async function openFile(file, mode = 'open', { interactive = true, rawSettings =
     }
     const url = URL.createObjectURL(file);
     let img;
-    try { img = await loadImage(url); } catch { URL.revokeObjectURL(url); toast(`${file.name} could not be read. The file may be damaged or in a format this browser cannot decode.`, 6000); return; }
+    // v1.32: HEIC / HEIF (iPhone photos) decode natively where the browser can (e.g. Safari); otherwise say why and how to get a JPEG
+    try { img = await loadImage(url); }
+    catch { URL.revokeObjectURL(url); if (heic) heicUnsupported(file.name); else toast(`${file.name} could not be read. The file may be damaged or in a format this browser cannot decode.`, 6000); return; }
     URL.revokeObjectURL(url);
     const g = guardSize(img.naturalWidth, img.naturalHeight, (doc()?.layers.length || 0) + 1, doc()?.depth === 16);
     if (g.level === 'refuse') {
@@ -6211,14 +6266,14 @@ async function openFile(file, mode = 'open', { interactive = true, rawSettings =
       img = downscaleToFit(img, g.maxPixels);
     } else if (g.level === 'warn') toast(g.msg, 6000);
     if (mode === 'place' && doc()) placeImage(img, file.name.replace(/\.[^.]+$/, ''));
-    else documentFromImage(img, file.name);
+    else { documentFromImage(img, file.name); doc().srcType = heic ? 'image/jpeg' : (file.type || (/\.jpe?g$/i.test(file.name) ? 'image/jpeg' : /\.webp$/i.test(file.name) ? 'image/webp' : /\.png$/i.test(file.name) ? 'image/png' : '')); }
     status(`${mode === 'place' && doc() ? 'Placed' : 'Opened'} ${file.name} (${img.naturalWidth || img.width}×${img.naturalHeight || img.height})`);
   } catch (err) { reportError(`${file.name} could not be opened`, err); }
 }
 // ---------------------------------------------------------------------------
 // v1.1: layered PSD / PSB import and export, camera RAW develop (decoding runs in codec-worker.js)
 // ---------------------------------------------------------------------------
-const OPEN_ACCEPT = ['image/*', ...PSD_EXTS.map((e) => `.${e}`), ...RAW_EXTS.map((e) => `.${e}`)].join(',');
+const OPEN_ACCEPT = ['image/*', '.heic', '.heif', ...PSD_EXTS.map((e) => `.${e}`), ...RAW_EXTS.map((e) => `.${e}`)].join(',');
 const RAW_LAST_KEY = 'tintwork.rawLast';
 const rawLastSettings = () => { try { return cleanRawSettings(JSON.parse(localStorage.getItem(RAW_LAST_KEY) || '{}')); } catch { return { ...RAW_DEFAULTS }; } };
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -7448,6 +7503,50 @@ async function saveProject() {
   status(`Saved project ${name}.tintwork`);
   markSaved();
 }
+/**
+ * v1.32: does this document need a project file to keep what was done (layers, masks, live text / filters,
+ * adjustment layers, styles, RAW settings), or was it saved as a project already?
+ */
+function hasProjectFeatures(d = doc()) {
+  if (!d) return false;
+  if (d.fileKind === 'project' || d.savedAsProject || /\.(tintwork|json)$/i.test(d.name || '')) return true;
+  if (d.layers.length > 1) return true;
+  return d.layers.some((l) => l.kind || l.mask || l.styles || l.raw || l.opacity !== 1 || (l.blend && l.blend !== 'source-over') || l.clip);
+}
+/**
+ * v1.32 Ctrl+S: a document that is still just one opened image (JPEG / PNG / WebP file) asks whether to export a photo (JPEG / PNG …,
+ * same format as the source) or save a Tintwork project; once the work needs a project, Ctrl+S saves the project.
+ */
+function saveSmart() {
+  const d = doc();
+  if (!d.srcType || hasProjectFeatures(d)) return saveProject(); // a new canvas or real project work: Save project as before
+  const fmtName = { 'image/jpeg': 'JPEG', 'image/png': 'PNG', 'image/webp': 'WebP' }[sourceExportType(d)] || 'PNG';
+  const body = document.createElement('div'); body.id = 'saveChoice';
+  body.innerHTML = `<p><b>Export as image</b> saves a ${fmtName} photo you can share or post (the usual choice for a single photo).</p>
+    <p><b>Save project</b> saves a <code>.tintwork</code> file that only Tintwork opens. It keeps layers and history-friendly edits so you can keep working later.</p>
+    <div class="row-btns"><button type="button" id="saveChoiceProject">Save project (.tintwork)</button></div>`;
+  body.querySelector('#saveChoiceProject').addEventListener('click', () => { closeModal(); d.savedAsProject = true; saveProject(); });
+  showModal({ title: 'Save: photo or project?', body, okLabel: `Export as image (${fmtName})…`, ok: () => { setTimeout(() => openExportDialog(), 0); } });
+  if (!IS_TOUCH) setTimeout(() => $('#modalOk')?.focus(), 0);
+}
+/** v1.32: iPhone HEIC / HEIF by type or extension (Windows browsers often give no MIME type for them). */
+const isHeicFile = (f) => /^image\/hei[cf](-sequence)?$/i.test(f.type || '') || /\.(heic|heif|hif)$/i.test(f.name || '');
+function heicUnsupported(name) {
+  status(`${name}: HEIC (iPhone photo) isn’t supported in this browser.`);
+  openInfo('iPhone HEIC photo', `<p id="heicMsg"><b>${escapeHtml(name)}</b> is an iPhone HEIC photo, and HEIC isn’t supported in this browser.</p>
+    <p>To open it in Tintwork, get a JPEG copy first:</p>
+    <ul><li><b>From now on:</b> on the iPhone, Settings ▸ Camera ▸ Formats ▸ <b>Most Compatible</b>. New photos are then saved as JPEG.</li>
+    <li><b>For a photo you already took:</b> share it from Photos and, if the share sheet shows <b>Options</b>, pick <b>Most Compatible</b> / Automatic; or mail it to yourself, since Mail sends photos as JPEG.</li></ul>
+    <p class="muted">Safari on Mac and iPhone can open HEIC directly.</p>`);
+}
+/** v1.32: export format that matches the opened file (JPEG in, JPEG out); null when there is no image source. */
+function sourceExportType(d = doc()) {
+  const t = d?.srcType || '';
+  if (/jpe?g/i.test(t)) return 'image/jpeg';
+  if (/webp/i.test(t)) return 'image/webp';
+  if (/png/i.test(t)) return 'image/png';
+  return null;
+}
 /** File ▸ Save as… (Ctrl+Shift+S). */
 async function saveProjectAs() {
   if (!fsaSupported) { const name = baseName(); download(await projectBlob(), `${name}.tintwork`); status(`Saved project ${name}.tintwork`); markSaved(); return; }
@@ -8572,7 +8671,7 @@ async function showUpdateBar() {
   bar.addEventListener('click', (e) => { const a = e.target.closest('button'); if (!a) return; if (a.dataset.act === 'reload') location.reload(); else bar.remove(); });
   document.body.append(bar);
 }
-document.querySelectorAll('.panel-actions [data-cmd]').forEach((b) => { b.innerHTML = ICONS[b.dataset.cmd] || b.innerHTML; }); setTool('brush'); setFg(state.fg);
+document.querySelectorAll('.panel-actions [data-cmd]').forEach((b) => { b.innerHTML = ICONS[b.dataset.cmd] || b.innerHTML; }); setTool(state.tool); setFg(state.fg);
 $('#welcome').classList.remove('hidden');
 render();
 checkRecovery();
@@ -8840,6 +8939,7 @@ function describeStep(s) {
     case 'fitLong': return `Fit within ${s.long} px`;
     case 'autoEnhance': return `Auto enhance (${s.opts?.strength ?? 100}%)`;
     case 'autoWB': return `Auto white balance (${s.opts?.strength ?? 100}%)`;
+    case 'upright': return `Upright: ${({ auto: 'Auto', level: 'Level', vertical: 'Vertical', full: 'Full' })[s.req] || s.req} (${({ crop: 'crop edges', fill: 'fill edges', keep: 'keep transparent' })[s.edges] || 'crop edges'}${s.low ? `; under ${Math.round(UPRIGHT_KEEP_WARN * 100)}% kept: ${s.low === 'fill' ? 'fill edges' : s.low === 'cancel' ? 'skip' : 'crop'}` : ''})`;
     default: return s.t;
   }
 }
@@ -8873,6 +8973,13 @@ async function playStep(s) {
     case 'resize': resizeImage(s.w, s.h); break;
     case 'fitLong': { const k = s.long / Math.max(d.width, d.height); if (k < 1) resizeImage(Math.max(1, Math.round(d.width * k)), Math.max(1, Math.round(d.height * k))); break; }
     case 'autoEnhance': autoEnhanceCmd(s.opts); break;
+    case 'upright': {
+      if (!['auto', 'level', 'vertical', 'full'].includes(s.req)) throw new Error(`unknown upright mode ${s.req}`);
+      uprightReplay = { edges: ['crop', 'fill', 'keep'].includes(s.edges) ? s.edges : 'crop', low: ['crop', 'fill', 'cancel'].includes(s.low) ? s.low : null };
+      try { const u = autoUprightCmd(s.req); if (u?.applyP) await u.applyP; } finally { uprightReplay = null; }
+      if (state.mxf) cancelMeshXf({ quiet: true });
+      break;
+    }
     case 'autoWB': autoWhiteBalanceCmd(s.opts); break;
     default: throw new Error(`unknown step ${s.t}`);
   }
@@ -9646,6 +9753,7 @@ window.tintwork = {
   // v1.8
   objSel: { run: async (rect, { strokes = [], mode = 'new', refine } = {}) => { const d = doc(); if (refine != null) state.opts.objRefine = refine; state.objSel = { doc: d, rect, strokes: strokes.map((s) => ({ fg: s.fg !== false, r: s.r || 12, pts: s.pts })), base: mode === 'new' ? null : d.selection, prev: d.selection, mode }; return objSelRun(); },
     stroke: async (st) => { const s = state.objSel; if (!s) return null; s.strokes.push({ fg: st.fg !== false, r: st.r || 12, pts: st.pts }); return objSelRun(); }, settled: () => objSelJob, done: objSelDone, cancel: objSelCancel, get state() { return state.objSel; } },
+  UPRIGHT_KEEP_WARN, hasProjectFeatures, saveSmart, sourceExportType, isHeicFile, heicUnsupported,
   autoUprightCmd, get lastUpright() { return lastUpright; }, cropEmptyEdges, fillEmptyEdges, innerOpaqueRect, segment: seg,
   exportPresets: { all: allExportPresets, user: userExportPresets, save: saveExportPreset, remove: deleteExportPreset, builtin: BUILTIN_EXPORT_PRESETS, lastKey: LAST_EXPORT_PRESET_KEY },
   exportSharpen: { apply: applyExportSharpen, optionsHTML: exportSharpOptionsHTML, label: exportSharpLabel, presets: EXPORT_SHARP_PRESETS, scaledSharpParams },

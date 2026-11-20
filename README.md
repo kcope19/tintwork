@@ -7,6 +7,17 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.32 (safe Auto upright, first-run fixes)
+
+From the 7-persona test of v1.31 ([docs/audit/persona-test-v131.md](docs/audit/persona-test-v131.md)). No AI; the upright math is unchanged.
+
+- **Auto upright shows how much of the photo it keeps.** If cropping away the empty corners would keep **under 60%** of the photo (common on looking-up shots), it no longer crops silently: you choose **Apply (crop)**, **Fill edges** (keeps the full canvas and fills the corners from nearby pixels, mirror + smooth) or **Cancel** (nothing changes). The upright and its crop or fill are now **one undo step**. The same applies to Level / Vertical / Full and to Guided upright.
+- **Auto / Level / Vertical / Full upright can be recorded in Actions** (with the edge choice, including what to do under 60%) and replay in **Batch process** without asking.
+- **Starts on the Hand tool**, so the first click on a photo no longer paints on it.
+- **Ctrl+S on a single opened photo asks**: Export as image (same format and name as the file you opened) or Save project. Once the work needs a project (layers, masks, text, adjustment layers…), Ctrl+S saves the project as before. File ▸ Save project is still there.
+- **Export starts in the source format** (JPEG in, JPEG out) with the source file name.
+- **iPhone HEIC photos**: a specific message explaining that HEIC isn't supported in this browser and how to get a JPEG (Settings ▸ Camera ▸ Formats ▸ Most Compatible). Browsers that can decode HEIC (Safari) open it directly.
+
 ## What's new in v1.31 (Suggest mixed fallback is gated)
 
 v1.31 keeps to non-AI tools. When **Suggest guides** cannot form a usable upright pair (every official vertical pair fails to make a valid correction), it no longer applies a mixed vertical+horizontal suggestion unchecked. Mixes are scored against leaving the photo as-is, using the same acceptMix bars as usual (none were loosened). A synthetic looking-up facade with an in-frame vanishing point now refuses with both leftover numbers. On the looking-up willis photo (inspected for diagnosis only, not used to tune) leftover stays **~23.6°**, now with a recorded gate. Every other benchmark photo is unchanged. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
@@ -326,7 +337,7 @@ v1.7 comes from a self-audit: 12 everyday jobs scripted against the live site, p
   - Pipelines are specialized per blend mode and operation (constants are baked in, which is about 3x faster than branching at runtime).
   - Blur uses a bilinear "paired-tap" gather shader, which halves the texture reads. It runs 4x faster than the v0.6 shared-memory version, and the output is identical.
   - On a real GPU, results go straight to the canvas. On software adapters (SwiftShader) they are read back instead. Automatic mode still chooses the CPU when the adapter is software or fails the speed probe.
-- **File System Access** (Chrome/Edge): **Ctrl+S** saves in place, and the first save goes through Save As. **Ctrl+Shift+S** always asks where to save. Export uses the save picker. An opened JPEG/PNG is never overwritten by a project save. **File ▸ Open recent** keeps file handles in IndexedDB (screenshot `6x-open-recent.png`). Browsers without the API fall back to download and upload.
+- **File System Access** (Chrome/Edge): **Ctrl+S** saves in place, and the first save goes through Save As (v1.32: a single opened photo is asked first whether to export an image or save a project). **Ctrl+Shift+S** always asks where to save. Export uses the save picker. An opened JPEG/PNG is never overwritten by a project save. **File ▸ Open recent** keeps file handles in IndexedDB (screenshot `6x-open-recent.png`). Browsers without the API fall back to download and upload.
 - **Installable app (PWA)**: window controls overlay, file handling (opening .png/.jpg/.webp/.tintwork from Explorer), app shortcuts (`?action=new`, `?action=open`) and an offline shell. The title bar shows the document name, with • when there are unsaved changes.
 - **Mouse precision** (the essentials only):
   - a stroke stabilizer ("smoothing" 0–100, string model with catch-up);

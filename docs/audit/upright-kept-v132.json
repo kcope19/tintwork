@@ -1,0 +1,11 @@
+{
+  "note": "Auto upright (Image > Auto upright, Crop edges) kept area = crop rectangle / original photo area. 'v1.31' measured on the v1.31.0 tree before any v1.32 code change (scripts/_v132-kept.mjs, 2026-11-20 America/New_York); 'v1.32' from v132-test. The upright math and crop rectangle are unchanged; v1.32 shows the share and asks below 60% (threshold from the brief, not fit to any photo). v131-canyon and v131-white are held-out and observed only.",
+  "threshold": 0.6,
+  "rows": [
+    { "photo": "v128-towers", "size": "853x1280", "v131": { "crop": "441x662", "kept": 26.7, "asked": false, "undoSteps": 2 }, "v132": { "crop": "441x662", "kept": 26.7, "asked": true, "undoSteps": 1, "fillEdges": "853x1280 (100%)" } },
+    { "photo": "v130-below", "size": "1280x850", "v131": { "crop": "963x639", "kept": 56.6, "asked": false, "undoSteps": 2 }, "v132": { "crop": "963x639", "kept": 56.6, "asked": true, "undoSteps": 1, "fillEdges": "1280x850 (100%)" } },
+    { "photo": "v131-canyon", "heldOut": true, "size": "1280x853", "v131": { "crop": "642x428", "kept": 25.2, "asked": false, "undoSteps": 2 }, "v132": { "crop": "642x428", "kept": 25.2, "asked": true, "undoSteps": 1 } },
+    { "photo": "v131-white", "heldOut": true, "size": "1280x962", "v131": { "crop": "1259x946", "kept": 96.7, "asked": false, "undoSteps": 2 }, "v132": { "crop": "1259x946", "kept": 96.7, "asked": false, "undoSteps": 1 } },
+    { "photo": "c4", "size": "1280x1776", "v131": { "crop": "1101x1528", "kept": 74.0, "asked": false, "undoSteps": 2 }, "v132": { "crop": "1101x1528", "kept": 74.0, "asked": false, "undoSteps": 1 } }
+  ]
+}

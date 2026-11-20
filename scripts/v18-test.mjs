@@ -73,6 +73,7 @@ await ctx.addInitScript(() => {
 const page = await ctx.newPage(); const errors = [];
 page.on('pageerror', (e) => errors.push(e.message)); page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 await page.goto(`${BASE}?platform=win`); await page.waitForFunction(() => window.tintwork && document.readyState === 'complete');
+await page.evaluate(() => { window.tintwork.state.opts.uprightAsk = false; }); // v1.32: low-kept upright asks first; this test measures the crop, so it answers Apply (crop) = the v1.31 result
 await page.evaluate(() => window.tintwork.engineReady);
 const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }));
 const open = async (name, bytes) => { await page.setInputFiles('#fileInput', { name, mimeType: /png$/.test(name) ? 'image/png' : 'image/jpeg', buffer: bytes }); await page.waitForFunction((n) => window.tintwork.doc?.name?.startsWith(n.replace(/\.[^.]+$/, '')), name, { timeout: 30000 }); await T(async () => { await window.tintwork.idle(); await window.tintwork.compositeSettled?.(); }); };

@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.31.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.32.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,28 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.32.0 update (2026-11-20, America/New_York)
+
+Usability fixes from the persona test of live v1.31.0 ([audit/persona-test-v131.md](audit/persona-test-v131.md)). No AI. No upright / Suggest geometry was changed and no gate was loosened.
+
+**A. Safe Auto upright.** After the warp, the kept share (crop rectangle ÷ photo area, same constrain-crop rectangle as v1.17–v1.31) is computed for every edge mode and shown in the status line. Below **60%** (a fixed threshold from the brief, not fit to any photo) the crop is not applied silently: a dialog offers **Apply (crop to N%)**, **Fill edges** (existing non-AI mirror + push-pull fill, full canvas kept) or **Cancel** (restores the pre-upright state; no redo entry). Upright + crop (or fill) is squashed into **one** undo step. Auto / Level / Vertical / Full record as an `upright` action step `{ req, edges, low }`; replay and Batch use the recorded choice and never show the dialog. Lens + Full is not recorded (its Distortion slider is per photo); Guided / Suggest upright is not recordable (guides are per photo) but does get the kept-% dialog.
+
+| Photo | Size | v1.31: Auto upright (silent crop) | v1.32: kept % shown | v1.32: what happens |
+|---|---|---|---|---|
+| v128-towers | 853×1280 | 441×662, **26.7%** kept, 2 undo steps | **27%** | asks: Apply (crop to 27%) / Fill edges (100%) / Cancel; 1 undo step |
+| v130-below | 1280×850 | 963×639, **56.6%**, 2 undo steps | **57%** | asks (under 60%); 1 undo step |
+| v131-canyon (held-out, observed only) | 1280×853 | 642×428, **25.2%**, 2 undo steps | **25%** | asks; 1 undo step |
+| v131-white (held-out, observed only) | 1280×962 | 1259×946, **96.7%**, 2 undo steps | **97%** | applies directly, shows 97% in the status; 1 undo step |
+| c4 (regression) | 1280×1776 | 1101×1528, **74.0%**, 2 undo steps | **74%** | applies directly; 1 undo step |
+
+canyon and white are held-out and were observed only. The 60% threshold came from the brief; the kept percentages are identical to v1.31 because the crop itself is unchanged (baseline measured on the v1.31.0 tree before any code change: `scripts/_v132-kept.mjs`, [audit/upright-kept-v132.json](audit/upright-kept-v132.json)).
+
+**B. First run.** Start tool is **Hand** (a click or drag on the photo changes nothing). Hand now pans only when no Perspective / Transform / colour-sampler session is open, so guides can be drawn while Hand is active (before v1.32 Hand would have swallowed those drags; the default Brush hid this). **Ctrl+S** → File ▸ Save…: for a document that is one opened JPEG / PNG / WebP with no project-only features (one plain layer, no mask / text / adjustment / styles / RAW / opacity / blend) a choice opens: **Export as image (JPEG…)** or **Save project (.tintwork)**. After Save project, or once the document has project features, or for a new blank canvas, Ctrl+S saves the project directly as before. **Export** defaults to the source format (JPEG in → JPEG, PNG → PNG, WebP → WebP) and the source name, unless a named export preset was used last. **HEIC/HEIF** (by type or by `.heic/.heif` name; Windows often gives no MIME type) is tried with the browser's own decoder; if that fails a dialog says iPhone HEIC isn't supported in this browser and explains Settings ▸ Camera ▸ Formats ▸ Most Compatible and sharing as JPEG. Native decode was **not** verified on a HEIC-capable browser (no real HEIC sample or Safari on this box).
+
+**Regression:** Suggest leftovers on the 21-photo set re-measured on v1.32 ([audit/workflows-v132-after.json](audit/workflows-v132-after.json)): all 21 photos identical to v1.31 (same leftover, guide count and mode; 0 differences). c4 Full ≤0.5° (v131-test) still passes.
+
+**Test-change disclosure:** `v132-test` new (32 checks). Pins accept 1.32.0. `windows-test`: Ctrl+S on an opened PNG now clicks **Save project** in the new choice before checking the `.tintwork` picker name (intended behaviour change; the PNG is still never overwritten). `v18`, `v19`, `v110`, `v117`: set `state.opts.uprightAsk = false` after load, which answers the low-kept dialog with Apply (crop), i.e. exactly the v1.31 result those tests measure; no expected values changed. `v15-test` timed out once under parallel load and passed alone (79 s) and in the serial `npm test`. Full serial `npm test` **1431** ok (WebKit; 1399 + 32). One earlier serial run had a single `v10-test` autosave-recovery timing failure; v10 then passed 3/3 alone and in the next full serial run.
 
 ## v1.31.0 update (2026-11-20, America/New_York)
 
