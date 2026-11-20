@@ -26,9 +26,11 @@ On looking-up shots like `v131-willis`, `estimateUpright` rejects a vertical van
 
 **Test-change disclosure:** `v131-test` new. Version pins accept 1.31.0. Full npm test **1399** ok (WebKit; 1361 + 38).
 
-### Live verification (v1.31.0)
+### Live verification (v1.31.0, 2026-11-20 about 9:41 AM America/New_York)
 
-Pending Pages deploy and `v131-test` × 3 on the live site.
+- Live site reports `tintwork-shell-v1.31.0` / `APP_VERSION` 1.31.0 (Pages build `c9165f1`, status built; run 44755040713).
+- `v131-test` against https://kcope19.github.io/tintwork/ : **38/38 × 3**.
+- Screenshots: `screenshots/131-live-willis-suggest.png` (Suggest 2V+2H · ~23.6°, now gated vs identity), `131-live-canyon-suggest.png` (pure-V · ~12.8°), `131-live-white-suggest.png` (pure-V · ~27.3°), `131-live-synth-refuse.png` (no usable upright pair, ~16.0° vs ~16.1°).
 
 ## v1.30.0 update (2026-11-19, America/New_York)
 
