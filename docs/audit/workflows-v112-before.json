@@ -22,8 +22,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -48,8 +48,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -74,8 +74,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -100,8 +100,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -126,8 +126,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective, both directions)": 6,
         "Pixelmator Pro (Perspective)": 5,
         "Photopea (Perspective transform)": 6
@@ -152,8 +152,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective, both directions)": 6,
         "Pixelmator Pro (Perspective)": 5,
         "Photopea (Perspective transform)": 6
@@ -178,8 +178,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective, both directions)": 6,
         "Pixelmator Pro (Perspective)": 5,
         "Photopea (Perspective transform)": 6

@@ -213,7 +213,7 @@ const JOBS = [
     await R.ok(); await page.waitForFunction(() => window.tintwork.doc && !window.tintwork.rawUI && window.tintwork.activeLayer()?.raw, null, { timeout: 90000 }); await R.settle();
     const r = await page.evaluate(() => ({ bits: window.tintwork.doc.depth || window.tintwork.doc.bits, w: window.tintwork.doc.width, s: window.tintwork.activeLayer().raw.settings }));
     return { ok: r.w > 1000 && (r.s.wb === 'auto' || r.s.autoTone || r.s.exposure !== 0), detail: `${r.w}px, ${r.bits || '?'}-bit, wb ${r.s.wb}, exposure ${r.s.exposure}` };
-  }, paid: { 'Lightroom Classic': 3, 'Photoshop (Camera Raw)': 4, 'Affinity Photo (Develop)': 5, 'Photopea': 6 } },
+  }, paid: { 'Subscription RAW editor': 3, 'Leading subscription editor (RAW plug-in)': 4, 'Affinity Photo (Develop)': 5, 'Photopea': 6 } },
 
   { id: 2, name: 'Crop and straighten a tilted horizon', async run(R, page, A) {
     await ctrlO(R, page, 'seascape.jpg', A.tilted);
@@ -225,7 +225,7 @@ const JOBS = [
     const tilt = await page.evaluate(() => window.tintwork.detectTilt());
     const r = await page.evaluate(() => ({ w: window.tintwork.doc.width, h: window.tintwork.doc.height }));
     const ang = tilt?.angle ?? tilt; return { ok: Math.abs(+ang || 0) < 0.6 && r.w < d.w, detail: `residual tilt ${(+ang || 0).toFixed(2)}°, ${r.w}×${r.h}` };
-  }, paid: { 'Lightroom Classic': 4, 'Photoshop': 4, 'Affinity Photo': 5, 'Pixelmator Pro': 4, 'Photopea': 5 } },
+  }, paid: { 'Subscription RAW editor': 4, 'Leading subscription editor': 4, 'Affinity Photo': 5, 'Pixelmator Pro': 4, 'Photopea': 5 } },
 
   { id: 3, name: 'Remove a blemish', async run(R, page, A) {
     await ctrlO(R, page, 'portrait.jpg', A.portrait);
@@ -234,7 +234,7 @@ const JOBS = [
     const after = await meanIn(page, { x: 1292, y: 872, w: 16, h: 16 }), skin = await meanIn(page, { x: 1340, y: 820, w: 16, h: 16 });
     const dist = Math.hypot(...after.mean.map((v, i) => v - skin.mean[i]));
     return { ok: dist < 25, detail: `blemish RGB ${before.mean} → ${after.mean} (skin ${skin.mean}, Δ ${dist.toFixed(0)})` };
-  }, paid: { 'Photoshop': 2, 'Lightroom Classic': 2, 'Affinity Photo': 2, 'Pixelmator Pro': 2, 'Photopea': 2 } },
+  }, paid: { 'Leading subscription editor': 2, 'Subscription RAW editor': 2, 'Affinity Photo': 2, 'Pixelmator Pro': 2, 'Photopea': 2 } },
 
   { id: 4, name: 'Select the subject and blur the background', async run(R, page, A) {
     await ctrlO(R, page, 'portrait.jpg', A.portrait);
@@ -255,7 +255,7 @@ const JOBS = [
     const bg1 = await meanIn(page, { x: 100, y: 100, w: 300, h: 300 }), face1 = await meanIn(page, { x: 1100, y: 700, w: 100, h: 100 });
     const faceShift = Math.hypot(...face1.mean.map((v, i) => v - face0.mean[i]));
     return { ok: bg1.sd < bg0.sd * 0.6 && faceShift < 6 && face1.sd < face0.sd + 3, detail: `background texture σ ${bg0.sd} → ${bg1.sd}; face shift Δ ${faceShift.toFixed(1)}` };
-  }, paid: { 'Photoshop (Select Subject)': 5, 'Lightroom Classic (Select Subject mask)': 4, 'Affinity Photo': 7, 'Pixelmator Pro (ML select)': 5, 'Photopea (Magic Cut / select)': 6 } },
+  }, paid: { 'Leading subscription editor (Select Subject)': 5, 'Subscription RAW editor (Select Subject mask)': 4, 'Affinity Photo': 7, 'Pixelmator Pro (ML select)': 5, 'Photopea (Magic Cut / select)': 6 } },
 
   { id: 5, name: 'Dodge and burn a portrait', async run(R, page, A) {
     await ctrlO(R, page, 'portrait.jpg', A.portrait);
@@ -267,7 +267,7 @@ const JOBS = [
     const b1 = await meanIn(page, { x: 1100, y: 645, w: 200, h: 15 });
     const n = await page.evaluate(() => window.tintwork.doc.layers.length);
     return { ok: b1.mean[0] > b0.mean[0] + 6 && n >= 2, detail: `brow band R ${b0.mean[0]} → ${b1.mean[0]}, ${n} layers` };
-  }, paid: { 'Photoshop': 6, 'Lightroom Classic (local brush)': 5, 'Affinity Photo': 5, 'Pixelmator Pro': 4, 'Photopea': 5 } },
+  }, paid: { 'Leading subscription editor': 6, 'Subscription RAW editor (local brush)': 5, 'Affinity Photo': 5, 'Pixelmator Pro': 4, 'Photopea': 5 } },
 
   { id: 6, name: 'Add a text watermark at 50% opacity', async run(R, page, A) {
     await ctrlO(R, page, 'portrait.jpg', A.portrait);
@@ -277,7 +277,7 @@ const JOBS = [
     await R.slider('#layerOpacity', 50, 'Layer opacity');
     const l = await page.evaluate(() => { const a = window.tintwork.activeLayer(); return { kind: a.kind, op: a.opacity, text: a.text?.text }; });
     return { ok: l.kind === 'text' && Math.abs(l.op - 0.5) < 0.02, detail: `${l.kind} layer “${l.text}”, opacity ${Math.round(l.op * 100)}%` };
-  }, paid: { 'Photoshop': 6, 'Lightroom Classic (export watermark)': 6, 'Affinity Photo': 5, 'Pixelmator Pro': 5, 'Photopea': 5 } },
+  }, paid: { 'Leading subscription editor': 6, 'Subscription RAW editor (export watermark)': 6, 'Affinity Photo': 5, 'Pixelmator Pro': 5, 'Photopea': 5 } },
 
   { id: 7, name: 'Instagram portrait post: 4:5 crop, 1080×1350 JPEG', async run(R, page, A) {
     await ctrlO(R, page, 'portrait.jpg', A.portrait);
@@ -293,7 +293,7 @@ const JOBS = [
     await page.waitForFunction(() => window.__pick.save > 0 && /Exported/.test(document.querySelector('#status').textContent), null, { timeout: 30000 });
     const name = await page.evaluate(() => window.__pick.lastSave), f = await opfsFile(page, null, name);
     return { ok: f.w === 1080 && f.h === 1350, detail: `${name}: ${f.w}×${f.h}, ${(f.size / 1024).toFixed(0)} KB` };
-  }, paid: { 'Lightroom Classic': 7, 'Photoshop': 8, 'Affinity Photo': 8, 'Pixelmator Pro': 7, 'Photopea': 8 } },
+  }, paid: { 'Subscription RAW editor': 7, 'Leading subscription editor': 8, 'Affinity Photo': 8, 'Pixelmator Pro': 7, 'Photopea': 8 } },
 
   { id: 8, name: 'Print export: 8×10 in at 300 ppi JPEG', async run(R, page, A) {
     await ctrlO(R, page, 'portrait.jpg', A.portrait);
@@ -311,7 +311,7 @@ const JOBS = [
     const name = await page.evaluate(() => window.__pick.lastSave), f = await opfsFile(page, null, name), dpi = jpegDpi(f.head);
     const port = f.h > f.w, ok = Math.min(f.w, f.h) === 2400 && Math.max(f.w, f.h) === 3000 && dpi?.unit === 1 && dpi.x === 300;
     return { ok, detail: `${f.w}×${f.h}${port ? '' : ' (landscape)'}, JFIF density ${dpi ? `${dpi.x} (unit ${dpi.unit})` : 'none'}` };
-  }, paid: { 'Lightroom Classic': 6, 'Photoshop': 8, 'Affinity Photo': 8, 'Pixelmator Pro': 7, 'Photopea': 9 } },
+  }, paid: { 'Subscription RAW editor': 6, 'Leading subscription editor': 8, 'Affinity Photo': 8, 'Pixelmator Pro': 7, 'Photopea': 9 } },
 
   { id: 9, name: 'Batch-resize a folder of 6 photos to 2048 px long edge JPEG', async run(R, page, A) {
     await page.evaluate(async (files) => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-in', { create: true }); for (let i = 0; i < files.length; i++) { const w = await (await dir.getFileHandle(`photo-${i + 1}.jpg`, { create: true })).createWritable(); await w.write(new Uint8Array(files[i])); await w.close(); } }, A.batch);
@@ -327,7 +327,7 @@ const JOBS = [
     const secs = (Date.now() - t0) / 1000;
     const outs = await page.evaluate(async () => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-out'); const r = []; for await (const [n, h] of dir.entries()) { const f = await h.getFile(); const b = await createImageBitmap(f); r.push([n, b.width, b.height]); } return r; });
     return { ok: outs.length === 6 && outs.every(([, w, h]) => Math.max(w, h) === 2048), detail: `${outs.length} files, ${outs.map((o) => `${o[1]}×${o[2]}`)[0]}, ${secs.toFixed(1)} s for the batch` };
-  }, paid: { 'Lightroom Classic (Export)': 6, 'Photoshop (Image Processor)': 7, 'Affinity Photo (Batch Job)': 8, 'Pixelmator Pro (Export / Shortcuts)': 7, 'Photopea': 'no batch' } },
+  }, paid: { 'Subscription RAW editor (Export)': 6, 'Leading subscription editor (Image Processor)': 7, 'Affinity Photo (Batch Job)': 8, 'Pixelmator Pro (Export / Shortcuts)': 7, 'Photopea': 'no batch' } },
 
   { id: 10, name: 'Fix converging verticals on a building', async run(R, page, A) {
     await ctrlO(R, page, 'building.jpg', A.building);
@@ -356,7 +356,7 @@ const JOBS = [
     const leanOK = lean.left != null && Math.abs(lean.left) < 0.5 && Math.abs(lean.right) < 0.5;
     const ok = edges.top > 0 && Math.abs(edges.top - edges.bot) < 40 && edges.rtop > 0 && Math.abs(edges.rtop - edges.rbot) < 40 && leanOK;
     return { ok, detail: `left edge x at 15% / 85% height: ${edges.top} / ${edges.bot}; right edge ${edges.rtop} / ${edges.rbot}; outer-window lean ${lean.left?.toFixed(2)}° / ${lean.right?.toFixed(2)}° (worst ${lean.worstL?.toFixed(2)}° / ${lean.worstR?.toFixed(2)}°, ${lean.bands} rows)${lu?.crop ? `; cropped to ${lu.crop.w}×${lu.crop.h}` : ''}` };
-  }, paid: { 'Lightroom Classic (Upright Auto)': 2, 'Photoshop (Camera Raw filter Upright)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
+  }, paid: { 'Subscription RAW editor (Upright Auto)': 2, 'Leading subscription editor (RAW plug-in filter Upright)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
 
   { id: 11, name: 'Combine two photos with a gradient mask (sky blend)', async run(R, page, A) {
     await ctrlO(R, page, 'seascape.jpg', A.tilted);
@@ -378,7 +378,7 @@ const JOBS = [
     const okTop = top.mean[2] < 140 && top.mean[0] < 120, okBot = bot.mean[0] > 180;
     // white→black from top to bottom: with default colours black→white the gradient may need reversing
     return { ok: mask && ((okTop && okBot) || (!okTop && !okBot && false)), detail: `top ${top.mean} / bottom ${bot.mean} (expect sky purple top, sand bottom)` };
-  }, paid: { 'Photoshop': 6, 'Affinity Photo': 6, 'Pixelmator Pro': 6, 'Photopea': 6, 'Lightroom Classic': 'not possible' } },
+  }, paid: { 'Leading subscription editor': 6, 'Affinity Photo': 6, 'Pixelmator Pro': 6, 'Photopea': 6, 'Subscription RAW editor': 'not possible' } },
 
   { id: 12, name: 'Re-edit a saved project (change an adjustment after reopening)', async run(R, page, A) {
     await ctrlO(R, page, 'portrait.jpg', A.portrait);
@@ -400,7 +400,7 @@ const JOBS = [
     await R.value('brightness', -20, 'Brightness'); await R.ok();
     const v = await page.evaluate(() => window.tintwork.doc.layers.find((l) => l.kind === 'adjust').adj.params.brightness);
     return { ok: v === -20, detail: `reopened ${saved}; brightness now ${v}` };
-  }, paid: { 'Photoshop (PSD adjustment layer)': 5, 'Affinity Photo': 5, 'Pixelmator Pro': 5, 'Lightroom Classic (catalog, always editable)': 3, 'Photopea': 6 } },
+  }, paid: { 'Leading subscription editor (PSD adjustment layer)': 5, 'Affinity Photo': 5, 'Pixelmator Pro': 5, 'Subscription RAW editor (catalog, always editable)': 3, 'Photopea': 6 } },
 
   // ---- v1.8: real photos (test-assets/real, public domain / CC0) and the new export features ----------------------
   { id: 13, name: '3R: remove a blemish on a real portrait (USDA, public domain)', async run(R, page) {
@@ -423,7 +423,7 @@ const JOBS = [
       return { before: diff(spot, box), after: diff(now, box), ring: diff(now, { x: 560, y: 610, w: 60, h: 14 }), tex: hp(now, box) / hp(orig, box) };
     });
     return { ok: m.after < m.before * 0.3 && m.ring < 2, detail: `mean error vs the untouched photo in the spot: ${m.before.toFixed(1)} → ${m.after.toFixed(1)} levels (${Math.round(100 - 100 * m.after / m.before)}% removed); grain ${m.tex.toFixed(2)}× the photo's; skin above the spot changed ${m.ring.toFixed(2)}; stroke + heal ${healMs} ms` };
-  }, paid: { 'Photoshop': 2, 'Lightroom Classic': 2, 'Affinity Photo': 2, 'Pixelmator Pro': 2, 'Photopea': 2 } },
+  }, paid: { 'Leading subscription editor': 2, 'Subscription RAW editor': 2, 'Affinity Photo': 2, 'Pixelmator Pro': 2, 'Photopea': 2 } },
 
   { id: 14, name: '4R: select a real subject (public-domain portrait) — object select', async run(R, page) {
     await ctrlO(R, page, 'evers-scene.jpg', REAL('evers-scene.jpg'));
@@ -437,7 +437,7 @@ const JOBS = [
     await R.key('Enter');
     const iou = { ...(await selIoU(page)), ms };
     return { ok: iou.iou > 0.8, detail: `IoU ${iou.iou.toFixed(3)} against the published cut-out (inside its frame), ${iou.ms} ms per solve` };
-  }, paid: { 'Photoshop (Object Selection, ML)': 2, 'Lightroom Classic (Select Subject, ML)': 2, 'Affinity Photo (Selection Brush)': 4, 'Pixelmator Pro (Quick Selection ML)': 3, 'Photopea (Magic Cut)': 4 } },
+  }, paid: { 'Leading subscription editor (Object Selection, ML)': 2, 'Subscription RAW editor (Select Subject, ML)': 2, 'Affinity Photo (Selection Brush)': 4, 'Pixelmator Pro (Quick Selection ML)': 3, 'Photopea (Magic Cut)': 4 } },
 
   { id: 21, name: '4R holdout: a second real subject (CC0 cut-out, not used for tuning) — box only', async run(R, page) {
     await ctrlO(R, page, 'macaque.jpg', REAL('macaque.jpg'));
@@ -447,7 +447,7 @@ const JOBS = [
     await page.evaluate(() => window.tintwork.objSel.settled()); await R.key('Enter');
     const iou = await selIoU(page, 'macaque-gt.png', null);
     return { ok: iou.iou > 0.8, detail: `IoU ${iou.iou.toFixed(3)} against the published cut-out (whole frame)` };
-  }, paid: { 'Photoshop (Object Selection, ML)': 2, 'Lightroom Classic (Select Subject, ML)': 2, 'Affinity Photo (Selection Brush)': 4, 'Pixelmator Pro (Quick Selection ML)': 3, 'Photopea (Magic Cut)': 4 } },
+  }, paid: { 'Leading subscription editor (Object Selection, ML)': 2, 'Subscription RAW editor (Select Subject, ML)': 2, 'Affinity Photo (Selection Brush)': 4, 'Pixelmator Pro (Quick Selection ML)': 3, 'Photopea (Magic Cut)': 4 } },
 
   { id: 15, name: '4R baseline: the same subject with the magic wand (v1.7 route)', async run(R, page) {
     await ctrlO(R, page, 'evers-scene.jpg', REAL('evers-scene.jpg'));
@@ -458,19 +458,19 @@ const JOBS = [
     await R.key('Shift+F7');
     const iou = await selIoU(page);
     return { ok: iou.iou > 0.8, detail: `IoU ${iou.iou.toFixed(3)} with 7 wand clicks + invert` };
-  }, paid: { 'Photoshop (Object Selection, ML)': 2, 'Lightroom Classic (Select Subject, ML)': 2, 'Affinity Photo (Selection Brush)': 4, 'Pixelmator Pro (Quick Selection ML)': 3, 'Photopea (Magic Cut)': 4 } },
+  }, paid: { 'Leading subscription editor (Object Selection, ML)': 2, 'Subscription RAW editor (Select Subject, ML)': 2, 'Affinity Photo (Selection Brush)': 4, 'Pixelmator Pro (Quick Selection ML)': 3, 'Photopea (Magic Cut)': 4 } },
 
   { id: 16, name: '10R: Auto upright on a real photo (church among towers, CC0)', async run(R, page) {
     return realUpright(R, page, 'c4.jpg', [[[124, 446], [15, 1774]], [[543, 277], [541, 547]], [[935, 492], [968, 996]]], 'auto');
-  }, paid: { 'Lightroom Classic (Upright Auto)': 2, 'Photoshop (Camera Raw filter Upright)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
+  }, paid: { 'Subscription RAW editor (Upright Auto)': 2, 'Leading subscription editor (RAW plug-in filter Upright)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
 
   { id: 17, name: '10R: Auto upright on a real photo (high-rise looking up, CC0)', async run(R, page) {
     return realUpright(R, page, 'c6.jpg', [[[481, 368], [449, 573]], [[845, 368], [887, 598]]], 'auto');
-  }, paid: { 'Lightroom Classic (Upright Auto)': 2, 'Photoshop (Camera Raw filter Upright)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
+  }, paid: { 'Subscription RAW editor (Upright Auto)': 2, 'Leading subscription editor (RAW plug-in filter Upright)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
 
   { id: 18, name: '10R: Guided upright on the same real photo (two drawn guides)', async run(R, page) {
     return realUpright(R, page, 'c4.jpg', [[[124, 446], [15, 1774]], [[543, 277], [541, 547]], [[935, 492], [968, 996]]], 'guided');
-  }, paid: { 'Lightroom Classic (Upright Guided)': 5, 'Photoshop (Camera Raw filter Upright Guided)': 7, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
+  }, paid: { 'Subscription RAW editor (Upright Guided)': 5, 'Leading subscription editor (RAW plug-in filter Upright Guided)': 7, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
 
   { id: 19, name: 'Export for web with a saved preset and a text watermark (first time)', async run(R, page, A) {
     await ctrlO(R, page, 'portrait.jpg', A.portrait);
@@ -486,7 +486,7 @@ const JOBS = [
     await page.waitForFunction(() => window.__pick.save > 1 && /Exported/.test(document.querySelector('#status').textContent), null, { timeout: 30000 }).catch(() => {});
     const again = await page.evaluate(() => window.__pick.save);
     return { ok: Math.max(f.w, f.h) === 2048 && wm.corner > 2 && wm.away < 0.05 && again === 2, detail: `${f.w}×${f.h}; watermark changes ${wm.corner.toFixed(1)}% of the bottom-right band (elsewhere ${wm.away.toFixed(2)}%); repeat export: ${R.steps - n0} step` };
-  }, paid: { 'Lightroom Classic (Export preset + watermark)': 6, 'Photoshop (text layer + Export As)': 9, 'Affinity Photo (text layer + Export)': 8, 'Pixelmator Pro (text layer + Export)': 8, 'Photopea (text layer + Export)': 8 } },
+  }, paid: { 'Subscription RAW editor (Export preset + watermark)': 6, 'Leading subscription editor (text layer + Export As)': 9, 'Affinity Photo (text layer + Export)': 8, 'Pixelmator Pro (text layer + Export)': 8, 'Photopea (text layer + Export)': 8 } },
 
   { id: 20, name: 'Batch-resize 6 photos to 2048 px JPEG with a watermark', async run(R, page, A) {
     await page.evaluate(async (files) => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-in', { create: true }); for (let i = 0; i < files.length; i++) { const w = await (await dir.getFileHandle(`photo-${i + 1}.jpg`, { create: true })).createWritable(); await w.write(new Uint8Array(files[i])); await w.close(); } }, A.batch);
@@ -502,10 +502,10 @@ const JOBS = [
     await page.waitForFunction(() => /Batch finished/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
     const outs = await page.evaluate(async () => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-out'); const r = []; for await (const [n, h] of dir.entries()) { const f = await h.getFile(); const b = await createImageBitmap(f); const c = new OffscreenCanvas(b.width, b.height), x = c.getContext('2d'); x.drawImage(b, 0, 0); const px = (rx, ry, rw, rh) => { const d = x.getImageData(rx, ry, rw, rh).data; let m = 0; for (let i = 0; i < d.length; i += 4) m = Math.max(m, d[i] + d[i + 1] + d[i + 2]); return m / 3; }; r.push([n, b.width, b.height, px(b.width - 500, b.height - 120, 480, 100) - px(20, 20, 480, 100)]); } return r; });
     return { ok: outs.length === 6 && outs.every(([, w, h, br]) => Math.max(w, h) === 2048 && br > 30), detail: `${outs.length} files, ${outs[0]?.[1]}×${outs[0]?.[2]}, watermark brightness +${Math.round(Math.min(...outs.map((o) => o[3])))} in the corner (min over files)` };
-  }, paid: { 'Lightroom Classic (Export, watermark)': 8, 'Photoshop (Image Processor + action with text)': 12, 'Affinity Photo (Batch Job, macro)': 12, 'Pixelmator Pro (Shortcuts)': 10, 'Photopea': 'no batch' } },
+  }, paid: { 'Subscription RAW editor (Export, watermark)': 8, 'Leading subscription editor (Image Processor + action with text)': 12, 'Affinity Photo (Batch Job, macro)': 12, 'Pixelmator Pro (Shortcuts)': 10, 'Photopea': 'no batch' } },
   { id: 22, name: '10R: Upright Full on the church photo (verticals + horizontals)', async run(R, page) {
     return realUpright(R, page, 'c4.jpg', [[[124, 446], [15, 1774]], [[543, 277], [541, 547]], [[935, 492], [968, 996]]], 'full');
-  }, paid: { 'Lightroom Classic (Upright Full)': 2, 'Photoshop (Camera Raw filter Upright Full)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
+  }, paid: { 'Subscription RAW editor (Upright Full)': 2, 'Leading subscription editor (RAW plug-in filter Upright Full)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
 
   { id: 23, name: 'Level a tilted sea horizon (3°) with Upright: level', async run(R, page) {
     // synthetic seascape: sky gradient over darker sea, horizon tilted 3°, with sensor-like noise
@@ -524,7 +524,7 @@ const JOBS = [
       return { deg: ya != null && yb != null ? Math.atan2(yb - ya, xb - xa) * 180 / Math.PI : null, mode: t.lastUpright?.mode, W, H };
     });
     return { ok: m.deg != null && Math.abs(m.deg) < 0.2, detail: `horizon tilt 3.00° → ${m.deg?.toFixed(2)}° (${m.mode}, ${m.W}×${m.H})` };
-  }, paid: { 'Lightroom Classic (Upright Level)': 2, 'Photoshop (Camera Raw filter Upright Level / crop auto-straighten)': 3, 'Affinity Photo (Straighten)': 3, 'Pixelmator Pro (Auto straighten)': 2, 'Photopea (ruler + rotate)': 4 } },
+  }, paid: { 'Subscription RAW editor (Upright Level)': 2, 'Leading subscription editor (RAW plug-in filter Upright Level / crop auto-straighten)': 3, 'Affinity Photo (Straighten)': 3, 'Pixelmator Pro (Auto straighten)': 2, 'Photopea (ruler + rotate)': 4 } },
 
   { id: 24, name: 'Batch-resize 6 photos to 2048 px JPEG with a logo watermark', async run(R, page, A) {
     await page.evaluate(async (files) => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-in', { create: true }); for (let i = 0; i < files.length; i++) { const w = await (await dir.getFileHandle(`photo-${i + 1}.jpg`, { create: true })).createWritable(); await w.write(new Uint8Array(files[i])); await w.close(); } }, A.batch);
@@ -544,7 +544,7 @@ const JOBS = [
     await page.waitForFunction(() => /Batch finished/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
     const outs = await page.evaluate(async () => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-out'); const r = []; for await (const [n, h] of dir.entries()) { const f = await h.getFile(); const b = await createImageBitmap(f); const c = new OffscreenCanvas(b.width, b.height), x = c.getContext('2d'); x.drawImage(b, 0, 0); const f0 = x.getImageData(10, 10, 1, 1).data; /* the photo's own flat colour */ const red = (rx, ry, rw, rh) => { const d = x.getImageData(rx, ry, rw, rh).data; let k = 0; for (let i = 0; i < d.length; i += 4) if ((d[i] + d[i + 2]) / 2 - d[i + 1] > 110 && Math.abs(d[i] - d[i + 2]) < 60 && Math.abs(d[i] - f0[0]) + Math.abs(d[i + 1] - f0[1]) + Math.abs(d[i + 2] - f0[2]) > 80) k++; return k; }; r.push([n, b.width, b.height, red(Math.round(b.width * 0.6), Math.round(b.height * 0.6), Math.round(b.width * 0.4), Math.round(b.height * 0.4)), red(0, 0, Math.round(b.width * 0.4), Math.round(b.height * 0.4))]); } return r; });
     return { ok: outs.length === 6 && outs.every(([, w, h, br, tl]) => Math.max(w, h) === 2048 && br > 5000 && tl < br * 0.05), detail: `${outs.length} files, ${outs[0]?.[1]}×${outs[0]?.[2]}, magenta logo pixels in the bottom-right ${Math.min(...outs.map((o) => o[3]))}+ per file (top-left ${Math.max(...outs.map((o) => o[4]))})` };
-  }, paid: { 'Lightroom Classic (Export, graphic watermark)': 9, 'Photoshop (Image Processor + action placing the logo)': 13, 'Affinity Photo (Batch Job, macro)': 13, 'Pixelmator Pro (Shortcuts)': 11, 'Photopea': 'no batch' } },
+  }, paid: { 'Subscription RAW editor (Export, graphic watermark)': 9, 'Leading subscription editor (Image Processor + action placing the logo)': 13, 'Affinity Photo (Batch Job, macro)': 13, 'Pixelmator Pro (Shortcuts)': 11, 'Photopea': 'no batch' } },
 
   { id: 25, name: 'Repeat job 24 with a saved export preset (2048 px JPEG + logo; preset saved beforehand, not counted)', async run(R, page, A) {
     await page.evaluate(async (files) => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-in', { create: true }); for (let i = 0; i < files.length; i++) { const w = await (await dir.getFileHandle(`photo-${i + 1}.jpg`, { create: true })).createWritable(); await w.write(new Uint8Array(files[i])); await w.close(); } }, A.batch);
@@ -560,31 +560,31 @@ const JOBS = [
     await page.waitForFunction(() => /Batch finished/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
     const outs = await page.evaluate(async () => { const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle('batch-out'); const r = []; for await (const [n, h] of dir.entries()) { const f = await h.getFile(); const b = await createImageBitmap(f); const c = new OffscreenCanvas(b.width, b.height), x = c.getContext('2d'); x.drawImage(b, 0, 0); const f0 = x.getImageData(10, 10, 1, 1).data; const red = (rx, ry, rw, rh) => { const d = x.getImageData(rx, ry, rw, rh).data; let k = 0; for (let i = 0; i < d.length; i += 4) if ((d[i] + d[i + 2]) / 2 - d[i + 1] > 110 && Math.abs(d[i] - d[i + 2]) < 60 && Math.abs(d[i] - f0[0]) + Math.abs(d[i + 1] - f0[1]) + Math.abs(d[i + 2] - f0[2]) > 80) k++; return k; }; r.push([n, b.width, b.height, red(Math.round(b.width * 0.6), Math.round(b.height * 0.6), Math.round(b.width * 0.4), Math.round(b.height * 0.4)), red(0, 0, Math.round(b.width * 0.4), Math.round(b.height * 0.4))]); } return r; });
     return { ok: outs.length === 6 && outs.every(([, w, h, br, tl]) => Math.max(w, h) === 2048 && br > 5000 && tl < br * 0.05), detail: `${outs.length} files, ${outs[0]?.[1]}×${outs[0]?.[2]}, magenta logo pixels in the bottom-right ${Math.min(...outs.map((o) => o[3]))}+ per file (top-left ${Math.max(...outs.map((o) => o[4]))})` };
-  }, paid: { 'Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)': 4, 'Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)': 6, 'Affinity Photo (Batch Job, saved macro)': 9, 'Pixelmator Pro (run saved Shortcut)': 3, 'Photopea': 'no batch' } },
+  }, paid: { 'Subscription RAW editor (select all, File ▸ Export with Preset ▸ preset)': 4, 'Leading subscription editor (File ▸ Scripts ▸ Image Processor, settings remembered)': 6, 'Affinity Photo (Batch Job, saved macro)': 9, 'Pixelmator Pro (run saved Shortcut)': 3, 'Photopea': 'no batch' } },
 
   { id: 26, name: '10R holdout: Auto upright on a second real tower photo (CC0, not used for tuning)', async run(R, page) {
     return realUpright(R, page, 'tower.jpg', [[[640, 235], [643, 539]], [[801, 235], [813, 501]], [[939, 345], [956, 549]]], 'auto');
-  }, paid: { 'Lightroom Classic (Upright Auto)': 2, 'Photoshop (Camera Raw filter Upright)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
+  }, paid: { 'Subscription RAW editor (Upright Auto)': 2, 'Leading subscription editor (RAW plug-in filter Upright)': 4, 'Affinity Photo (Perspective)': 5, 'Pixelmator Pro (Perspective)': 4, 'Photopea (Perspective transform)': 5 } },
 
   { id: 27, name: '10R holdout: Upright Full on a real photo with converging horizontals (library shelves, CC0; verticals and horizontals measured)', async run(R, page) {
     return realUpright(R, page, 'library.jpg', [[[1144, 301], [1149, 693]], [[554, 90], [553, 529]], [[575, 325], [1101, 287]], [[582, 641], [1133, 685]], [[350, 343], [548, 328]]], 'full');
-  }, paid: { 'Lightroom Classic (Upright Full)': 2, 'Photoshop (Camera Raw filter Upright Full)': 4, 'Affinity Photo (Perspective, both directions)': 6, 'Pixelmator Pro (Perspective)': 5, 'Photopea (Perspective transform)': 6 } },
+  }, paid: { 'Subscription RAW editor (Upright Full)': 2, 'Leading subscription editor (RAW plug-in filter Upright Full)': 4, 'Affinity Photo (Perspective, both directions)': 6, 'Pixelmator Pro (Perspective)': 5, 'Photopea (Perspective transform)': 6 } },
   { id: 28, name: '10R holdout: Upright Full on a second real photo with converging horizontals (shop front, CC0; verticals and horizontals measured)', async run(R, page) {
     return realUpright(R, page, 'brick.jpg', [[[1020, 603], [1020, 799]], [[1067, 625], [1069, 794]], [[1030, 572], [1274, 594]], [[1072, 615], [1189, 623]], [[1035, 817], [1274, 823]]], 'full');
-  }, paid: { 'Lightroom Classic (Upright Full)': 2, 'Photoshop (Camera Raw filter Upright Full)': 4, 'Affinity Photo (Perspective, both directions)': 6, 'Pixelmator Pro (Perspective)': 5, 'Photopea (Perspective transform)': 6 } },
+  }, paid: { 'Subscription RAW editor (Upright Full)': 2, 'Leading subscription editor (RAW plug-in filter Upright Full)': 4, 'Affinity Photo (Perspective, both directions)': 6, 'Pixelmator Pro (Perspective)': 5, 'Photopea (Perspective transform)': 6 } },
   { id: 31, name: '11R holdout: Upright Full on a third real photo (office facade with diagonal fins, CC0; seeds fixed before the first run, never tuned on)', async run(R, page) {
     return realUpright(R, page, 'geneva.jpg', [[[360, 300], [359, 829]], [[1023, 152], [1028, 783]], [[1131, 38], [1139, 829]], [[1030, 367], [1274, 369]], [[1030, 632], [1274, 634]]], 'full');
-  }, paid: { 'Lightroom Classic (Upright Full)': 2, 'Photoshop (Camera Raw filter Upright Full)': 4, 'Affinity Photo (Perspective, both directions)': 6, 'Pixelmator Pro (Perspective)': 5, 'Photopea (Perspective transform)': 6 } },
+  }, paid: { 'Subscription RAW editor (Upright Full)': 2, 'Leading subscription editor (RAW plug-in filter Upright Full)': 4, 'Affinity Photo (Perspective, both directions)': 6, 'Pixelmator Pro (Perspective)': 5, 'Photopea (Perspective transform)': 6 } },
   { id: 32, name: '12R holdout: Upright Full on a fourth real photo (Hong Kong facade, CC0; seeds fixed before the first run, never tuned on)', async run(R, page) {
     return realUpright(R, page, 'hongkong.jpg', [[[1163, 68], [1161, 779]], [[875, 64], [880, 779]], [[959, 63], [961, 775]], [[85, 200], [1216, 199]], [[60, 597], [1206, 601]]], 'full');
-  }, paid: { 'Lightroom Classic': 2, 'Photoshop (Camera Raw)': 4, 'Affinity Photo': 6, 'Pixelmator Pro': 5, 'Photopea': 6 } },
+  }, paid: { 'Subscription RAW editor': 2, 'Leading subscription editor (RAW plug-in)': 4, 'Affinity Photo': 6, 'Pixelmator Pro': 5, 'Photopea': 6 } },
 
   { id: 29, name: 'Next session: repeat the job 25 batch with File ▸ Batch again (folders and preset remembered; first run is setup, not counted)', async run(R, page, A) {
     return batchRepeat(R, page, A, 'again');
-  }, paid: { 'Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)': 4, 'Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)': 6, 'Affinity Photo (Batch Job, saved macro)': 9, 'Pixelmator Pro (run saved Shortcut)': 3, 'Photopea': 'no batch' } },
+  }, paid: { 'Subscription RAW editor (select all, File ▸ Export with Preset ▸ preset)': 4, 'Leading subscription editor (File ▸ Scripts ▸ Image Processor, settings remembered)': 6, 'Affinity Photo (Batch Job, saved macro)': 9, 'Pixelmator Pro (run saved Shortcut)': 3, 'Photopea': 'no batch' } },
   { id: 30, name: 'Next session: repeat the job 25 batch through the Batch process dialog (folders and preset remembered; first run is setup, not counted)', async run(R, page, A) {
     return batchRepeat(R, page, A, 'dialog');
-  }, paid: { 'Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)': 4, 'Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)': 6, 'Affinity Photo (Batch Job, saved macro)': 9, 'Pixelmator Pro (run saved Shortcut)': 3, 'Photopea': 'no batch' } },
+  }, paid: { 'Subscription RAW editor (select all, File ▸ Export with Preset ▸ preset)': 4, 'Leading subscription editor (File ▸ Scripts ▸ Image Processor, settings remembered)': 6, 'Affinity Photo (Batch Job, saved macro)': 9, 'Pixelmator Pro (run saved Shortcut)': 3, 'Photopea': 'no batch' } },
 ];
 /** Jobs 29/30: set up as in job 25 and run it once (not counted), reload as a new session (permissions forgotten),
  *  then repeat it. Each permission prompt counts as one step ("Allow"). */

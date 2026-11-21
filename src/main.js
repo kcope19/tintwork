@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.34.0';
+const APP_VERSION = '1.34.1';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -3125,7 +3125,7 @@ function autoUprightCmd(req = 'auto') {
   x.pts = next; x.upright = 'auto';
   mxfPreview();
   // v1.13: Auto / Level / Vertical / Full apply at once (crop / fill / keep from the options bar), so the job is one
-  // menu choice like Lightroom's Upright — no extra Enter. Esc is unavailable after apply; Undo reverts.
+  // menu choice, like the upright in paid RAW editors — no extra Enter. Esc is unavailable after apply; Undo reverts.
   status(`Upright (${used}): ${msg}`);
   buildOptionsBar();
   const applyP = applyMeshXf();
@@ -3744,7 +3744,7 @@ function mxfBarParts() {
     warp ? '' : `<button data-cmd="mxfGuides" class="${x.guideMode ? 'on' : ''}" title="Draw 2–4 lines along edges that should be vertical or horizontal (G)">Guides</button>`,
     warp ? '' : `<button data-cmd="mxfSuggestGuides" title="Pick 2–4 strong vertical/horizontal edges for you (editable; Enter applies)">Suggest guides</button>`,
     lensRow,
-    warp ? '' : `<span class="seg" title="After upright: crop empty corners (default), fill from nearby pixels, or keep transparent">${[['crop', 'Crop edges', 'Crop empty corners after upright (default; closest to Lightroom Constrain Crop)'], ['fill', 'Fill edges', 'Fill empty corners from nearby pixels'], ['keep', 'Keep', 'Leave empty corners transparent']].map(([k, n, t]) => `<button data-cmd="uprightEdges_${k}" class="${state.opts.uprightEdges === k ? 'on' : ''}" title="${t}">${n}</button>`).join('')}</span>`,
+    warp ? '' : `<span class="seg" title="After upright: crop empty corners (default), fill from nearby pixels, or keep transparent">${[['crop', 'Crop edges', 'Crop empty corners after upright (default; like constrain crop in paid desktop editors)'], ['fill', 'Fill edges', 'Fill empty corners from nearby pixels'], ['keep', 'Keep', 'Leave empty corners transparent']].map(([k, n, t]) => `<button data-cmd="uprightEdges_${k}" class="${state.opts.uprightEdges === k ? 'on' : ''}" title="${t}">${n}</button>`).join('')}</span>`,
     warp ? `<span class="seg">${[3, 4, 5].map((n) => `<button data-cmd="mxfGrid${n}" class="${x.n === n ? 'on' : ''}" title="${n}×${n} control points">${n}×${n}</button>`).join('')}</span>` : '',
     `<span class="muted mxf-hint">${[hint, enterHint, 'Esc cancels'].filter(Boolean).join(' · ')}</span>`,
     (x.guideMode && (x.guides || []).length >= 2 ? `<button data-cmd="mxfGuidedApply" class="primary">Apply guides</button>` : ''),

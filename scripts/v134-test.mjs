@@ -70,9 +70,9 @@ const browser = await chromium.launch();
 {
   const ctx = await freshContext(browser); const page = await newPage(ctx, 'version');
   const ver = await T(page, () => window.tintwork.APP_VERSION);
-  check(ver === '1.34.0', `APP_VERSION is 1.34.0 (${ver})`);
-  if (!process.env.TW_URL) { const m = readFileSync(path.join(ROOT, 'sw.js'), 'utf8').match(/tintwork-shell-v([\d.]+)/); check(m?.[1] === '1.34.0', `SW CACHE is 1.34.0 (${m?.[1]})`); }
-  else { const r = await page.request.get(`${BASE}sw.js`); const t = await r.text(); const m = t.match(/tintwork-shell-v([\d.]+)/); check(m?.[1] === '1.34.0' && t.includes('./src/tone.js'), `live SW CACHE is 1.34.0 and precaches tone.js (${m?.[1]})`); }
+  check((ver === '1.34.0' || ver === '1.34.1'), `APP_VERSION is 1.34.0 (${ver})`);
+  if (!process.env.TW_URL) { const m = readFileSync(path.join(ROOT, 'sw.js'), 'utf8').match(/tintwork-shell-v([\d.]+)/); check((m?.[1] === '1.34.0' || m?.[1] === '1.34.1'), `SW CACHE is 1.34.0 (${m?.[1]})`); }
+  else { const r = await page.request.get(`${BASE}sw.js`); const t = await r.text(); const m = t.match(/tintwork-shell-v([\d.]+)/); check((m?.[1] === '1.34.0' || m?.[1] === '1.34.1') && t.includes('./src/tone.js'), `live SW CACHE is 1.34.0 and precaches tone.js (${m?.[1]})`); }
   await ctx.close();
 }
 // ================================ A: close within 200 ms, reopen, recover ====================================

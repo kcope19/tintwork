@@ -21,8 +21,8 @@
         "drag: paint over the blemish"
       ],
       "paid": {
-        "Photoshop": 2,
-        "Lightroom Classic": 2,
+        "Leading subscription editor": 2,
+        "Subscription RAW editor": 2,
         "Affinity Photo": 2,
         "Pixelmator Pro": 2,
         "Photopea": 2
@@ -46,8 +46,8 @@
         "drag: paint over the blemish"
       ],
       "paid": {
-        "Photoshop": 2,
-        "Lightroom Classic": 2,
+        "Leading subscription editor": 2,
+        "Subscription RAW editor": 2,
         "Affinity Photo": 2,
         "Pixelmator Pro": 2,
         "Photopea": 2
@@ -71,8 +71,8 @@
         "drag: paint over the blemish"
       ],
       "paid": {
-        "Photoshop": 2,
-        "Lightroom Classic": 2,
+        "Leading subscription editor": 2,
+        "Subscription RAW editor": 2,
         "Affinity Photo": 2,
         "Pixelmator Pro": 2,
         "Photopea": 2
@@ -97,8 +97,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -123,8 +123,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -149,8 +149,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -175,8 +175,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -201,8 +201,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -227,8 +227,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -257,8 +257,8 @@
         "key: Control+Alt+Shift+e"
       ],
       "paid": {
-        "Lightroom Classic (Export preset + watermark)": 6,
-        "Photoshop (text layer + Export As)": 9,
+        "Subscription RAW editor (Export preset + watermark)": 6,
+        "Leading subscription editor (text layer + Export As)": 9,
         "Affinity Photo (text layer + Export)": 8,
         "Pixelmator Pro (text layer + Export)": 8,
         "Photopea (text layer + Export)": 8
@@ -287,8 +287,8 @@
         "key: Control+Alt+Shift+e"
       ],
       "paid": {
-        "Lightroom Classic (Export preset + watermark)": 6,
-        "Photoshop (text layer + Export As)": 9,
+        "Subscription RAW editor (Export preset + watermark)": 6,
+        "Leading subscription editor (text layer + Export As)": 9,
         "Affinity Photo (text layer + Export)": 8,
         "Pixelmator Pro (text layer + Export)": 8,
         "Photopea (text layer + Export)": 8
@@ -317,8 +317,8 @@
         "key: Control+Alt+Shift+e"
       ],
       "paid": {
-        "Lightroom Classic (Export preset + watermark)": 6,
-        "Photoshop (text layer + Export As)": 9,
+        "Subscription RAW editor (Export preset + watermark)": 6,
+        "Leading subscription editor (text layer + Export As)": 9,
         "Affinity Photo (text layer + Export)": 8,
         "Pixelmator Pro (text layer + Export)": 8,
         "Photopea (text layer + Export)": 8
@@ -350,8 +350,8 @@
         "pick: output folder in the folder dialog"
       ],
       "paid": {
-        "Lightroom Classic (Export, watermark)": 8,
-        "Photoshop (Image Processor + action with text)": 12,
+        "Subscription RAW editor (Export, watermark)": 8,
+        "Leading subscription editor (Image Processor + action with text)": 12,
         "Affinity Photo (Batch Job, macro)": 12,
         "Pixelmator Pro (Shortcuts)": 10,
         "Photopea": "no batch"
@@ -383,8 +383,8 @@
         "pick: output folder in the folder dialog"
       ],
       "paid": {
-        "Lightroom Classic (Export, watermark)": 8,
-        "Photoshop (Image Processor + action with text)": 12,
+        "Subscription RAW editor (Export, watermark)": 8,
+        "Leading subscription editor (Image Processor + action with text)": 12,
         "Affinity Photo (Batch Job, macro)": 12,
         "Pixelmator Pro (Shortcuts)": 10,
         "Photopea": "no batch"
@@ -416,8 +416,8 @@
         "pick: output folder in the folder dialog"
       ],
       "paid": {
-        "Lightroom Classic (Export, watermark)": 8,
-        "Photoshop (Image Processor + action with text)": 12,
+        "Subscription RAW editor (Export, watermark)": 8,
+        "Leading subscription editor (Image Processor + action with text)": 12,
         "Affinity Photo (Batch Job, macro)": 12,
         "Pixelmator Pro (Shortcuts)": 10,
         "Photopea": "no batch"
@@ -442,8 +442,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -468,8 +468,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -494,8 +494,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -520,8 +520,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Level)": 2,
-        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Subscription RAW editor (Upright Level)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Level / crop auto-straighten)": 3,
         "Affinity Photo (Straighten)": 3,
         "Pixelmator Pro (Auto straighten)": 2,
         "Photopea (ruler + rotate)": 4
@@ -546,8 +546,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Level)": 2,
-        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Subscription RAW editor (Upright Level)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Level / crop auto-straighten)": 3,
         "Affinity Photo (Straighten)": 3,
         "Pixelmator Pro (Auto straighten)": 2,
         "Photopea (ruler + rotate)": 4
@@ -572,8 +572,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Level)": 2,
-        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Subscription RAW editor (Upright Level)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Level / crop auto-straighten)": 3,
         "Affinity Photo (Straighten)": 3,
         "Pixelmator Pro (Auto straighten)": 2,
         "Photopea (ruler + rotate)": 4
@@ -607,8 +607,8 @@
         "pick: output folder in the folder dialog"
       ],
       "paid": {
-        "Lightroom Classic (Export, graphic watermark)": 9,
-        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Subscription RAW editor (Export, graphic watermark)": 9,
+        "Leading subscription editor (Image Processor + action placing the logo)": 13,
         "Affinity Photo (Batch Job, macro)": 13,
         "Pixelmator Pro (Shortcuts)": 11,
         "Photopea": "no batch"
@@ -642,8 +642,8 @@
         "pick: output folder in the folder dialog"
       ],
       "paid": {
-        "Lightroom Classic (Export, graphic watermark)": 9,
-        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Subscription RAW editor (Export, graphic watermark)": 9,
+        "Leading subscription editor (Image Processor + action placing the logo)": 13,
         "Affinity Photo (Batch Job, macro)": 13,
         "Pixelmator Pro (Shortcuts)": 11,
         "Photopea": "no batch"
@@ -677,8 +677,8 @@
         "pick: output folder in the folder dialog"
       ],
       "paid": {
-        "Lightroom Classic (Export, graphic watermark)": 9,
-        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Subscription RAW editor (Export, graphic watermark)": 9,
+        "Leading subscription editor (Image Processor + action placing the logo)": 13,
         "Affinity Photo (Batch Job, macro)": 13,
         "Pixelmator Pro (Shortcuts)": 11,
         "Photopea": "no batch"

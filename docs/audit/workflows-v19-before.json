@@ -21,8 +21,8 @@
         "drag: paint over the blemish"
       ],
       "paid": {
-        "Photoshop": 2,
-        "Lightroom Classic": 2,
+        "Leading subscription editor": 2,
+        "Subscription RAW editor": 2,
         "Affinity Photo": 2,
         "Pixelmator Pro": 2,
         "Photopea": 2
@@ -46,8 +46,8 @@
         "drag: paint over the blemish"
       ],
       "paid": {
-        "Photoshop": 2,
-        "Lightroom Classic": 2,
+        "Leading subscription editor": 2,
+        "Subscription RAW editor": 2,
         "Affinity Photo": 2,
         "Pixelmator Pro": 2,
         "Photopea": 2
@@ -71,8 +71,8 @@
         "drag: paint over the blemish"
       ],
       "paid": {
-        "Photoshop": 2,
-        "Lightroom Classic": 2,
+        "Leading subscription editor": 2,
+        "Subscription RAW editor": 2,
         "Affinity Photo": 2,
         "Pixelmator Pro": 2,
         "Photopea": 2
@@ -96,8 +96,8 @@
         "pick: file c4.jpg"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -121,8 +121,8 @@
         "pick: file c4.jpg"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -146,8 +146,8 @@
         "pick: file c4.jpg"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -171,8 +171,8 @@
         "pick: file sea.png"
       ],
       "paid": {
-        "Lightroom Classic (Upright Level)": 2,
-        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Subscription RAW editor (Upright Level)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Level / crop auto-straighten)": 3,
         "Affinity Photo (Straighten)": 3,
         "Pixelmator Pro (Auto straighten)": 2,
         "Photopea (ruler + rotate)": 4
@@ -196,8 +196,8 @@
         "pick: file sea.png"
       ],
       "paid": {
-        "Lightroom Classic (Upright Level)": 2,
-        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Subscription RAW editor (Upright Level)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Level / crop auto-straighten)": 3,
         "Affinity Photo (Straighten)": 3,
         "Pixelmator Pro (Auto straighten)": 2,
         "Photopea (ruler + rotate)": 4
@@ -221,8 +221,8 @@
         "pick: file sea.png"
       ],
       "paid": {
-        "Lightroom Classic (Upright Level)": 2,
-        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Subscription RAW editor (Upright Level)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Level / crop auto-straighten)": 3,
         "Affinity Photo (Straighten)": 3,
         "Pixelmator Pro (Auto straighten)": 2,
         "Photopea (ruler + rotate)": 4
@@ -252,8 +252,8 @@
         "click: Watermark…"
       ],
       "paid": {
-        "Lightroom Classic (Export, graphic watermark)": 9,
-        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Subscription RAW editor (Export, graphic watermark)": 9,
+        "Leading subscription editor (Image Processor + action placing the logo)": 13,
         "Affinity Photo (Batch Job, macro)": 13,
         "Pixelmator Pro (Shortcuts)": 11,
         "Photopea": "no batch"
@@ -283,8 +283,8 @@
         "click: Watermark…"
       ],
       "paid": {
-        "Lightroom Classic (Export, graphic watermark)": 9,
-        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Subscription RAW editor (Export, graphic watermark)": 9,
+        "Leading subscription editor (Image Processor + action placing the logo)": 13,
         "Affinity Photo (Batch Job, macro)": 13,
         "Pixelmator Pro (Shortcuts)": 11,
         "Photopea": "no batch"
@@ -314,8 +314,8 @@
         "click: Watermark…"
       ],
       "paid": {
-        "Lightroom Classic (Export, graphic watermark)": 9,
-        "Photoshop (Image Processor + action placing the logo)": 13,
+        "Subscription RAW editor (Export, graphic watermark)": 9,
+        "Leading subscription editor (Image Processor + action placing the logo)": 13,
         "Affinity Photo (Batch Job, macro)": 13,
         "Pixelmator Pro (Shortcuts)": 11,
         "Photopea": "no batch"

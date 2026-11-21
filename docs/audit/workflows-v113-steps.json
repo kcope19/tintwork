@@ -21,8 +21,8 @@
         "click: Image ▸ Auto upright"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -46,8 +46,8 @@
         "click: Image ▸ Auto upright"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -71,8 +71,8 @@
         "click: Image ▸ Auto upright"
       ],
       "paid": {
-        "Lightroom Classic (Upright Auto)": 2,
-        "Photoshop (Camera Raw filter Upright)": 4,
+        "Subscription RAW editor (Upright Auto)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright)": 4,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -98,8 +98,8 @@
         "drag: guide along a vertical edge"
       ],
       "paid": {
-        "Lightroom Classic (Upright Guided)": 5,
-        "Photoshop (Camera Raw filter Upright Guided)": 7,
+        "Subscription RAW editor (Upright Guided)": 5,
+        "Leading subscription editor (RAW plug-in filter Upright Guided)": 7,
         "Affinity Photo (Perspective)": 5,
         "Pixelmator Pro (Perspective)": 4,
         "Photopea (Perspective transform)": 5
@@ -123,8 +123,8 @@
         "click: Image ▸ Upright: level"
       ],
       "paid": {
-        "Lightroom Classic (Upright Level)": 2,
-        "Photoshop (Camera Raw filter Upright Level / crop auto-straighten)": 3,
+        "Subscription RAW editor (Upright Level)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Level / crop auto-straighten)": 3,
         "Affinity Photo (Straighten)": 3,
         "Pixelmator Pro (Auto straighten)": 2,
         "Photopea (ruler + rotate)": 4

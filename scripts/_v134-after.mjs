@@ -70,7 +70,7 @@ mkdirSync(path.join(HERE, 'docs/audit'), { recursive: true });
 const dest = path.join(HERE, 'docs/audit/workflows-v134-after.json');
 writeFileSync(dest, JSON.stringify(out, null, 2));
 console.log('\nWrote', dest, 'app', out.app);
-if (out.app !== '1.34.0') {
+if (!['1.34.0','1.34.1'].includes(out.app)) {
   console.error('REFUSING to treat this as a v1.34.0 run; app is', out.app);
   process.exit(1);
 }

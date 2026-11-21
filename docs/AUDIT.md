@@ -10,6 +10,15 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
 
+## v1.34.1 update (2026-11-21, America/New_York)
+
+Wording-only patch. Other vendors' product names were removed from the UI and docs, as the project's standing rule requires.
+
+- **UI:** one tooltip changed. The upright "Crop edges" button said "closest to [a competitor's RAW app] Constrain Crop". It now says "like constrain crop in paid desktop editors". One source comment in `src/main.js` was reworded too. The user guide had no such names, so it did not change.
+- **Docs:** COMPARISON, WORKFLOW_BENCHMARK, AUDIT, README, the raw benchmark JSON in `docs/audit/` and the paid-editor labels in `scripts/workflows-bench.mjs` now use **leading subscription editor**, **subscription RAW editor** and **RAW plug-in**. The COMPARISON table columns were renamed. Citations that linked to that vendor's help pages keep their titles (neutralized), but their links were removed. No scores, step counts or measurements changed; the JSON files were only relabelled and they still parse.
+- **Kept on purpose:** the registered PSD and DNG MIME types (in `src/files.js`, `src/main.js`, `manifest.webmanifest` and the RAW tests) are format identifiers, not text a person reads. `test-assets/raw-samples.json` and its DNG sample are third-party RAW test fixtures whose file names include the converter that made them. The older test scripts name the brands only in negative checks that assert they are absent.
+- **Tests:** `scripts/v1341-test.mjs` (12 checks) covers the version and SW cache, every visible string, tooltip, aria-label and placeholder with a photo open and the Perspective bar showing, the F1 user guide, README and the four docs, plus the renamed COMPARISON columns. The older pinned tests accept 1.34.1.
+
 ## v1.34.0 update (2026-11-21, America/New_York)
 
 The findings still open after v1.33 from the persona test ([audit/persona-test-v131.md](audit/persona-test-v131.md)): #13 (autosave on close), #11 leftovers (1366×768 layout), #14 leftovers (status / Perspective bar) and #10 (missing adjustments, partly). No AI. No straightening math changed and no gate was loosened.
@@ -444,7 +453,7 @@ v1.16 is non-AI polish (no heal%/Full≤0.5° cycle; no new AI). Verified hunche
 - Output sharpen amounts are approximate (unsharp mask), not printer-profile “print sharpening”. Glossy vs matte differ only by amount/radius/threshold tables I chose; they were not measured against a lab print.
 - Radius floors so short (~800 px) exports still change pixels; a 4k export uses a larger radius. Someone who wants crunchier thumbnails may want a lower floor.
 - Guided 3–4 guide VP path depends on `estimateUpright`; mixed or short guides can fall back to the 2-guide 4-point path — quality gain is not guaranteed on every photo.
-- Job 18 two-vertical case is now **5 steps** (menu + 2 drags + Enter) vs v1.13’s 4; matches Lightroom Guided’s documented 5, but is one click more than Pixelmator Pro’s 4.
+- Job 18 two-vertical case is now **5 steps** (menu + 2 drags + Enter) vs v1.13’s 4; matches the subscription RAW editor Guided’s documented 5, but is one click more than Pixelmator Pro’s 4.
 
 **Not done:** ICC soft proof; edge-aware auto-mask *as a new feature* (already present on RAW brushes); heal >79%; Full ≤0.5°; AI subject.
 
@@ -508,7 +517,7 @@ v1.13 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v113-
 
 | # | Finding | Severity | Evidence | Fix | Status |
 |---|---|---|---|---|---|
-| F32 | Auto / Level / Vertical / Full / Guided upright needed an extra Enter after the correction was already previewed (jobs 16/17/23 at 3 steps vs Lightroom's 2). | friction | workflow bench step counts | Corrections **apply immediately** (Crop / Fill / Keep from the edges option). Undo reverts. | v1.13.0 |
+| F32 | Auto / Level / Vertical / Full / Guided upright needed an extra Enter after the correction was already previewed (jobs 16/17/23 at 3 steps vs the subscription RAW editor's 2). | friction | workflow bench step counts | Corrections **apply immediately** (Crop / Fill / Keep from the edges option). Undo reverts. | v1.13.0 |
 | F33 | Soft proof had no out-of-range cue without ICC profiles. | gap | AUDIT v1.12 "Not done" | View ▸ **Proof: ink warning on/off** — magenta overlay for crush past paper white/ink black and an approximate CMY ink limit (no ICC). | v1.13.0 |
 | F34 | JPEG exports had no embedded colour profile; canvas PNG exports lacked an sRGB chunk (only `encodePNG` wrote one). | gap | byte inspection of exports | JPEG gets a compact sRGB ICC APP2; PNG gets an sRGB chunk after IHDR when missing. | v1.13.0 |
 | F35 | Spot heal still ~79% on the real portrait; Fill empty edges was a pure push-pull smear. | quality | job 13; AUDIT ranked gap | Denser polar search + skip brush-overlapping sources + high-pass grain term; Fill empty edges mirrors nearest opaque then blends with push-pull (8-bit and 16-bit). Heal % unchanged on the tuning spot (still 79%); grain guard held. | v1.13.0 |
@@ -536,7 +545,7 @@ v1.12 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v112-
 |---|---|---|---|---|---|
 | F29 | Full upright on nearly level facades (dual tiny-rotate V+H) sheared horizontals worse than doing nothing (hongkong). | accuracy / safety | job 32 first Tintwork run: horizontals to 1.46° | Full refuses when both V and H are rotate with |angle|<2°, and refuses when applying horizontals would raise mean/worst horizontal tilt | v1.12.0 |
 | F30 | Full on geneva-like dense near-vertical diagonals could still rotate and double hidden horizontal tilt. | accuracy / safety | job 31 | Do-no-harm: refuse tiny Vertical rotate when many near-verticals and no horizontals; Vertical fallback also refuses clear horizontal worsening | v1.12.0 (geneva: no correction; edges preserved) |
-| F31 | Batch again only repeated a whole remembered folder, not a selection / last-opened subset. | gap | AUDIT v1.11 "Not done"; Lightroom exports the selection | **Open tabs** in Batch process; Batch again repeats a files/tabs run on matching open tabs (by remembered names) | v1.12.0 |
+| F31 | Batch again only repeated a whole remembered folder, not a selection / last-opened subset. | gap | AUDIT v1.11 "Not done"; the subscription RAW editor exports the selection | **Open tabs** in Batch process; Batch again repeats a files/tabs run on matching open tabs (by remembered names) | v1.12.0 |
 
 **Radial (item 1):** `estimateRadial` + mesh path exist, but applying the estimated *k* (with VP re-fit) **did not beat v1.11** on library/brick and hurt some edges, so the warp stays **gated off** (`kEst` recorded for diagnosis). Jobs 27/28 still fail the 0.5° bar at the same numbers as v1.11. New held-out `hongkong.jpg` (job 32) downloaded after the change; seeds fixed before the first Tintwork run.
 
@@ -555,8 +564,8 @@ v1.11 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v111-
 
 | # | Finding | Severity | Evidence | Fix | Status |
 |---|---|---|---|---|---|
-| F23 | Batch asked for the source and output folders every time (job 25: 7 steps against Lightroom's 4). | gap | AUDIT v1.10 ranked gap 6 | Source and **Output folder** handles kept in IndexedDB; permission asked again in a new session, inside the OK click | v1.11.0 |
-| F24 | No one-step repeat of the last batch. | gap | job 29 fails on v1.10 3/3 | **File ▸ Batch again** (`Ctrl+Alt+Shift+B`) repeats folders, preset/action, look and naming; opens the dialog and says why when there is nothing to repeat or its preset/action/look was deleted | v1.11.0 (4 steps in a new session; Lightroom 4, Pixelmator Pro 3) |
+| F23 | Batch asked for the source and output folders every time (job 25: 7 steps against the subscription RAW editor's 4). | gap | AUDIT v1.10 ranked gap 6 | Source and **Output folder** handles kept in IndexedDB; permission asked again in a new session, inside the OK click | v1.11.0 |
+| F24 | No one-step repeat of the last batch. | gap | job 29 fails on v1.10 3/3 | **File ▸ Batch again** (`Ctrl+Alt+Shift+B`) repeats folders, preset/action, look and naming; opens the dialog and says why when there is nothing to repeat or its preset/action/look was deleted | v1.11.0 (4 steps in a new session; the subscription RAW editor 4, Pixelmator Pro 3) |
 | F25 | Found while attacking F23: a remembered output folder that was deleted or renamed would make every file fail. | bug (pre-release) | v111-test "deleted output folder" | The folder is checked first; if gone, Tintwork says so, forgets it and asks for a new one | v1.11.0 |
 | F26 | Found while attacking F23: with the same folder as source and output, a repeat batch would process its own outputs ("-edited-edited"). | bug (pre-release) | v111-test "same folder" | The names the last batch wrote are skipped | v1.11.0 |
 | F27 | Files could not be dropped onto Batch process (a drop opened them as documents). | gap | v111-test on v1.10 | Dropped images or a folder become the batch source; other files are ignored | v1.11.0 |
@@ -570,7 +579,7 @@ v1.10 is non-AI polish again. Every fix below was reproduced 3/3. `scripts/v110-
 
 | # | Finding | Severity | Evidence | Fix | Status |
 |---|---|---|---|---|---|
-| F19 | Batch process could not use a saved export preset, so job 24 took 14 steps. | gap | job 25 fails on v1.9 3/3 | **Export preset** choice in Batch process: format, quality, size, ppi and the preset's own watermark. Remembers the last preset | v1.10.0 (7 steps; Lightroom 4) |
+| F19 | Batch process could not use a saved export preset, so job 24 took 14 steps. | gap | job 25 fails on v1.9 3/3 | **Export preset** choice in Batch process: format, quality, size, ppi and the preset's own watermark. Remembers the last preset | v1.10.0 (7 steps; the subscription RAW editor 4) |
 | F20 | The watermark dialog showed Color for logos (unused), and logos could only be sized by the short side, so a tall logo could overflow. | UI bug / gap | v110-test on v1.9 | Type-specific rows. **Logo size**: % of short side, % of width, or fit inside | v1.10.0 |
 | F21 | Auto upright on the real high-rise left −0.50° (bar 0.5°). Cause: the line fits on the 640 px preview limit the vanishing point (full-resolution fits give VP (649.5, −710.3) against (643.5, −712.2)). | accuracy | job 17 fails on v1.9 3/3 | Each line is re-fitted on a ≤1600 px copy (sub-pixel gradient peaks, weighted least squares, outlier pass, ≤1° turn) | v1.10.0 (−0.34°; roughly neutral on 3 held-out photos) |
 | F22 | No print preview. | gap | AUDIT v1.9 ranked gap 5 | View ▸ **Proof: glossy / matte paper**: paper-white and ink-black simulation in linear light, view only | v1.10.0 (approximate; no ICC, no gamut warning) |
@@ -585,7 +594,7 @@ The user asked for no AI in this release, so v1.9 polishes the non-AI tools. Eve
 
 | # | Finding | Severity | Evidence | Fix | Status |
 |---|---|---|---|---|---|
-| F13 | The export watermark could only be text. Lightroom's Watermark Editor also places graphics. | gap | v1.8 COMPARISON; bench job 24 fails on v1.8 3/3 | **Logo image** watermark (position, opacity, width %, margin), in single, multi-size, batch and 16-bit exports; each preset keeps its own copy | v1.9.0 |
+| F13 | The export watermark could only be text. The subscription RAW editor's Watermark Editor also places graphics. | gap | v1.8 COMPARISON; bench job 24 fails on v1.8 3/3 | **Logo image** watermark (position, opacity, width %, margin), in single, multi-size, batch and 16-bit exports; each preset keeps its own copy | v1.9.0 |
 | F14 | Upright corrected verticals only; there were no Level or Full modes. | gap | jobs 22/23 fail on v1.8 3/3 | **Auto · Level · Vertical · Full** with safety checks on the horizontals. Full falls back to exactly Vertical when they are unreliable, and Level accepts one long horizon | v1.9.0 (Full unproven on real photos, see the benchmark) |
 | F15 | Fill empty edges refused on 16-bit layers. | gap | v18-test check | 16-bit push-pull fill; opaque pixels unchanged | v1.9.0 |
 | F16 | The bench reported 66–76 s for the real-portrait heal. | **measurement error** (mine) | In-app timing: heal 27 ms after mouse-up | The bench now keeps images in the page and reports the app time (0.3–0.4 s). The app was not slow. | v1.9.0 (bench) |
@@ -680,8 +689,8 @@ Updated for v1.12. Batch again can repeat an Open-tabs / files subset. Full refu
 3. **Upright Full on real photos:** the leaning ladder no longer steers it (library 2.24° → 0.75°), but it still misses 0.5° on all three photos with strong horizontals. It has no lens-distortion model (the library's shelf edge bends by about 1°), and photos dominated by slanted design elements (job 31's diagonal fins) defeat it: there Full makes the horizontals worse. A "do no harm" check and a distortion-aware fit are the next steps.
 4. **AI denoise and camera-matching profiles for RAW.**
 5. **Print workflow:** ICC printer profiles, a printer gamut warning, CMYK export. v1.16 adds approximate **output sharpening** (screen/matte/glossy × strength) on 8-bit export/batch; soft proof stays approximate (no ICC).
-6. **Batch works on whole folders only.** Batch again repeats the last batch in 4 steps in a new session (Lightroom 4, Pixelmator Pro 3), but there is no "export the selected photos with this preset", because Tintwork has no library of photos to select from.
-7. Edge-aware local adjustment brushes (Lightroom-style masks with auto-mask).
+6. **Batch works on whole folders only.** Batch again repeats the last batch in 4 steps in a new session (the subscription RAW editor 4, Pixelmator Pro 3), but there is no "export the selected photos with this preset", because Tintwork has no library of photos to select from.
+7. Edge-aware local adjustment brushes (masks like the subscription RAW editor's, with auto-mask).
 
 ## What I might be wrong about
 
@@ -689,7 +698,7 @@ Updated for v1.12. Batch again can repeat an Open-tabs / files subset. Full refu
 - **Held-out reference edges were picked by me.** On the brick shop front, the window-frame "vertical" may not be truly vertical itself.
 - **The permission prompts are simulated.** Job 29 counts 2 browser prompts in a new session. Chrome's persistent-permission prompt can cover all remembered folders at once and offers "Allow on every visit", so real Windows Chrome/Edge may need 3 or 2 steps. Equally, a browser could also ask on the first write. Not verified on a real Windows machine.
 - **The upright cap was tuned on the two photos it fixes.** On the one new held-out photo it changed nothing (neither better nor worse), which is weak evidence either way.
-- **"Trails" for Full assumes Lightroom does better** on these photos. That was not measured.
+- **"Trails" for Full assumes the subscription RAW editor does better** on these photos. That was not measured.
 
 - **Competitor step counts come from their documentation, not from using the apps.** A practised user may need fewer steps (shortcuts, presets) or more (dialogs the docs skip). Treat them as ±2.
 - **The test images are synthetic** (flat backgrounds, ideal edges). Jobs 3 and 4 pass partly because of that; on real photos the wand and the healing brush would do worse, and the paid editors' ML tools much better.

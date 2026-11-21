@@ -7,6 +7,10 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.34.1 (neutral competitor names)
+
+v1.34.1 changes wording only. The project's rule is that other vendors' product names stay out of the UI and docs. One upright tooltip ("Crop edges") named a competitor's RAW app and now says "like constrain crop in paid desktop editors". The comparison and benchmark docs, the audit notes and the raw benchmark JSON now say **leading subscription editor**, **subscription RAW editor** and **RAW plug-in**, and links to that vendor's help pages were removed. No features, scores or step counts changed. Technical identifiers are kept: the registered PSD and DNG MIME types and the third-party RAW test-sample file names. `scripts/v1341-test.mjs` scans the UI, tooltips, the user guide and the docs.
+
 ## What's new in v1.34 (new adjustments, safer autosave, layout fixes)
 
 From the findings still open after the 7-persona test of v1.31 ([docs/audit/persona-test-v131.md](docs/audit/persona-test-v131.md): #10, #11, #13, #14). No AI. No straightening math changed (Suggest on the 21-photo set: 0 differences).
@@ -97,7 +101,7 @@ v1.19 keeps to non-AI tools. **Suggest guides** now detects on the full composit
 
 ## What's new in v1.18 (Suggest guides, mixed V+H Guided quality)
 
-v1.18 keeps to non-AI tools. **Suggest guides** picks 2–4 diverse vertical/horizontal edges for Guided upright (Enter applies; editable). Mixed V+H is accepted only when a probe says it beats a pure-vertical pair without hurting verticals — gated so held-out interiors stay safe. Suggest path is **2 actions** after open (vs Lightroom Guided hand path ~5). Lens-aware Full was **not** shipped (do-no-harm gate unchanged). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+v1.18 keeps to non-AI tools. **Suggest guides** picks 2–4 diverse vertical/horizontal edges for Guided upright (Enter applies; editable). Mixed V+H is accepted only when a probe says it beats a pure-vertical pair without hurting verticals — gated so held-out interiors stay safe. Suggest path is **2 actions** after open (vs the subscription RAW editor Guided hand path ~5). Lens-aware Full was **not** shipped (do-no-harm gate unchanged). See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
 
 ## What's new in v1.17 (perspective: refuse, constrain-crop, guide snap, grid)
 
@@ -109,7 +113,7 @@ v1.16 keeps to non-AI tools. **Output sharpening** on Export / presets / batch: 
 
 ## What's new in v1.13 (auto-apply upright, ink warning, sRGB embed, heal/fill)
 
-v1.13 keeps to non-AI tools. Auto / Level / Vertical / Full / Guided upright **apply immediately** (no extra Enter), so Auto upright is two steps like Lightroom's. Soft proof gains an approximate **ink warning** overlay. JPEG exports embed an sRGB ICC profile; PNG exports always carry an sRGB chunk. Spot heal searches more carefully (still **79%** on the USDA portrait with the grain guard — same as v1.12); Fill empty edges mirrors nearby pixels before smoothing. `npm test`: **1013** checks. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
+v1.13 keeps to non-AI tools. Auto / Level / Vertical / Full / Guided upright **apply immediately** (no extra Enter), so Auto upright is two steps like the subscription RAW editor's. Soft proof gains an approximate **ink warning** overlay. JPEG exports embed an sRGB ICC profile; PNG exports always carry an sRGB chunk. Spot heal searches more carefully (still **79%** on the USDA portrait with the grain guard — same as v1.12); Fill empty edges mirrors nearby pixels before smoothing. `npm test`: **1013** checks. See [docs/WORKFLOW_BENCHMARK.md](docs/WORKFLOW_BENCHMARK.md).
 
 ## What's new in v1.12 (Full do-no-harm, Batch Open tabs, gated radial estimate)
 

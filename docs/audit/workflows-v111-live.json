@@ -22,8 +22,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective, both directions)": 6,
         "Pixelmator Pro (Perspective)": 5,
         "Photopea (Perspective transform)": 6
@@ -48,8 +48,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective, both directions)": 6,
         "Pixelmator Pro (Perspective)": 5,
         "Photopea (Perspective transform)": 6
@@ -74,8 +74,8 @@
         "key: Enter"
       ],
       "paid": {
-        "Lightroom Classic (Upright Full)": 2,
-        "Photoshop (Camera Raw filter Upright Full)": 4,
+        "Subscription RAW editor (Upright Full)": 2,
+        "Leading subscription editor (RAW plug-in filter Upright Full)": 4,
         "Affinity Photo (Perspective, both directions)": 6,
         "Pixelmator Pro (Perspective)": 5,
         "Photopea (Perspective transform)": 6
@@ -99,8 +99,8 @@
         "click: Allow (batch-out:readwrite) in the browser's permission prompt"
       ],
       "paid": {
-        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
-        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Subscription RAW editor (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Leading subscription editor (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
         "Affinity Photo (Batch Job, saved macro)": 9,
         "Pixelmator Pro (run saved Shortcut)": 3,
         "Photopea": "no batch"
@@ -124,8 +124,8 @@
         "click: Allow (batch-out:readwrite) in the browser's permission prompt"
       ],
       "paid": {
-        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
-        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Subscription RAW editor (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Leading subscription editor (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
         "Affinity Photo (Batch Job, saved macro)": 9,
         "Pixelmator Pro (run saved Shortcut)": 3,
         "Photopea": "no batch"
@@ -149,8 +149,8 @@
         "click: Allow (batch-out:readwrite) in the browser's permission prompt"
       ],
       "paid": {
-        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
-        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Subscription RAW editor (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Leading subscription editor (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
         "Affinity Photo (Batch Job, saved macro)": 9,
         "Pixelmator Pro (run saved Shortcut)": 3,
         "Photopea": "no batch"
@@ -175,8 +175,8 @@
         "click: Allow (batch-out:readwrite) in the browser's permission prompt"
       ],
       "paid": {
-        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
-        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Subscription RAW editor (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Leading subscription editor (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
         "Affinity Photo (Batch Job, saved macro)": 9,
         "Pixelmator Pro (run saved Shortcut)": 3,
         "Photopea": "no batch"
@@ -201,8 +201,8 @@
         "click: Allow (batch-out:readwrite) in the browser's permission prompt"
       ],
       "paid": {
-        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
-        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Subscription RAW editor (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Leading subscription editor (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
         "Affinity Photo (Batch Job, saved macro)": 9,
         "Pixelmator Pro (run saved Shortcut)": 3,
         "Photopea": "no batch"
@@ -227,8 +227,8 @@
         "click: Allow (batch-out:readwrite) in the browser's permission prompt"
       ],
       "paid": {
-        "Lightroom Classic (select all, File ▸ Export with Preset ▸ preset)": 4,
-        "Photoshop (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
+        "Subscription RAW editor (select all, File ▸ Export with Preset ▸ preset)": 4,
+        "Leading subscription editor (File ▸ Scripts ▸ Image Processor, settings remembered)": 6,
         "Affinity Photo (Batch Job, saved macro)": 9,
         "Pixelmator Pro (run saved Shortcut)": 3,
         "Photopea": "no batch"
