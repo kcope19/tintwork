@@ -30,6 +30,10 @@ The findings still open after v1.33 from the persona test ([audit/persona-test-v
 
 **Tests:** `v134-test` 35/35; `npm test` 1513 checks, 0 failures (WebKit included). **Test-change disclosure:** `v134-test` is new. The version pins of v112–v133 accept 1.34.0. `v133-test`'s "more tools" cue check now also accepts the v1.34 outcome (no overflow at all, so no cue); the cue-click check runs only when the column still overflows. Nothing else in the older tests changed.
 
+### Live verification (v1.34.0, 2026-11-21 about 12:11 PM America/New_York)
+
+Deployed commit 31f2613 (tag v1.34.0) to GitHub Pages; the live `sw.js` reports `tintwork-shell-v1.34.0` and precaches `src/tone.js`. `TW_URL=https://kcope19.github.io/tintwork/ node scripts/v134-test.mjs`: **35/35, 3 runs out of 3** (fresh browser profiles). In each run the tab was closed 157–180 ms after the last edit and all edits were recovered with identical pixels; axe serious + critical: Color balance dialog 0, editor 0, iPhone crop 0. Screenshots: `screenshots/134-live-*.png` (vibrance, shadows-highlights, color-balance-layer, layout-1366, recover-offered).
+
 ## v1.33.0 update (2026-11-21, America/New_York)
 
 Phone layout and keyboard / screen-reader fixes from the remaining findings of the persona test ([audit/persona-test-v131.md](audit/persona-test-v131.md): #6, #7, #8, #11, #14). No AI. No editing math changed and no gate was loosened.
