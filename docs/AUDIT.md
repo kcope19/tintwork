@@ -60,6 +60,17 @@ This covers more of finding #10 from the persona test ([audit/persona-test-v131.
 
 **Not built (out of scope for this release):** pen / paths, a channels panel, content-aware fill.
 
+### Live verification (v1.35.0, 2026-11-21 about 3:55 PM America/New_York)
+
+Deployed commit 1ae503a (tag v1.35.0) to GitHub Pages. The live `sw.js` reports `tintwork-shell-v1.35.0`. `TW_URL=https://kcope19.github.io/tintwork/ node scripts/v135-test.mjs`: **54/54, 3 runs out of 3** (fresh browser profiles).
+
+- axe serious + critical: 0 with the snapshot menu open, 0 with focus in the snapshot panel, 0 with the Smooth skin dialog open, in every run.
+- Actions replay and Batch PNG both matched the manual edit (max diff 0) in every run.
+- 12 MP Smooth skin took 2.9–3.2 s.
+- Screenshots: `screenshots/135-live-*.png` (snapshots-panel, snapshot-menu, history-brush, skin-before, skin-after).
+
+The "2 steps" for Smooth skin are two actions: add the layer, then paint. Painting can take several strokes (the test makes four).
+
 ## v1.34.1 update (2026-11-21, America/New_York)
 
 Wording-only patch. Other vendors' product names were removed from the UI and docs, as the project's standing rule requires.
