@@ -40,11 +40,11 @@ await page.waitForFunction(() => window.tintwork && document.readyState === 'com
 await page.evaluate(() => window.tintwork.engineReady);
 const T = (fn, arg) => page.evaluate(fn, arg).catch((e) => ({ error: e.message }));
 
-check(await T(() => window.tintwork.APP_VERSION) === '1.31.0' || await T(() => window.tintwork.APP_VERSION) === '1.32.0', `APP_VERSION is 1.31.0 (${await T(() => window.tintwork.APP_VERSION)})`);
+check(await T(() => window.tintwork.APP_VERSION) === '1.31.0' || (await T(() => window.tintwork.APP_VERSION) === '1.32.0' || await T(() => window.tintwork.APP_VERSION) === '1.33.0'), `APP_VERSION is 1.31.0 (${await T(() => window.tintwork.APP_VERSION)})`);
 {
   const swText = await page.evaluate(async (base) => (await fetch(new URL('sw.js', base), { cache: 'no-store' })).text(), BASE);
   const m = /tintwork-shell-v([\d.]+)/.exec(swText);
-  check((m?.[1] === '1.31.0' || m?.[1] === '1.32.0'), `SW CACHE is 1.31.0 (${m?.[1]})`);
+  check((m?.[1] === '1.31.0' || (m?.[1] === '1.32.0' || m?.[1] === '1.33.0')), `SW CACHE is 1.31.0 (${m?.[1]})`);
 }
 
 const open = async (file, as = file, buffer = null) => {

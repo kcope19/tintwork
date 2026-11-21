@@ -50,7 +50,8 @@ async function runDevice({ tag, browserType, device, realTouch, stubShare }) {
     minTarget: Math.min(...[...document.querySelectorAll('#mobilebar button, #toolbar button, #menuBtn')].map((b) => Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height))),
     ios: window.tintwork.IS_IOS, max: window.tintwork.MAX_PIXELS,
   }));
-  check(/viewport-fit=cover/.test(meta.vp) && /user-scalable=no/.test(meta.vp), `viewport meta: ${meta.vp}`);
+  // v1.33: page zoom is allowed again (accessibility); canvas pinch is handled by the editor (touch-action: none on #view)
+  check(/viewport-fit=cover/.test(meta.vp) && !/user-scalable=no|maximum-scale/.test(meta.vp), `viewport meta: ${meta.vp}`);
   check(meta.apple, 'apple-mobile-web-app meta + apple-touch-icon present');
   const wide = await T(() => [...document.body.children].filter((el) => getComputedStyle(el).display !== 'none' && getComputedStyle(el).position !== 'fixed' && el.getBoundingClientRect().right > innerWidth + 1).map((el) => el.id));
   check(!wide.length, `every bar fits the screen width${wide.length ? ` (too wide: ${wide})` : ''}`);
@@ -341,7 +342,7 @@ async function runDevice({ tag, browserType, device, realTouch, stubShare }) {
   });
   await page.waitForTimeout(400);
   await page.locator('#optionsbar [data-cmd="freeTransform"]').tap();
-  check(await T(() => { const x = window.tintwork.xf; return !!x && Math.round(x.cx) === 200 && Math.round(x.cy) === 200; }) && await page.locator('#optionsbar [data-cmd="xfApply"]').isVisible(), 'Transform button starts a free transform (Apply/Cancel shown in the bar)');
+  check(await T(() => { const x = window.tintwork.xf; return !!x && Math.round(x.cx) === 200 && Math.round(x.cy) === 200; }) && (await page.locator('#optionsbar [data-cmd="xfApply"]').isVisible() || await page.locator('#floatActions [data-float-cmd="xfApply"]').isVisible()), 'Transform button starts a free transform (Apply/Cancel shown in the bar, or floating over the canvas on phones since v1.33)');
   const fc = await d2s(200, 200);
   // fingers start left/right of the centre, end above/below it, 1.5× further apart: scale 1.5, rotate 90° clockwise
   await twoFinger({ x: fc.x - 40, y: fc.y }, { x: fc.x + 40, y: fc.y }, { x: fc.x, y: fc.y - 60 }, { x: fc.x, y: fc.y + 60 }, 12);
@@ -350,7 +351,7 @@ async function runDevice({ tag, browserType, device, realTouch, stubShare }) {
     `two-finger pinch/rotate scales and rotates the layer, not the view (${pinch && `${pinch.sx.toFixed(2)}×, ${pinch.rot.toFixed(1)}°`})`);
   await shot4('transform');
   const hT = await T(() => window.tintwork.history.entries.length);
-  await page.locator('#optionsbar [data-cmd="xfApply"]').tap();
+  { const fl = page.locator('#floatActions [data-float-cmd="xfApply"]'); await ((await fl.isVisible()) ? fl : page.locator('#optionsbar [data-cmd="xfApply"]')).tap(); } // v1.33: floating Apply on phones
   await idle4();
   const tx = { blue: await px(265, 200), red: await px(150, 200), redTop: await px(200, 135), out: await px(115, 200), hist: await T(() => [window.tintwork.history.entries.length, window.tintwork.history.entries.at(-1).label, !!window.tintwork.xf]) };
   check(tx.blue[2] > 240 && tx.blue[0] < 15 && tx.red[0] > 240 && tx.red[2] < 15 && tx.redTop[0] > 240 && tx.out[1] > 240,

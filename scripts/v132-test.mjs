@@ -53,9 +53,9 @@ const waitUprightDone = (page) => page.waitForFunction(() => { const u = window.
 
 let page = await freshPage();
 const ver = await T(page, () => window.tintwork.APP_VERSION);
-check(ver === '1.32.0', `APP_VERSION is 1.32.0 (${ver})`);
-if (!process.env.TW_URL) { const m = readFileSync(path.join(ROOT, 'sw.js'), 'utf8').match(/tintwork-shell-v([\d.]+)/); check(m?.[1] === '1.32.0', `SW CACHE is 1.32.0 (${m?.[1]})`); }
-else { const r = await page.request.get(`${BASE}sw.js`); const m = (await r.text()).match(/tintwork-shell-v([\d.]+)/); check(m?.[1] === '1.32.0', `live SW CACHE is 1.32.0 (${m?.[1]})`); }
+check((ver === '1.32.0' || ver === '1.33.0'), `APP_VERSION is 1.32.0 (${ver})`);
+if (!process.env.TW_URL) { const m = readFileSync(path.join(ROOT, 'sw.js'), 'utf8').match(/tintwork-shell-v([\d.]+)/); check((m?.[1] === '1.32.0' || m?.[1] === '1.33.0'), `SW CACHE is 1.32.0 (${m?.[1]})`); }
+else { const r = await page.request.get(`${BASE}sw.js`); const m = (await r.text()).match(/tintwork-shell-v([\d.]+)/); check((m?.[1] === '1.32.0' || m?.[1] === '1.33.0'), `live SW CACHE is 1.32.0 (${m?.[1]})`); }
 
 // ---- B1: the starting tool does not paint ----------------------------------------------------------
 check(await T(page, () => window.tintwork.state.tool) === 'hand', `starting tool is Hand (${await T(page, () => window.tintwork.state.tool)})`);

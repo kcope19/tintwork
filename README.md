@@ -7,6 +7,21 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.33 (phone crop, keyboard and screen-reader access)
+
+From the remaining findings of the 7-persona test of v1.31 ([docs/audit/persona-test-v131.md](docs/audit/persona-test-v131.md)). No AI; no editing math changed (Suggest on the 21-photo set: 0 differences).
+
+- **Phones: Apply and Cancel float over the photo.** In Crop (and Transform / Perspective) the **Cancel** and **Apply** buttons sit at the bottom right of the canvas, so you no longer swipe the options bar to find them. The ratio chips (1:1, **4:5**, 16:9, 8×10, Free) are at the start of the bar and no longer drawn under the Ratio menu.
+- **Phones: the tool column no longer covers the photo.** The photo is fitted beside the column (and above the floating buttons); hiding the column refits it to the full width. The desktop layout is unchanged.
+- **Layers and History work from the keyboard.** Each list is one Tab stop: ↑/↓ (Home/End) move, Enter or Space selects the layer or jumps to that history step (stepping through undo), with a visible focus ring. Mouse use is unchanged.
+- **Screen readers:** status messages are announced (polite live region), dialogs are named by their title, tool buttons say which tool is active, document tabs no longer nest the close button inside a tab.
+- **Skip links** (Skip to canvas, Open image…) are the first two Tab stops (Open image… used to take 45 Tabs).
+- **Page zoom is allowed** (pinch-zoom and browser zoom); pinching on the photo still zooms the photo.
+- **Smaller fixes:** a ▾ cue at the bottom of the tool column when tools are below the fold (1366×768), a taller History panel (about 5 rows instead of 2), and the status bar now shows the last action instead of a stale "Opened …" or "Processing…".
+- **axe-core 4.14:** serious/critical issues on the live site went from **3 kinds (5 instances) to 0** across the welcome screen, an open document, the Curves dialog and an iPhone crop ([docs/audit/a11y-v132-before.json](docs/audit/a11y-v132-before.json), [docs/audit/a11y-v133-live.json](docs/audit/a11y-v133-live.json)).
+
+Not tested on real devices: an actual iPhone / Safari, two-finger pinch on the canvas with page zoom enabled, and real screen readers (NVDA, JAWS, Narrator, VoiceOver). See [docs/AUDIT.md](docs/AUDIT.md).
+
 ## What's new in v1.32 (safe Auto upright, first-run fixes)
 
 From the 7-persona test of v1.31 ([docs/audit/persona-test-v131.md](docs/audit/persona-test-v131.md)). No AI; the upright math is unchanged.

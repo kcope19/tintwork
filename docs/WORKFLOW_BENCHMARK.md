@@ -6,6 +6,26 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.33 scorecard (phone crop, keyboard and screen-reader access)
+
+UI-only release; no editing math changed and no gate loosened. Measured by `scripts/v133-test.mjs` (Chromium 1366×768 with `?platform=win`, and WebKit with Playwright's iPhone 13 profile) and `scripts/a11y-audit.mjs` (axe-core 4.14). The iPhone rows are **emulation**, not a real iPhone.
+
+| Job | v1.32 | v1.33 | Verdict |
+|---|---|---|---|
+| Phone: crop to 4:5 and apply | Apply ~630 px off-screen in the options bar (swipe to find); 4:5 chip drawn under the Ratio select | 4:5 chip on screen and tappable; **Cancel / Apply float** over the canvas (46 px tall, uncovered); photo fitted above them | **fixed** |
+| Phone: tool column vs photo | column covered the left ~15% of the photo and the crop's left edge | photo fitted beside the column; hiding the column refits to full width | **fixed** |
+| Desktop crop, mouse | Apply / Cancel in the options bar | unchanged (no floating buttons; fit identical) | **match** |
+| Keyboard: select a layer | impossible (rows not focusable) | Tab (10 from the canvas) → ↑/↓ → Enter or Space; focus ring | **fixed** |
+| Keyboard: step back through History | Ctrl+Z only (rows not focusable) | Tab (21 from the canvas) → ↑ → Enter jumps to that undo state; End + Enter redoes | **fixed** |
+| Keyboard: reach "Open image…" | 45 Tabs | 2 Tabs (skip links) | **fixed** |
+| Screen reader: status messages | not announced | `role=status`, `aria-live=polite` | **fixed** (no real screen reader run) |
+| axe serious + critical (welcome, doc open, Curves dialog, iPhone crop) | 3 kinds, 5 instances (nested-interactive ×3 states, aria-dialog-name, color-contrast); plus moderate meta-viewport, region, page-has-heading-one | **0** (no violations of any impact in those states) | **fixed** |
+| Page zoom | disabled (`user-scalable=no`, `maximum-scale=1`) | allowed; canvas pinch still zooms the photo (not verified on a real phone) | **fixed** |
+| 1366×768: tools below the fold | 6 tools hidden, no cue | ▾ cue; click scrolls the column | **improved** |
+| History panel height | ~62 px (2 rows) | 142 px (~5 rows) at 1366×768 and 1920×1080 | **improved** |
+| Status after a crop / brush stroke | stale "Opened …" | shows the action (e.g. "Brush stroke", "Image size 1080×1350") | **fixed** |
+| Suggest leftovers, 21-photo set | as v1.32 | identical (0 differences; [audit/workflows-v133-after.json](audit/workflows-v133-after.json)) | **match** |
+
 ## v1.32 scorecard (safe Auto upright, first-run fixes)
 
 No upright / Suggest math changed; no gate loosened. Kept share = crop rectangle ÷ photo area after Image ▸ Auto upright (Crop edges). canyon and white are held-out (observed, not tuned). The 60% ask-threshold is from the brief.

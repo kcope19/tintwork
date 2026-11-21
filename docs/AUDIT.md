@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.32.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.33.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,38 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.33.0 update (2026-11-21, America/New_York)
+
+Phone layout and keyboard / screen-reader fixes from the remaining findings of the persona test ([audit/persona-test-v131.md](audit/persona-test-v131.md): #6, #7, #8, #11, #14). No AI. No editing math changed and no gate was loosened.
+
+**A. Phone (WebKit, Playwright iPhone 13 profile, 390×664 CSS px viewport).** In the phone layout (≤820 px wide or ≤500 px tall) the confirm buttons of Crop, Transform, Perspective and Object select (Cancel / Apply / Done) are mirrored into a floating group at the bottom right of the canvas (46 px tall); the options-bar copies are hidden there. The fit leaves room for them and for the tool column: a fitted photo now sits beside the column (towers: photo x 85–363, column ends at 58) and above the buttons; hiding / showing the column refits a fitted photo. Option-bar items no longer shrink (`flex-shrink: 0`), which is what drew the 4:5 chip under the Ratio select; on phones the Crop title is hidden so all five chips (1:1, 4:5, 16:9, 8×10, Free) are on screen and a tap at each chip's centre hits it. Desktop (Chromium 1366×768): no floating buttons, Apply stays in the options bar, fit identical to v1.32 (left / bottom insets are 0).
+
+**B. Keyboard and screen readers.**
+- Layers and History lists use a roving tabindex: one Tab stop each (the selected layer / current step), ↑/↓/Home/End move focus, Enter or Space selects the layer (Ctrl/Shift for multi-select as with the mouse) or restores that history step; a 2 px focus ring. Rows carry spoken labels ("Layer 3, 100%, selected", "New layer, step 3 of 4, current"), the current step has `aria-current="step"`, the eye button is named "Hide layer …" / "Show layer …" with `aria-pressed`. Only keyboard-focused rows (`:focus-visible`) take those keys, so a mouse user who clicks a row keeps the arrow-key nudge (Move tool) and Enter-to-apply (checked in v133-test).
+- `#status` is `role=status aria-live=polite aria-atomic=true`. `#modal` has `aria-labelledby="modalTitle"` (Playwright `getByRole('dialog', { name: 'Curves' })` resolves). Tool buttons set `aria-pressed`. Document tabs are no longer `role=tab` containers holding a close button (axe nested-interactive); the name is a button with `aria-current="page"` for the open document.
+- Skip links "Skip to canvas" and "Open image…" are the first two Tab stops (visible when focused); opening from the skip link continues on the canvas. A hidden page-level h1 and a labelled options-bar region clear axe's moderate page-has-heading-one / region rules. The `.seg` "on" colour is now `--accent-strong` (white text 4.66:1; was the axe color-contrast hit on the Curves RGB button).
+- Page zoom: `maximum-scale=1, user-scalable=no` removed from the viewport meta. Safari's gesture events are now blocked only over the canvas area (`#viewport`), and `#view` keeps `touch-action: none`, so the editor's own pinch still applies there; phone text inputs are 16 px so iOS does not zoom on focus.
+
+**axe-core 4.14.1** (`scripts/a11y-audit.mjs`; states: welcome 1366×768, document open, Curves dialog, iPhone 13 WebKit crop):
+
+| State | v1.32.0 live (before) | v1.33.0 (after) |
+|---|---|---|
+| welcome | serious 0 · moderate: meta-viewport, region | 0 violations |
+| document open | **serious 1** (nested-interactive `.doc-tab`) · moderate: meta-viewport, page-has-heading-one, region | 0 violations |
+| Curves dialog | **serious 3** (aria-dialog-name, color-contrast, nested-interactive) · moderate: meta-viewport, region | 0 violations |
+| iPhone crop | **serious 1** (nested-interactive) · moderate: meta-viewport, page-has-heading-one, region | 0 violations |
+| **Total serious + critical** | **5 instances, 3 kinds; critical 0** | **0** |
+
+Before: [audit/a11y-v132-before.json](audit/a11y-v132-before.json) (live v1.32.0). After: [audit/a11y-v133-live.json](audit/a11y-v133-live.json) (live v1.33.0). axe finds rule violations only; it does not check that the keyboard patterns work, which v133-test does.
+
+**C. Extras.** A ▾ cue (sticky, mouse-only, `aria-hidden`) at the bottom of the tool column when it overflows (1366×768: yes; 1920×1080: no); clicking scrolls the column (the Zoom tool comes into view). History panel `min-height` 132 px (measured 142 px, about 5 rows, at 1366×768 and 1920×1080; was ~62 px). Stale status: a pointer-down, key-down or menu command marks the start of an action; when the action commits without having set a status message, the history label is shown (e.g. "Brush stroke"), and a leftover "Processing…" is always replaced. Messages an action sets itself are kept.
+
+**Regression:** Suggest on the 21-photo set re-measured on v1.33 ([audit/workflows-v133-after.json](audit/workflows-v133-after.json), `scripts/_v133-after.mjs`): identical to v1.32 on all 21 photos (leftover, guide count, mode and gate record; 0 differences). c4 Full ≤0.5° pin passes (v125–v131 tests in `npm test`).
+
+**Not verified on real devices:** a physical iPhone / Safari (WebKit emulation only), two-finger pinch on the canvas now that page zoom is enabled (Playwright cannot drive multi-touch page zoom; the editor-level pinch test in mobile-test still passes), and any real screen reader (NVDA, JAWS, Narrator, VoiceOver): announcements were checked only via ARIA attributes and accessible names. Windows was emulated (Chromium on Linux with `?platform=win`).
+
+**Test-change disclosure:** `v133-test` new (47 checks, incl. a WebKit iPhone pass). Pins accept 1.33.0. `mobile-test`: the viewport-meta check now requires that page zoom is **not** disabled (intended reversal), and the free-transform step taps the floating Apply when it is shown (the options-bar copy is hidden on phones). The skip-link check counts the app's click on the file input; headless Chromium under load did not always surface Playwright's filechooser event for it (about 1 run in 3 locally), so the check does not depend on that event. Full serial `npm test` **1478** ok, 0 failures (WebKit; 1431 + 47; run on wip commit 94ebb36, code identical to the release).
 
 ## v1.32.0 update (2026-11-20, America/New_York)
 

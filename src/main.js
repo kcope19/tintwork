@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.32.0';
+const APP_VERSION = '1.33.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -333,8 +333,14 @@ function snapshot() {
     }),
   };
 }
+// v1.33: a status message set during an action stays; when an action set none, its history label replaces the
+// previous (stale) message, e.g. "Opened …" after a crop or "Processing…" after Liquify.
+let statusSeq = 0, opSeq = -1;
+let roveLayerId = null; // v1.33: the layer row that holds the Layers panel's single tab stop (keyboard position)
+const markOp = () => { opSeq = statusSeq; };
 function commit(label) {
   if (!doc()) return;
+  { const cur = document.getElementById('status')?.textContent || ''; if (statusSeq === opSeq || cur === 'Processing…' || cur === 'Ready') status(label); opSeq = statusSeq; }
   if (state.xf) applyTransform(); // e.g. a Layers-panel change while transforming: finish the transform first
   history.entries.length = history.index + 1;
   history.entries.push({ label, snap: snapshot() });
@@ -1497,15 +1503,24 @@ setInterval(() => {
 }, 90);
 
 const TABBAR_H = 28; // the document tab strip overlays the top of the viewport
+/** v1.33: on phones the tool column floats over the left of the canvas; fit and centre in the part it leaves free. */
+function viewInsetLeft() {
+  const tb = document.getElementById('toolbar');
+  if (!tb || document.body.classList.contains('tools-collapsed') || getComputedStyle(tb).position !== 'absolute') return 0;
+  return Math.min(tb.offsetLeft + tb.offsetWidth, Math.round(viewport.clientWidth / 3));
+}
+/** v1.33: on phones, room kept under the photo for the floating Apply / Cancel while they are shown. */
+function viewInsetBottom() { return document.body.classList.contains('float-on') ? (document.getElementById('floatActions')?.offsetHeight || 46) + 12 : 0; }
+function fitZoomFor(d, inset = viewInsetLeft(), bottom = viewInsetBottom()) { return Math.min((viewport.clientWidth - inset - 48) / d.width, (viewport.clientHeight - 48 - TABBAR_H - bottom) / d.height, 1); }
 function fitToScreen() {
   const d = doc(); if (!d) return;
-  const w = viewport.clientWidth, h = viewport.clientHeight;
-  state.zoom = Math.min((w - 48) / d.width, (h - 48 - TABBAR_H) / d.height, 1);
+  state.zoom = fitZoomFor(d);
   centerView();
 }
 function centerView() {
-  const d = doc();
-  state.panX = Math.round((viewport.clientWidth - d.width * state.zoom) / 2);
+  const d = doc(), inset = viewInsetLeft();
+  state.panX = Math.round(inset + (viewport.clientWidth - inset - d.width * state.zoom) / 2);
+  if (viewInsetBottom()) { state.panY = Math.round((viewport.clientHeight - viewInsetBottom() + TABBAR_H - d.height * state.zoom) / 2); updateZoomLabel(); requestRender(); return; }
   state.panY = Math.round((viewport.clientHeight + TABBAR_H - d.height * state.zoom) / 2);
   updateZoomLabel(); requestRender();
 }
@@ -1569,7 +1584,7 @@ function setTool(id) {
     status('Object select kept.');
   }
   state.tool = id;
-  for (const b of document.querySelectorAll('#toolbar button')) b.classList.toggle('active', b.dataset.tool === id);
+  for (const b of document.querySelectorAll('#toolbar button')) { b.classList.toggle('active', b.dataset.tool === id); b.setAttribute('aria-pressed', String(b.dataset.tool === id)); }
   const cursors = { move: 'move', select: 'crosshair', lasso: 'crosshair', polylasso: 'crosshair', wand: 'crosshair', objsel: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', clone: 'none', heal: 'none', spot: 'none', tone: 'none', redeye: 'none', liquify: 'none', gradient: 'crosshair', shape: 'crosshair', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
   view.style.cursor = cursors[id] || 'default';
   buildOptionsBar();
@@ -4685,7 +4700,8 @@ view.addEventListener('pointerup', (e) => endPointer(e, false));
 view.addEventListener('pointercancel', (e) => endPointer(e, true));
 view.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch') { state.hover = null; requestRender(); } });
 // iOS Safari: block its own pinch/double-tap page zoom and long-press callouts on the canvas.
-for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(t, (e) => e.preventDefault(), { passive: false });
+// v1.33: only over the canvas area — page zoom (accessibility) stays available on the menus, panels and dialogs.
+for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(t, (e) => { if (e.target instanceof Element && e.target.closest('#viewport')) e.preventDefault(); }, { passive: false });
 view.addEventListener('touchstart', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
 view.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 view.addEventListener('contextmenu', (e) => {
@@ -4777,6 +4793,8 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (isTyping(e)) return;
+  if (e.target instanceof Element && e.target.closest('#skiplinks')) return; // Enter / Space activate the skip link itself
+  if (roveKeyTarget(e)) return; // ↑ ↓ Home End Enter Space on a keyboard-focused layer / history row
   if (state.poly) {
     if (e.key === 'Enter') { e.preventDefault(); finishPolygon(); return; }
     if (e.key === 'Escape') { e.preventDefault(); state.poly = null; requestRender(); return; }
@@ -5081,7 +5099,7 @@ const GROUP_BLOCKED = new Set(['brightnessContrast', 'hueSaturation', 'exposure'
   'gaussianBlur', 'sharpen', 'noise', 'vignette', 'convertSmart', 'rasterizeLayer', 'clear', 'cut', 'copy', 'fillSelection', 'flipLayerH', 'flipLayerV',
   'freeTransform', 'perspective', 'guidedUpright', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'fillEmptyEdges', 'warp', 'applyMask', 'selectLayerPixels', 'editLayer']);
 function run(name) {
-  closeMenus();
+  closeMenus(); markOp();
   if (isGroup(activeLayer()) && GROUP_BLOCKED.has(name)) {
     if (name === 'editLayer') { openStylesDialog(); return; }
     status('That command works on layer pixels: select a layer inside the group (or Merge group first).'); return;
@@ -5092,6 +5110,7 @@ function run(name) {
   return cmds[name]?.();
 }
 
+for (const t of ['pointerdown', 'keydown']) window.addEventListener(t, (e) => { if (!(t === 'keydown' && ['Shift', 'Control', 'Alt', 'Meta'].includes(e.key))) markOp(); }, true);
 // Ctrl+V is handled by the paste event (so system-clipboard images work too).
 const SHORTCUTS = {
   'mod+n': 'new', 'mod+o': 'open', 'mod+shift+o': 'place', 'mod+s': 'save', 'mod+shift+s': 'saveAs', 'mod+shift+e': 'export', 'mod+shift+alt+e': 'exportLastPreset', 'mod+shift+alt+b': 'batchAgain',
@@ -8090,7 +8109,7 @@ function proofWarnMask(img, paper) {
   }
   return out;
 }
-function status(msg) { $('#status').textContent = platformText(msg); }
+function status(msg) { statusSeq++; $('#status').textContent = platformText(msg); }
 let toastTimer = 0, toastUntil = 0;
 /** Brief notice. A notice arriving while another is still showing is added below it, so neither is lost. */
 function toast(msg, ms = 2200) {
@@ -8290,6 +8309,7 @@ function buildOptionsBar() {
   if (!state.xf && !state.mxf && d && state.tool === 'move') parts.push(`<button data-cmd="freeTransform">Transform</button>`);
   bar.classList.toggle('xf', !!state.xf);
   bar.innerHTML = platformText(parts.join(''));
+  bar.dataset.tool = state.mxf ? 'mxf' : state.xf ? 'xf' : state.tool; updateFloatActions();
   bar.querySelectorAll('[data-xf]').forEach((inp) => inp.addEventListener('change', () => setXfField(inp.dataset.xf, +inp.value)));
   bar.querySelectorAll('[data-selmode]').forEach((b) => b.addEventListener('click', () => { o.selMode = b.dataset.selmode; buildOptionsBar(); }));
   bar.querySelectorAll('[data-objpaint]').forEach((b) => b.addEventListener('click', () => { o.objPaint = b.dataset.objpaint; buildOptionsBar(); }));
@@ -8399,19 +8419,20 @@ function fillBlendSelect(group) {
 }
 function updateLayersPanel() {
   updateLooksPanel();
-  const ul = $('#layerList'); ul.innerHTML = '';
+  const ul = $('#layerList'); const refocus = roveHadKeyboardFocus(ul); ul.innerHTML = '';
   const d = doc(); if (!d) return;
   fillBlendSelect(isGroup(activeLayer()));
   for (let i = d.layers.length - 1; i >= 0; i--) {
     const l = d.layers[i], anc = ancestorsOf(d, l);
     if (anc.some((g) => g.collapsed)) continue; // inside a collapsed group
-    const li = document.createElement('li'); li.draggable = true; li.dataset.id = l.id;
-    if (l.id === d.activeId) li.classList.add('active');
+    const li = document.createElement('li'); li.draggable = true; li.dataset.id = l.id; li.dataset.rove = 'layer'; li.tabIndex = -1;
+    if (l.id === d.activeId) { li.classList.add('active'); li.setAttribute('aria-current', 'true'); }
     if (anc.length) { li.style.paddingLeft = `${6 + anc.length * 16}px`; li.dataset.depth = anc.length; }
     if (isGroup(l)) li.classList.add('group-row');
     if (l.clip && childrenOf(d, parentId(l))[0] !== l) li.classList.add('clipped');
     if (anc.some((g) => !g.visible)) li.classList.add('hidden-by-group');
     const eye = document.createElement('button'); eye.className = 'eye' + (l.visible ? '' : ' off'); eye.innerHTML = ICONS.eye; eye.title = 'Toggle visibility';
+    eye.setAttribute('aria-label', `${l.visible ? 'Hide' : 'Show'} layer ${l.name}`); eye.setAttribute('aria-pressed', String(!l.visible));
     eye.addEventListener('click', (e) => { e.stopPropagation(); l.visible = !l.visible; compDirty = true; requestRender(); commit(l.visible ? 'Show layer' : 'Hide layer'); });
     const th = makeCanvas(40, 30); const tx = th.getContext('2d');
     const s = Math.min(40 / d.width, 30 / d.height);
@@ -8495,10 +8516,12 @@ function updateLayersPanel() {
       if (src && src !== l && placeLayer(d, src, l, zone)) { compDirty = true; requestRender(); commit(zone === 'into' ? 'Move into group' : 'Reorder layers'); }
     });
     li.addEventListener('dragend', () => { dragLayerId = null; });
+    li.setAttribute('aria-label', `${l.name}${isGroup(l) ? ' (group)' : ''}, ${Math.round(l.opacity * 100)}%${l.visible ? '' : ', hidden'}${l.id === d.activeId ? ', selected' : d.picked?.has(l.id) ? ', also selected' : ''}`);
     ul.append(li);
     if (l.kind === 'smart') ul.append(...smartRows(l, d, s));
     if (l.styles?.length) ul.append(...styleRows(l, d, anc.length));
   }
+  roveSettle(ul, roveLayerId != null && ul.querySelector(`li[data-rove][data-id="${roveLayerId}"]`) ? `li[data-rove][data-id="${roveLayerId}"]` : 'li[data-rove].active', refocus);
   const al = activeLayer();
   document.querySelector('#layersPanel [data-cmd="addMask"]')?.classList.toggle('on', !!al.mask);
   $('#blendMode').value = al.blend;
@@ -8508,15 +8531,59 @@ function updateLayersPanel() {
 
 function updateHistoryPanel() {
   scheduleAutosave();
-  const ol = $('#historyList'); ol.innerHTML = '';
+  const ol = $('#historyList'); const refocus = roveHadKeyboardFocus(ol); ol.innerHTML = '';
   history.entries.forEach((e, i) => {
-    const li = document.createElement('li'); li.textContent = e.label;
-    if (i === history.index) li.classList.add('current'); if (i > history.index) li.classList.add('future');
+    const li = document.createElement('li'); li.textContent = e.label; li.dataset.rove = 'history'; li.dataset.index = i; li.tabIndex = -1;
+    if (i === history.index) { li.classList.add('current'); li.setAttribute('aria-current', 'step'); } if (i > history.index) li.classList.add('future');
+    li.setAttribute('aria-label', `${e.label}, step ${i + 1} of ${history.entries.length}${i === history.index ? ', current' : i > history.index ? ', undone' : ''}`);
     li.addEventListener('click', () => restore(i));
     ol.append(li);
   });
+  roveSettle(ol, 'li[data-rove].current', refocus);
   ol.querySelector('.current')?.scrollIntoView({ block: 'nearest' });
 }
+
+// ---- v1.33: roving tabindex for the Layers and History lists ------------------------------------------
+// Each list is one Tab stop. ↑/↓ (Home/End) move between rows, Enter or Space selects the layer / jumps to that
+// history step. Only rows focused from the keyboard (:focus-visible) take these keys, so a mouse user who clicks a
+// layer and then presses the arrows still nudges it with the Move tool, and Enter still applies a crop.
+const ROVE_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter', ' ']);
+const kbdFocused = (el) => { try { return el.matches(':focus-visible'); } catch { return true; } };
+function roveKeyTarget(e) { const t = e.target; return t instanceof Element && t.matches('li[data-rove]') && ROVE_KEYS.has(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && kbdFocused(t); }
+function roveHadKeyboardFocus(list) { const a = document.activeElement; return !!a && list.contains(a) && a !== list && kbdFocused(a) ? (a.matches('li[data-rove]') ? 'row' : 'inner') : null; }
+/** Give the list's tab stop to `sel` (falls back to the first row); refocus it when the list had keyboard focus. */
+function roveSettle(list, sel, refocus) {
+  const rows = [...list.querySelectorAll('li[data-rove]')]; if (!rows.length) return;
+  const row = list.querySelector(sel) || rows[0];
+  for (const r of rows) { r.tabIndex = r === row ? 0 : -1; for (const b of r.querySelectorAll('button')) b.tabIndex = r === row ? 0 : -1; }
+  if (refocus === 'row') row.focus({ preventScroll: false });
+}
+function roveMove(list, row) {
+  for (const r of list.querySelectorAll('li[data-rove]')) { r.tabIndex = r === row ? 0 : -1; for (const b of r.querySelectorAll('button')) b.tabIndex = r === row ? 0 : -1; }
+  row.focus(); row.scrollIntoView({ block: 'nearest' });
+}
+function roveKeydown(list, activate) {
+  list.addEventListener('keydown', (e) => {
+    const row = e.target; if (!roveKeyTarget(e)) return;
+    e.preventDefault(); e.stopPropagation();
+    if (e.key === 'Enter' || e.key === ' ') { activate(row, e); return; }
+    const rows = [...list.querySelectorAll('li[data-rove]')], i = rows.indexOf(row);
+    const j = e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
+    if (list.id === 'layerList') roveLayerId = rows[j].dataset.id;
+    roveMove(list, rows[j]);
+  });
+}
+roveKeydown($('#layerList'), (row, e) => {
+  const d = doc(); const l = d && layerById(d, +row.dataset.id || row.dataset.id); if (!l) return;
+  if (state.xf) applyTransform(); roveLayerId = row.dataset.id;
+  pickLayer(l, e); updateLayersPanel(); buildOptionsBar(); requestRender();
+  status(`Layer “${l.name}” selected`);
+});
+roveKeydown($('#historyList'), (row) => {
+  const i = +row.dataset.index; if (!(i >= 0)) return;
+  if (i !== history.index) restore(i);
+  status(`History: “${history.entries[i]?.label}” (step ${i + 1} of ${history.entries.length})`);
+});
 
 function drawHistogram(canvas, hist) {
   const x = canvas.getContext('2d'); const w = canvas.width, h = canvas.height;
@@ -8539,6 +8606,7 @@ function scheduleHistogram() {
 }
 function updateDocInfo() {
   try { updateTitle(); } catch { /* early boot */ }
+  if (doc() && document.activeElement?.classList?.contains('skip-link')) viewport.focus(); // opened via the skip link: continue on the canvas
   const d = doc(); $('#docinfo').textContent = d ? `${d.name} — ${d.width} × ${d.height} px · ${d.depth === 16 ? 16 : 8}-bit · ${d.layers.length} layer${d.layers.length > 1 ? 's' : ''} · ${engineLabel()}` : `${engineLabel()} engine`;
 }
 // ---- Document tabs UI (v0.9) --------------------------------------------------------------------------
@@ -8547,9 +8615,9 @@ function renderTabs() {
   stashTab();
   bar.classList.toggle('hidden', !tabs.length);
   bar.replaceChildren(...tabs.map((t, i) => {
-    const b = document.createElement('div'); b.className = 'doc-tab' + (t.doc === activeDoc ? ' active' : ''); b.setAttribute('role', 'tab');
-    b.setAttribute('aria-selected', String(t.doc === activeDoc)); b.dataset.index = i; b.title = `${t.doc.name || 'Untitled'} — ${t.doc.width}×${t.doc.height}${t.doc.depth === 16 ? ', 16-bit' : ''}\nDrop a layer here to copy it into this document`;
-    const n = document.createElement('span'); n.className = 'tab-name'; n.textContent = (t.doc.name || 'Untitled') + (tabDirty(t) ? ' •' : '');
+    const b = document.createElement('div'); b.className = 'doc-tab' + (t.doc === activeDoc ? ' active' : ''); b.dataset.index = i; b.title = `${t.doc.name || 'Untitled'} — ${t.doc.width}×${t.doc.height}${t.doc.depth === 16 ? ', 16-bit' : ''}\nDrop a layer here to copy it into this document`;
+    const n = document.createElement('button'); n.type = 'button'; n.className = 'tab-name'; n.textContent = (t.doc.name || 'Untitled') + (tabDirty(t) ? ' •' : '');
+    if (t.doc === activeDoc) n.setAttribute('aria-current', 'page'); n.setAttribute('aria-label', `${t.doc.name || 'Untitled'}${tabDirty(t) ? ', unsaved changes' : ''}${t.doc === activeDoc ? ', current document' : ''}`);
     const x = document.createElement('button'); x.type = 'button'; x.className = 'tab-close'; x.textContent = '×'; x.title = `Close (${keyLabel('Ctrl+Alt+W')})`; x.setAttribute('aria-label', `Close ${t.doc.name || 'Untitled'}`);
     x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(i); });
     b.addEventListener('mousedown', (e) => { if (e.button === 1) { e.preventDefault(); closeTab(i); } });
@@ -8639,7 +8707,48 @@ if ('launchQueue' in window) {
 // Window title shows the document (and the installed app's title bar uses it).
 /** Window title: "name • — Tintwork" while there are unsaved changes (taskbar / installed-app title bar). */
 function updateTitle() { renderTabs(); const d = doc(), dirty = d && (cleanEntry ? history.entries[history.index] !== cleanEntry : history.index > 0); document.title = d ? `${d.name || 'Untitled'}${dirty ? ' •' : ''} — ${APP}` : `${APP} — photo editor`; }
-$('#toolsToggle').addEventListener('click', () => { document.body.classList.toggle('tools-collapsed'); $('#toolsToggle').classList.toggle('on', !document.body.classList.contains('tools-collapsed')); });
+$('#toolsToggle').addEventListener('click', () => {
+  // v1.33: a fitted photo stays fitted to the area the tool column leaves free (it no longer hides under the column)
+  const d = doc(), wasFit = d && Math.abs(state.zoom - fitZoomFor(d)) < 1e-6;
+  document.body.classList.toggle('tools-collapsed'); $('#toolsToggle').classList.toggle('on', !document.body.classList.contains('tools-collapsed'));
+  if (wasFit) fitToScreen();
+});
+// v1.33: phones — Apply / Cancel float over the canvas (bottom right) instead of hiding at the far end of the
+// sideways-scrolling options bar. Desktop keeps them in the options bar.
+const FLOAT_CMDS = ['cropCancel', 'cropApply', 'xfCancel', 'xfApply', 'mxfCancel', 'mxfApply', 'objSelDone'];
+const phoneLayout = matchMedia('(max-width: 820px), (max-height: 500px)');
+function updateFloatActions() {
+  let host = document.getElementById('floatActions');
+  if (!host) { host = document.createElement('div'); host.id = 'floatActions'; host.setAttribute('role', 'group'); host.setAttribute('aria-label', 'Confirm'); viewport.append(host); }
+  const bar = $('#optionsbar'); bar.querySelectorAll('[data-pinned]').forEach((b) => b.removeAttribute('data-pinned'));
+  const src = phoneLayout.matches ? FLOAT_CMDS.map((c) => bar.querySelector(`button[data-cmd="${c}"]`)).filter((b) => b && !b.disabled) : [];
+  host.replaceChildren(...src.map((b) => {
+    b.setAttribute('data-pinned', '');
+    const f = document.createElement('button'); f.type = 'button'; f.dataset.floatCmd = b.dataset.cmd; f.className = b.classList.contains('primary') || /Apply|Done/.test(b.dataset.cmd) ? 'primary' : '';
+    f.textContent = b.textContent.replace(/\s*\(.*\)\s*$/, ''); f.title = b.title || b.textContent;
+    f.addEventListener('click', (e) => { e.stopPropagation(); run(f.dataset.floatCmd); });
+    return f;
+  }));
+  const on = src.length > 0, was = document.body.classList.contains('float-on');
+  if (on !== was) {
+    const d = doc(), wasFit = d && Math.abs(state.zoom - fitZoomFor(d)) < 1e-6;
+    document.body.classList.toggle('float-on', on);
+    if (wasFit) fitToScreen(); // a fitted photo moves up so the floating buttons do not cover its bottom edge
+  }
+}
+phoneLayout.addEventListener?.('change', () => { updateFloatActions(); updateToolMore(); });
+// v1.33: a "more tools" cue when the tool column is taller than the window (1366×768: six tools were below the fold)
+function updateToolMore() {
+  const tb = $('#toolbar'); let m = document.getElementById('toolMore');
+  if (!m) { m = document.createElement('div'); m.id = 'toolMore'; m.textContent = '▾'; m.title = 'More tools below (click or scroll the tool column)'; m.setAttribute('aria-hidden', 'true'); // mouse cue; keyboard users Tab through the tools
+    m.addEventListener('click', () => tb.scrollBy({ top: tb.clientHeight * 0.8, behavior: 'smooth' })); tb.append(m); tb.addEventListener('scroll', updateToolMore, { passive: true }); }
+  const more = tb.scrollHeight - tb.clientHeight - tb.scrollTop > 4;
+  m.classList.toggle('show', more); tb.classList.toggle('more-below', more);
+}
+window.addEventListener('resize', () => { updateToolMore(); updateFloatActions(); });
+requestAnimationFrame(updateToolMore);
+// v1.33: skip links (first two Tab stops): to the canvas, and Open image… (welcome's button was 45 Tabs away)
+$('#skipCanvas').addEventListener('click', (e) => { e.preventDefault(); viewport.focus(); status(doc() ? `Canvas: ${doc().name || 'Untitled'} — tool shortcuts and arrow keys work here` : 'Canvas: no image open — Ctrl+O opens one'); });
 $('#toolsToggle').classList.add('on');
 // Installable/offline: register the service worker on secure origins (https or localhost).
 if ('serviceWorker' in navigator && (window.isSecureContext || location.hostname === 'localhost')) {
