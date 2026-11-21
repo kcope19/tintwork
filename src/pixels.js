@@ -1,6 +1,7 @@
 // Pixel operations used by adjustments and filters. All functions operate on
 // ImageData in place (or return new ImageData) and are pure JS so they behave
 // the same in every browser.
+import { vibranceData, colorBalanceData, shadowsHighlightsData } from './tone.js';
 
 const clamp = (v) => (v < 0 ? 0 : v > 255 ? 255 : v);
 
@@ -396,6 +397,9 @@ export function blendMasked(orig, res, mask) {
 /** Single entry point for every pixel operation (used by the worker and the inline fallback). */
 export function runOp(name, img, params = {}, info = {}) {
   switch (name) {
+    case 'vibrance': vibranceData(img.data, 255, params); return img;
+    case 'colorBalance': colorBalanceData(img.data, 255, params); return img;
+    case 'shadowsHighlights': shadowsHighlightsData(img.data, img.width, img.height, 255, params, info.scale || 1); return img;
     case 'gaussianBlur': return gaussianBlur(img, params.radius);
     case 'sharpen': return sharpen(img, params);
     case 'noise': return noise(img, params);

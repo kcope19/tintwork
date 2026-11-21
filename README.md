@@ -7,6 +7,20 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.34 (new adjustments, safer autosave, layout fixes)
+
+From the findings still open after the 7-persona test of v1.31 ([docs/audit/persona-test-v131.md](docs/audit/persona-test-v131.md): #10, #11, #13, #14). No AI. No straightening math changed (Suggest on the 21-photo set: 0 differences).
+
+- **Vibrance** (Adjust ▸ Vibrance… or Layer ▸ New adjustment layer: Vibrance…): Vibrance boosts muted colours most, holds back on skin tones (a simple orange-hue window, not a detector), and never pushes a colour out of gamut; a separate Saturation slider changes every colour evenly.
+- **Shadows / highlights** for any layer (Adjust menu, or as an adjustment layer, which the leading paid editor and Photopea only offer as a destructive command or smart filter): amount, tone range and radius for both shadows and highlights, with live preview.
+- **Color balance** (Adjust menu or adjustment layer): Shadows / Midtones / Highlights tabs, each with cyan–red, magenta–green and yellow–blue, plus Preserve luminosity.
+- All three work in 16-bit documents at 16-bit precision. As adjustment layers they composite on the CPU (no GPU shader yet), so very large documents redraw more slowly with them.
+- **Edits right before closing the tab are kept.** The autosave now writes synchronously when the tab is hidden or closed, so closing 150 ms after a brush stroke still offers "Recover unsaved work?" with that stroke. Before, the last 1–1.5 s of edits were lost.
+- **1366×768 and 1920×1080:** the tool column switches to two columns when one does not fit, so every tool is on screen. The options bar wraps onto a second row instead of running off the right edge (Brush was 224 px too wide). The phone layout is unchanged.
+- **Smaller fixes:** in guide mode the Perspective bar says "Enter applies guides" once and has one primary button (Apply guides; the corner Apply is now "Apply corners"). The status bar can no longer be left on "Processing…".
+
+Not covered: a real browser crash or power loss (tested with a normal tab close), real Windows hardware, and layered PSD export of the three new adjustment layers: Tintwork does not write those PSD adjustment blocks yet, so they are left out of the PSD's layers with a note (the PSD's flattened composite includes them). See [docs/AUDIT.md](docs/AUDIT.md).
+
 ## What's new in v1.33 (phone crop, keyboard and screen-reader access)
 
 From the remaining findings of the 7-persona test of v1.31 ([docs/audit/persona-test-v131.md](docs/audit/persona-test-v131.md)). No AI; no editing math changed (Suggest on the 21-photo set: 0 differences).

@@ -6,6 +6,26 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.34 scorecard (Vibrance, Shadows / highlights, Color balance; autosave on close; 1366×768 layout)
+
+No AI; no straightening math changed and no gate loosened. Measured by `scripts/v134-test.mjs` (Chromium 1366×768 and 1920×1080 with `?platform=win`, WebKit iPhone 13 profile). The paid-editor columns come from the products' public documentation and user forums, read on 2026-11-21 (not re-tested hands-on): "leading paid editor" is the best-known subscription layer editor; Affinity Photo 2 and Photopea are named. Product names are used for comparison only.
+
+| Job | Leading paid editor | Affinity Photo 2 | Photopea | Tintwork v1.33 | Tintwork v1.34 | Verdict |
+|---|---|---|---|---|---|---|
+| Vibrance with skin protection | ✅ adjustment + layer | ✅ adjustment + layer | ✅ adjustment + layer | ❌ (RAW develop only) | ✅ direct + adjustment layer, 8/16-bit; skin hue window, gamut-limited | **match** |
+| Shadows / highlights on a normal layer | 🟡 destructive command or smart filter (amount, tone, radius ×2) | 🟡 adjustment layer has strength only; range / radius in a live filter | 🟡 destructive or smart filter (amount, tone, radius) | ❌ (RAW develop only) | ✅ direct **and adjustment layer**, amount / tone range / radius ×2, live preview, edges clamped | **match** (adjustment layer: ahead on paper) |
+| Color balance (S / M / H × 3 axes, preserve luminosity) | ✅ | ✅ | ✅ | ❌ | ✅ tabs over 3 sliders, 8/16-bit | **match** |
+| GPU speed for these layers | ✅ | ✅ | ✅ (WebGL) | — | ❌ CPU composite (1280×853 ≈0.14 s, 24 MP ≈3.3 s for Shadows / highlights on this box) | **trails** |
+| PSD round-trip of these layers | ✅ native | ✅ | ✅ | — | ❌ left out of PSD layers (composite keeps them) | **trails** |
+| Edit, then close the tab within 200 ms | recovery depends on app autosave | — | — | 0/5 strokes recovered (3/3 runs, live) | 5/5 strokes recovered, identical pixels | **fixed** |
+| 1366×768: every tool reachable | — | — | — | 6 tools below the fold (▾ cue) | 2-column tool strip; all 25 on screen | **fixed** |
+| 1366×768: options bar | — | — | — | Brush +224 px, Dodge/burn +590 px off the edge | wraps to ≤2 rows; 0 px overflow for every tool at 1366×768 and 1920×1080 | **fixed** |
+| Phone layout (v1.33) | — | — | — | single swipeable bar, floating Apply | unchanged | **match** |
+| Perspective guide-mode bar | — | — | — | "Enter applies" ×2, two primary buttons | once; one primary (Apply guides) | **fixed** |
+| Suggest leftovers, 21-photo set | — | — | — | as v1.33 | identical (0 differences; [audit/workflows-v134-after.json](audit/workflows-v134-after.json)) | **match** |
+
+Still missing against these editors (persona finding 10): frequency separation / skin smoothing, pen and paths, a channels panel, history snapshots and a history brush, content-aware fill.
+
 ## v1.33 scorecard (phone crop, keyboard and screen-reader access)
 
 UI-only release; no editing math changed and no gate loosened. Measured by `scripts/v133-test.mjs` (Chromium 1366×768 with `?platform=win`, and WebKit with Playwright's iPhone 13 profile) and `scripts/a11y-audit.mjs` (axe-core 4.14). The iPhone rows are **emulation**, not a real iPhone.

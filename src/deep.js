@@ -3,6 +3,7 @@
 // 8-bit version in pixels.js (same formulas, same parameters) so switching depth never changes the look,
 // only the precision. Also holds a float compositor with the 16 blend modes for 16-bit export / flatten.
 import { pointFns, rgbToHsl, hslToRgb, boxBlurPass, boxSizes, cubeLookup } from './pixels.js';
+import { vibranceData, colorBalanceData, shadowsHighlightsData } from './tone.js';
 
 export const BLEND_NAMES = ['source-over', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn',
   'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
@@ -184,7 +185,7 @@ function autoLevelsDeep(d) {
   return applyLut16(d, pointFns('levels', { inBlack: lo, inWhite: hi }));
 }
 
-export const DEEP_OPS = ['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'gaussianBlur', 'sharpen', 'noise', 'vignette', 'autoLevels', 'whiteBalance', 'lut3d'];
+export const DEEP_OPS = ['brightnessContrast', 'exposure', 'levels', 'invert', 'curves', 'hueSaturation', 'grayscale', 'sepia', 'gaussianBlur', 'sharpen', 'noise', 'vignette', 'autoLevels', 'whiteBalance', 'lut3d', 'vibrance', 'colorBalance', 'shadowsHighlights'];
 /** 16-bit counterpart of pixels.runOp (in place). info.linear = blur/sharpen in linear light. */
 export function runDeep(name, d, params = {}, info = {}) {
   const fns = pointFns(name, params);
@@ -199,6 +200,9 @@ export function runDeep(name, d, params = {}, info = {}) {
     case 'vignette': return vignetteDeep(d, params, info.docW, info.docH, info.offX, info.offY);
     case 'autoLevels': return autoLevelsDeep(d);
     case 'lut3d': return lut3dDeep(d, params);
+    case 'vibrance': vibranceData(d.data, 65535, params); return d;
+    case 'colorBalance': colorBalanceData(d.data, 65535, params); return d;
+    case 'shadowsHighlights': shadowsHighlightsData(d.data, d.width, d.height, 65535, params, info.scale || 1); return d;
     default: throw new Error(`Unknown operation ${name}`);
   }
 }

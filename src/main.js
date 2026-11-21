@@ -3,7 +3,7 @@ import { floodMask, similarMask, histogram, runOp, channelHistograms, colorRange
 import * as auto from './auto.js';
 import { LOOKS, lookToLayers, normalizeLook } from './looks.js';
 import { createCurvesEditor, identityCurves } from './curves-editor.js';
-import { readAutosave, writeAutosave, clearAutosave, markAutosaveClean, listAutosaves, readImages, imageRef, deepRef, isDeepId, rawRef, isRawId, adoptImage, decodeImage, MAX_SLOTS } from './autosave.js';
+import { readAutosave, writeAutosave, clearAutosave, markAutosaveClean, listAutosaves, readImages, imageRef, deepRef, isDeepId, rawRef, isRawId, adoptImage, decodeImage, MAX_SLOTS, writeAutosaveSync, warmAutosave, noteStored } from './autosave.js';
 import { makeSelection, shapeMask, rectMask, combine, invertSelection, selectionCanvas, selectionOutline, maskRegion, translateSelection } from './selection.js';
 import * as ops from './ops.js';
 import { ICONS } from './icons.js';
@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.33.0';
+const APP_VERSION = '1.34.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -680,7 +680,13 @@ const ADJ_LAYER = {
   brightnessContrast: 'Brightness / contrast', hueSaturation: 'Hue / saturation', exposure: 'Exposure',
   levels: 'Levels', curves: 'Curves', invert: 'Invert', grayscale: 'Grayscale',
   whiteBalance: 'White balance', lut3d: 'Color lookup (3D LUT)',
+  vibrance: 'Vibrance', shadowsHighlights: 'Shadows / highlights', colorBalance: 'Color balance', // v1.34
 };
+// v1.34: adjustments whose result at a pixel depends on its neighbours (a blurred luminance map), so a dirty
+// rectangle cannot be patched on its own and reduced-size previews must scale the radius
+const NONLOCAL_ADJ = new Set(['shadowsHighlights']);
+// v1.34: adjustment layers the GPU compositors have no shader for: the composite runs on the CPU instead
+const CPU_ONLY_ADJ = new Set(['vibrance', 'shadowsHighlights', 'colorBalance']);
 const ADJ_SYNC_PIXELS = 2_500_000;
 // Interactive preview: while an adjustment slider moves on a big document, adjustment layers are computed on a
 // ~2 MP proxy (about screen size) and the full-resolution result follows in the worker once the slider rests.
@@ -714,7 +720,7 @@ function drawAdjustmentLayer(c, l, below, opts, it = null) {
   let e = adjCache.get(l.id); if (!e) { e = { key: null, canvas: null, running: false }; adjCache.set(l.id, e); }
   const R = opts.rect;
   let proxy = null; // a reduced-size result shown while a slider is being dragged on a big document
-  if (R && e.key !== key && e.canvas && e.canvas.width === W && e.canvas.height === H) {
+  if (R && e.key !== key && e.canvas && e.canvas.width === W && e.canvas.height === H && !NONLOCAL_ADJ.has(l.adj.type)) {
     // only the dirty rectangle changed below: patch the cached result there (synchronously; adjustments are per-pixel)
     const img = c.getImageData(R.x, R.y, R.w, R.h); runOp(l.adj.type, img, adjParamsOf(l.adj));
     e.canvas.getContext('2d').putImageData(img, R.x, R.y); e.key = key; if (e.proxy) e.proxy = null;
@@ -723,7 +729,7 @@ function drawAdjustmentLayer(c, l, below, opts, it = null) {
       const k = Math.min(1, Math.sqrt(PROXY_PIXELS / (W * H))), pw = Math.max(1, Math.round(W * k)), ph = Math.max(1, Math.round(H * k));
       const pc = e.proxy?.canvas?.width === pw && e.proxy.canvas.height === ph ? e.proxy.canvas : makeCanvas(pw, ph), px = pc.getContext('2d');
       px.globalCompositeOperation = 'copy'; px.drawImage(c.canvas, 0, 0, pw, ph);
-      const img = px.getImageData(0, 0, pw, ph); runOp(l.adj.type, img, adjParamsOf(l.adj)); px.putImageData(img, 0, 0);
+      const img = px.getImageData(0, 0, pw, ph); runOp(l.adj.type, img, adjParamsOf(l.adj), { scale: pw / W }); px.putImageData(img, 0, 0);
       e.proxy = { key, canvas: pc };
     }
     proxy = e.proxy.canvas;
@@ -876,6 +882,10 @@ function gpuComposite(c, opts, display) {
   const d = doc(), e = gfx.engine; if (!e || e.lost) return false;
   gfx.frame++;
   const layers = gpuLayerList(d), big = d.width > e.info.maxTextureSize || d.height > e.info.maxTextureSize;
+  if (layers.some((L) => L.kind === 'adjust' && CPU_ONLY_ADJ.has(L.op))) { // v1.34: no shader for these yet: composite on the CPU, without a size / memory notice
+    gpuNotice('cpu-adj', 'Vibrance, Shadows / highlights and Color balance layers are composited on the CPU (no GPU version yet), so big documents redraw more slowly.');
+    return false;
+  }
   if (!e.canComposite(layers, d.width, d.height)) {
     gpuNotice(`size:${d.width}x${d.height}`, big ? `This canvas (${d.width}×${d.height}) is larger than this GPU's texture limit (${e.info.maxTextureSize}px), so it is composited on the CPU.`
       : `${d.width}×${d.height} does not fit this device's GPU memory budget (${e.budgetMB} MB), so it is composited on the CPU.`);
@@ -1124,6 +1134,7 @@ function openAdjustmentLayerDialog(l, isNew = false) {
   const values = structuredClone(before.params || {});
   const apply = () => { l.adj = { type, params: structuredClone(values) }; adjInteractive(); compDirty = true; requestRender(); };
   const body = document.createElement('div');
+  if (ADJ[type]?.note) body.insertAdjacentHTML('beforeend', `<p class="muted adj-note">${ADJ[type].note}</p>`);
   if (type === 'curves') {
     // histogram of what the curve will act on (everything below this layer)
     const d = doc(), idx = d.layers.indexOf(l), tmp = makeCanvas(d.width, d.height);
@@ -1132,6 +1143,7 @@ function openAdjustmentLayerDialog(l, isNew = false) {
     body.append(createCurvesEditor(values, apply, channelHistograms(small.getContext('2d').getImageData(0, 0, small.width, small.height))));
   } else if (ADJ[type]) {
     for (const q of ADJ[type].params) body.append(paramField({ ...q, value: values[q.key] ?? q.value }, values, apply, q.value));
+    if (type === 'colorBalance') colorBalanceTabs(body);
   } else { status(`${ADJ_LAYER[type]} has no settings.`); return; }
   showModal({
     title: `${ADJ_LAYER[type]} layer`, body, passive: true, okLabel: 'Done',
@@ -3706,7 +3718,7 @@ function mxfBarParts() {
   const lensBtns = hasLens
     ? `<button data-cmd="mxfLensApplyFull" class="primary" id="mxfLensApplyFullBtn" title="Apply Distortion (and Vignette), then Full upright — one undo (Enter when Distortion ≠ 0)">Apply Lens + Full</button>`
       + `<button data-cmd="mxfLensApply" title="Apply Distortion (and Vignette) only — one undo; then click Full / Vertical">Apply Lens</button>`
-    : `<button data-cmd="mxfLensApply" class="primary" title="Set Distortion ≠ 0 first (or use Plumb). Applies Distortion + Vignette as one undo">Apply Lens</button>`;
+    : `<button data-cmd="mxfLensApply" class="${x.guideMode && (x.guides || []).length >= 2 ? '' : 'primary'}" title="Set Distortion ≠ 0 first (or use Plumb). Applies Distortion + Vignette as one undo">Apply Lens</button>`;
   const lensRow = warp ? '' : `<span class="seg lens-seg" title="Manual lens: Distortion before Upright. Positive = barrel; negative = pincushion. Apply Lens + Full is one undo when Distortion ≠ 0.">`
     + `<label class="inline">Distortion <input type="range" id="mxfLensDist" min="-100" max="100" step="1" value="${ls}" title="Barrel (+) / pincushion (−). Live preview."/><input type="number" id="mxfLensDistN" min="-100" max="100" step="1" value="${ls}" style="width:3.2em" title="Type Distortion −100…100, Enter previews"/></label>`
     + `<label class="inline">Vignette <input type="range" id="mxfLensVig" min="0" max="100" step="1" value="${lv}" title="Corner darkening (baked with Apply Lens)"/></label>`
@@ -3714,11 +3726,11 @@ function mxfBarParts() {
     + ((x.plumbMode && (x.plumbs || []).length >= 1) ? `<button data-cmd="mxfPlumbSolve" title="Solve Distortion from plumb lines (Enter also works)">Solve Distortion</button>` : '')
     + lensBtns + `</span>`;
   const enterHint = x.plumbMode ? 'Enter solves Distortion'
-    : x.guideMode ? ((x.guides || []).length >= 2 ? 'Enter applies guides' : 'draw ≥2 guides')
+    : x.guideMode ? ((x.guides || []).length >= 2 ? 'Enter applies guides' : '')
     : hasLens ? 'Enter = Apply Lens + Full' : 'Enter applies corners';
   const hint = warp ? 'Drag grid points to bend the layer'
     : x.plumbMode ? `Plumb: ${(x.plumbs || []).length}/3 lines · draw along curved edges that should be straight`
-    : x.guideMode ? `Guided: ${(x.guides || []).length}/4 guides${(x.guides || []).length >= 2 ? ' · Enter applies' : ' · draw along edges'}`
+    : x.guideMode ? `Guided: ${(x.guides || []).length}/4 guides${(x.guides || []).length >= 2 ? '' : ' · draw along edges'}` // v1.34: "Enter applies guides" follows once, not twice
     : hasLens ? `Distortion ${ls > 0 ? '+' : ''}${ls} · drag corners or Apply Lens + Full`
     : 'Drag the corners · A/L/V/F = Auto/Level/Vertical/Full';
   const uprightTips = [
@@ -3734,10 +3746,11 @@ function mxfBarParts() {
     lensRow,
     warp ? '' : `<span class="seg" title="After upright: crop empty corners (default), fill from nearby pixels, or keep transparent">${[['crop', 'Crop edges', 'Crop empty corners after upright (default; closest to Lightroom Constrain Crop)'], ['fill', 'Fill edges', 'Fill empty corners from nearby pixels'], ['keep', 'Keep', 'Leave empty corners transparent']].map(([k, n, t]) => `<button data-cmd="uprightEdges_${k}" class="${state.opts.uprightEdges === k ? 'on' : ''}" title="${t}">${n}</button>`).join('')}</span>`,
     warp ? `<span class="seg">${[3, 4, 5].map((n) => `<button data-cmd="mxfGrid${n}" class="${x.n === n ? 'on' : ''}" title="${n}×${n} control points">${n}×${n}</button>`).join('')}</span>` : '',
-    `<span class="muted">${hint} · ${enterHint} · Esc cancels</span>`,
+    `<span class="muted mxf-hint">${[hint, enterHint, 'Esc cancels'].filter(Boolean).join(' · ')}</span>`,
     (x.guideMode && (x.guides || []).length >= 2 ? `<button data-cmd="mxfGuidedApply" class="primary">Apply guides</button>` : ''),
     `<button data-cmd="mxfReset" title="Reset corners / guides / Distortion preview">Reset</button>`,
-    `<button data-cmd="mxfApply" class="${hasLens ? '' : 'primary'}" title="Apply current corner drag (not Distortion — use Apply Lens)">Apply</button>`,
+    // v1.34: in guide mode with guides drawn, "Apply guides" is the one primary action; this one says what it applies
+    `<button data-cmd="mxfApply" class="${hasLens || (x.guideMode && (x.guides || []).length >= 2) ? '' : 'primary'}" title="Apply current corner drag (not Distortion — use Apply Lens)">${x.guideMode && (x.guides || []).length >= 2 ? 'Apply corners' : 'Apply'}</button>`,
     `<button data-cmd="mxfCancel" title="Cancel (Esc) — discards this Perspective session">Cancel</button>`];
 }
 function drawMeshBox(toS) {
@@ -5082,6 +5095,9 @@ const cmds = {
   exposure: needDoc(() => openAdjust(ADJ.exposure)),
   levels: needDoc(() => openAdjust(ADJ.levels)),
   sepia: needDoc(() => openAdjust(ADJ.sepia)),
+  vibrance: needDoc(() => openAdjust(ADJ.vibrance)),
+  shadowsHighlights: needDoc(() => openAdjust(ADJ.shadowsHighlights)),
+  colorBalance: needDoc(() => openAdjust(ADJ.colorBalance)),
   invert: needDoc(() => (editingMask() ? cmds.invertMask() : applyInstant('Invert', 'invert'))),
   grayscale: needDoc(() => applyInstant('Grayscale', 'grayscale')),
   autoLevels: needDoc(() => applyInstant('Auto levels', 'autoLevels')),
@@ -5095,7 +5111,7 @@ const cmds = {
 // commands that may run while a free transform is open; anything else applies it first
 const XF_SAFE = new Set(['xfApply', 'xfCancel', 'undo', 'redo', 'zoomIn', 'zoomOut', 'zoomFit', 'zoom100', 'shortcuts', 'about', 'freeTransform', 'swapColors', 'resetColors']);
 /** Commands that need pixels of the active layer: a selected group has none (only a mask). */
-const GROUP_BLOCKED = new Set(['brightnessContrast', 'hueSaturation', 'exposure', 'levels', 'curves', 'autoLevels', 'invert', 'grayscale', 'sepia',
+const GROUP_BLOCKED = new Set(['brightnessContrast', 'hueSaturation', 'exposure', 'levels', 'curves', 'autoLevels', 'invert', 'grayscale', 'sepia', 'vibrance', 'shadowsHighlights', 'colorBalance',
   'gaussianBlur', 'sharpen', 'noise', 'vignette', 'convertSmart', 'rasterizeLayer', 'clear', 'cut', 'copy', 'fillSelection', 'flipLayerH', 'flipLayerV',
   'freeTransform', 'perspective', 'guidedUpright', 'autoUpright', 'uprightLevel', 'uprightVertical', 'uprightFull', 'fillEmptyEdges', 'warp', 'applyMask', 'selectLayerPixels', 'editLayer']);
 function run(name) {
@@ -5161,7 +5177,7 @@ const MENUS = [
     ['Object select (drag a box)', 'objectSelectTool'], ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
     ['New adjustment layer: Brightness / contrast…', 'adjLayer_brightnessContrast'], ['New adjustment layer: Hue / saturation…', 'adjLayer_hueSaturation'],
-    ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: White balance…', 'adjLayer_whiteBalance'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
+    ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: White balance…', 'adjLayer_whiteBalance'], ['New adjustment layer: Vibrance…', 'adjLayer_vibrance'], ['New adjustment layer: Shadows / highlights…', 'adjLayer_shadowsHighlights'], ['New adjustment layer: Color balance…', 'adjLayer_colorBalance'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
     ['New adjustment layer: 3D LUT from .cube file…', 'lutImport'],
     ['Edit layer settings…', 'editLayer'], ['Re-develop RAW…', 'redevelopRaw'], ['Embed linked RAW file', 'embedRaw'], ['Convert to live layer (editable filters)', 'convertSmart'], ['Convert text / live layer to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Duplicate to document…', 'layerToDoc'], ['Delete layer', 'layerDelete'], '-',
     ['Move up', 'layerUp', 'Ctrl+]'], ['Move down', 'layerDown', 'Ctrl+['], ['Merge down / merge group', 'layerMergeDown', 'Ctrl+E'], '-',
@@ -5174,7 +5190,7 @@ const MENUS = [
     ['Add layer mask (reveal all)', 'addMask'], ['Add mask from selection', 'addMaskFromSelection'], ['Edit mask / pixels', 'editMaskToggle', '\\'],
     ['Enable / disable mask', 'toggleMask'], ['Invert mask', 'invertMask'], ['Apply mask', 'applyMask'], ['Delete mask', 'deleteMask']]],
   ['Adjust', [['Brightness / contrast…', 'brightnessContrast', 'Ctrl+B'], ['Hue / saturation / lightness…', 'hueSaturation', 'Ctrl+U'],
-    ['Exposure…', 'exposure'], ['Levels…', 'levels', 'Ctrl+L'], ['Curves…', 'curves', 'Ctrl+M'], ['White balance (temperature / tint)…', 'whiteBalance'], ['Auto levels', 'autoLevels'], '-',
+    ['Exposure…', 'exposure'], ['Levels…', 'levels', 'Ctrl+L'], ['Curves…', 'curves', 'Ctrl+M'], ['White balance (temperature / tint)…', 'whiteBalance'], ['Vibrance…', 'vibrance'], ['Shadows / highlights…', 'shadowsHighlights'], ['Color balance…', 'colorBalance'], ['Auto levels', 'autoLevels'], '-',
     ['Auto enhance (adds editable layers)', 'autoEnhance'], ['Auto white balance (adds a layer)', 'autoWhiteBalance'], ['White balance picker', 'wbPicker'], '-',
     ['Invert', 'invert', 'Ctrl+I'], ['Grayscale', 'grayscale', 'Ctrl+Shift+U'], ['Sepia tone…', 'sepia']]],
   ['Filter', [['Convert to live layer', 'convertSmart'], '-', ['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
@@ -5670,6 +5686,23 @@ const ADJ = {
   noise: { title: 'Add noise', params: [
     { key: 'amount', label: 'Amount', min: 0, max: 100, value: 12, unit: '%' },
     { key: 'monochrome', label: 'Monochrome', type: 'checkbox', value: true }], op: 'noise', extra: { seed: 1234 } },
+  // v1.34 (persona finding 10): non-AI tone and colour tools, as direct adjustments and adjustment layers (16-bit too)
+  vibrance: { title: 'Vibrance', note: 'Vibrance boosts muted colours most and holds back on skin tones and colours that are already strong. Saturation changes all colours evenly.', params: [
+    { key: 'vibrance', label: 'Vibrance', min: -100, max: 100, value: 0 },
+    { key: 'saturation', label: 'Saturation', min: -100, max: 100, value: 0 }], op: 'vibrance' },
+  shadowsHighlights: { title: 'Shadows / highlights', note: 'Amount: how much to lift shadows / recover highlights. Tone range: how far into the midtones it reaches. Radius: the size of the area each pixel is compared with (larger = more local contrast kept).', params: [
+    { key: 'shAmount', label: 'Shadows: amount', min: 0, max: 100, value: 35, unit: '%' },
+    { key: 'shTone', label: 'Shadows: tone range', min: 0, max: 100, value: 50, unit: '%' },
+    { key: 'shRadius', label: 'Shadows: radius', min: 0, max: 250, value: 30, unit: 'px' },
+    { key: 'hlAmount', label: 'Highlights: amount', min: 0, max: 100, value: 0, unit: '%' },
+    { key: 'hlTone', label: 'Highlights: tone range', min: 0, max: 100, value: 50, unit: '%' },
+    { key: 'hlRadius', label: 'Highlights: radius', min: 0, max: 250, value: 30, unit: 'px' }], op: 'shadowsHighlights' },
+  colorBalance: { title: 'Color balance', note: 'Shift the colour of the shadows, midtones and highlights separately. Preserve luminosity keeps the brightness unchanged.', params: [
+    ...[['s', 'Shadows'], ['m', 'Midtones'], ['h', 'Highlights']].flatMap(([k, n]) => [
+      { key: `${k}CR`, label: `${n}: cyan ↔ red`, min: -100, max: 100, value: 0 },
+      { key: `${k}MG`, label: `${n}: magenta ↔ green`, min: -100, max: 100, value: 0 },
+      { key: `${k}YB`, label: `${n}: yellow ↔ blue`, min: -100, max: 100, value: 0 }]),
+    { key: 'preserve', label: 'Preserve luminosity', type: 'checkbox', value: true }], op: 'colorBalance' },
   vignette: { title: 'Vignette', params: [
     { key: 'amount', label: 'Amount', min: -100, max: 100, value: 50 },
     { key: 'size', label: 'Clear centre', min: 0, max: 100, value: 45, unit: '%' },
@@ -5684,6 +5717,7 @@ function setBusy(delta) {
   state.busy = Math.max(0, state.busy + delta);
   document.body.classList.toggle('busy', state.busy > 0);
   if (state.busy > 0) status('Processing…');
+  else if ($('#status').textContent === 'Processing…') status(history.entries[history.index]?.label || 'Ready'); // v1.34: never leave "Processing…" behind
 }
 /** Selection mask for a layer-space region, or null when nothing is selected. */
 function regionMask(l, r) {
@@ -5745,12 +5779,14 @@ function openAdjust(def, presetValues = {}) {
   };
   const preview = () => { dirty = true; if (!running) pump(); };
   const body = document.createElement('div');
+  if (def.note) body.insertAdjacentHTML('beforeend', `<p class="muted adj-note">${def.note}</p>`);
   if (def.histogram) {
     const hc = document.createElement('canvas'); hc.width = 300; hc.height = 70; hc.style.cssText = 'width:100%;height:70px;background:#16171b;border-radius:4px';
     drawHistogram(hc, histogram(original)); body.append(hc);
   }
   if (def.curves) { Object.assign(values, identityCurves()); body.append(createCurvesEditor(values, preview, channelHistograms(original))); }
   for (const p of def.params) body.append(paramField({ ...p, value: values[p.key] }, values, preview, p.value));
+  if (def.op === 'colorBalance') colorBalanceTabs(body);
   showModal({
     title: def.title, body, preview: true, passive: true,
     onPreviewToggle: preview,
@@ -5885,6 +5921,21 @@ function openFeatherDialog() {
       } finally { setBusy(-1); status(`Feathered selection by ${radius}px`); }
     },
   });
+}
+/** v1.34: Color balance shows one tone range at a time (Shadows / Midtones / Highlights tabs over three sliders),
+ * instead of nine stacked sliders; every field stays in the form, the other tones' rows are just hidden. */
+function colorBalanceTabs(body) {
+  const rows = [...body.querySelectorAll('input.pf-num')].map((n) => [n.dataset.numKey, n.closest('.field')]).filter(([k]) => /^[smh](CR|MG|YB)$/.test(k));
+  const seg = document.createElement('div'); seg.className = 'seg cb-tones'; seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Tone range');
+  const names = { s: 'Shadows', m: 'Midtones', h: 'Highlights' };
+  const show = (t) => {
+    for (const [k, row] of rows) row.classList.toggle('hidden', k[0] !== t);
+    seg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.cbtone === t); b.setAttribute('aria-pressed', String(b.dataset.cbtone === t)); });
+  };
+  for (const t of ['s', 'm', 'h']) { const b = document.createElement('button'); b.type = 'button'; b.dataset.cbtone = t; b.textContent = names[t]; b.addEventListener('click', () => show(t)); seg.append(b); }
+  for (const [, row] of rows) { const sp = row.querySelector('span'); if (sp) sp.textContent = sp.textContent.replace(/^\w+: /, '').replace(/^./, (c) => c.toUpperCase()); }
+  rows[0]?.[1].before(seg);
+  show('m');
 }
 function paramField(p, values, onChange, defaultValue) {
   const row = document.createElement('label'); row.className = 'field';
@@ -7631,12 +7682,27 @@ function markSaved(entry = history.entries[history.index]) {
 // ---------------------------------------------------------------------------
 // Autosave (IndexedDB) and crash recovery
 // ---------------------------------------------------------------------------
-const AUTOSAVE_DELAY = 1500;
+// v1.34 (persona finding 13): a shorter debounce, PNG encodes of the newest step start right away (so they are
+// usually finished when the tab closes), and a synchronous flush on pagehide / visibilitychange(hidden).
+const AUTOSAVE_DELAY = 700;
 let autosaveTimer = null, autosaveRunning = null, autosaveWarned = false, lastAutosave = 0;
 let cleanEntry = null, writtenEntry = null; // history entries that are saved to a file / already autosaved
 function scheduleAutosave() {
   if (!doc() || recoveryPending || history.entries[history.index] === writtenEntry) return;
   clearTimeout(autosaveTimer); autosaveTimer = setTimeout(autosaveNow, AUTOSAVE_DELAY);
+  stageEncodes();
+}
+/** Start encoding the current step's images now (cheap when they are already encoded: one encode per canvas). */
+function stageEncodes() {
+  const e = history.entries[history.index]; if (!e) return;
+  for (const l of e.snap.layers) {
+    try {
+      if (l.canvas) imageRef(l.canvas).encode().catch(() => {});
+      if (l.mask?.canvas) imageRef(l.mask.canvas).encode().catch(() => {});
+      if (l.kind === 'smart' && l.source) imageRef(l.source).encode().catch(() => {});
+      if (l.fmask?.canvas) imageRef(l.fmask.canvas).encode().catch(() => {});
+    } catch { /* staging is best effort */ }
+  }
 }
 const AUTOSAVE_STEPS = 20; // undo steps kept in each autosave
 const AUTOSAVE_DEEP_PX = IS_IOS ? 4e6 : 8e6; // max 16-bit pixels autosaved (current step only)
@@ -7646,17 +7712,19 @@ const newSlot = () => `doc-${Date.now().toString(36)}-${Math.random().toString(3
  * Autosave record v2: the last AUTOSAVE_STEPS history entries with every canvas stored once
  * (history canvases are immutable and shared between entries, so each image is encoded and written once).
  */
-function encodeHistory(d, dirty, hist = history) {
-  const images = new Map(), ref = (c) => { const r = imageRef(c); images.set(r.id, r.encode); return r.id; };
-  const dref = (dd) => { const r = deepRef(dd); images.set(r.id, r.encode); return r.id; };
-  const rref = (b) => { const r = rawRef(b); images.set(r.id, r.encode); return r.id; };
+function encodeHistory(d, dirty, hist = history, { sync = false, steps = AUTOSAVE_STEPS } = {}) {
+  // sync (v1.34 unload flush): `images` maps id -> { ready, raw } instead of an encoder; 16-bit data and RAW
+  // source files are only included when their encode already finished (otherwise recovery gets the 8-bit copy)
+  const images = new Map(), ref = (c) => { const r = imageRef(c); images.set(r.id, sync ? r : r.encode); return r.id; };
+  const dref = (dd) => { const r = deepRef(dd); images.set(r.id, sync ? r : r.encode); return r.id; };
+  const rref = (b) => { const r = rawRef(b); if (sync && !r.ready()) return null; images.set(r.id, sync ? r : r.encode); return r.id; };
   const n = hist.entries.length;
   // 16-bit data is autosaved for the current step only, and only up to a size cap (it is 8 bytes/pixel)
   const curSnap = hist.entries[hist.index].snap;
   let deepPx = 0; for (const l of curSnap.layers) if (l.deep) deepPx += l.deep.width * l.deep.height;
-  const deepOk = curSnap.depth === 16 && deepPx <= AUTOSAVE_DEEP_PX;
-  if (curSnap.depth === 16 && !deepOk) gpuNotice('autosave-deep', 'This 16-bit document is too large for 16-bit autosave; crash recovery keeps an 8-bit copy. Save the project to keep 16-bit data.');
-  const start = Math.max(0, Math.min(hist.index, n - AUTOSAVE_STEPS)), end = Math.min(n, start + AUTOSAVE_STEPS);
+  const deepOk = curSnap.depth === 16 && deepPx <= AUTOSAVE_DEEP_PX && (!sync || curSnap.layers.every((l) => !l.deep || deepRef(l.deep).ready()));
+  if (curSnap.depth === 16 && !deepOk && !sync) gpuNotice('autosave-deep', 'This 16-bit document is too large for 16-bit autosave; crash recovery keeps an 8-bit copy. Save the project to keep 16-bit data.');
+  const start = Math.max(0, Math.min(hist.index, n - steps), hist.index - steps + 1), end = Math.min(n, start + steps);
   const entries = hist.entries.slice(start, end).map((e) => {
     const sn = e.snap;
     return {
@@ -7705,9 +7773,26 @@ async function autosaveNow() {
   })();
   try { await autosaveRunning; } finally { autosaveRunning = null; }
 }
-// flush a pending save when the tab is hidden or closed (best effort)
-addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && autosaveTimer) autosaveNow(); });
-addEventListener('pagehide', () => { if (autosaveTimer) autosaveNow(); });
+// v1.34: flush when the tab is hidden or closed. The normal write awaits PNG encodes, and a closing page does
+// not get those turns of its event loop, so edits from the last ~1.5 s were lost. The flush builds the record
+// and issues the IndexedDB writes synchronously inside the event (finished PNGs, else raw pixels), then commits.
+let flushedEntry = null;
+function autosaveFlushSync(reason) {
+  const d = doc(); if (!d || recoveryPending || history.index < 0) return false;
+  const entry = history.entries[history.index];
+  if (entry === writtenEntry || entry === flushedEntry) return false;
+  const hist = { entries: history.entries.slice(), index: history.index }, dirty = entry !== cleanEntry;
+  for (const steps of [AUTOSAVE_STEPS, 1]) { // the whole recent history if it fits the byte budget, else just the current step
+    let rec; try { rec = encodeHistory(d, dirty, hist, { sync: true, steps }); } catch { return false; }
+    const bytes = writeAutosaveSync(rec.record, rec.images, { onDone: (ok) => { if (ok && doc() === d && history.entries[history.index] === entry) writtenEntry = entry; } });
+    if (bytes >= 0) { flushedEntry = entry; clearTimeout(autosaveTimer); autosaveTimer = null; lastFlush = { reason, bytes, steps, at: Date.now() }; return true; }
+  }
+  return false;
+}
+let lastFlush = null;
+addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { if (!autosaveFlushSync('hidden') && autosaveTimer) autosaveNow(); } });
+addEventListener('pagehide', () => { if (!autosaveFlushSync('pagehide') && autosaveTimer) autosaveNow(); });
+warmAutosave();
 
 let recoveryPending = false;
 async function restoreAutosave(r) {
@@ -7720,6 +7805,7 @@ async function restoreAutosave(r) {
     c.getContext('2d').drawImage(img, 0, 0); img.close?.();
     adoptImage(c, id); canv.set(id, c); // re-saving this session reuses the stored bytes
   }
+  noteStored(r.slot, [...bufs.keys()]);
   const get = (id) => { const c = canv.get(id); if (!c) throw new Error(`Missing image ${id}`); return c; };
   const sels = new Map(), selOf = (id, W, H) => {
     if (!id) return null;
@@ -8738,10 +8824,26 @@ function updateFloatActions() {
 }
 phoneLayout.addEventListener?.('change', () => { updateFloatActions(); updateToolMore(); });
 // v1.33: a "more tools" cue when the tool column is taller than the window (1366×768: six tools were below the fold)
+// v1.34: on desktop the column switches to two columns when one column would not fit (1366×768 had six tools
+// below the fold, 1920×1080 one), so every tool is visible without scrolling; the ▾ cue stays as a fallback.
+const desktopLayout = matchMedia('(min-width: 821px) and (min-height: 501px)');
+function updateToolCols() {
+  const tb = $('#toolbar'), body = document.body, was = body.classList.contains('tools-2col');
+  if (!desktopLayout.matches) { if (was) { body.classList.remove('tools-2col'); requestRender(); } return; }
+  body.classList.remove('tools-2col'); document.getElementById('toolMore')?.classList.remove('show');
+  const need = tb.scrollHeight - tb.clientHeight > 2;
+  body.classList.toggle('tools-2col', need);
+  if (need !== was) requestRender();
+}
 function updateToolMore() {
+  updateToolCols();
   const tb = $('#toolbar'); let m = document.getElementById('toolMore');
   if (!m) { m = document.createElement('div'); m.id = 'toolMore'; m.textContent = '▾'; m.title = 'More tools below (click or scroll the tool column)'; m.setAttribute('aria-hidden', 'true'); // mouse cue; keyboard users Tab through the tools
-    m.addEventListener('click', () => tb.scrollBy({ top: tb.clientHeight * 0.8, behavior: 'smooth' })); tb.append(m); tb.addEventListener('scroll', updateToolMore, { passive: true }); }
+    m.addEventListener('click', () => tb.scrollBy({ top: tb.clientHeight * 0.8, behavior: 'smooth' })); tb.append(m); tb.addEventListener('scroll', updateToolCue, { passive: true }); }
+  updateToolCue();
+}
+function updateToolCue() {
+  const tb = $('#toolbar'), m = document.getElementById('toolMore'); if (!m) return;
   const more = tb.scrollHeight - tb.clientHeight - tb.scrollTop > 4;
   m.classList.toggle('show', more); tb.classList.toggle('more-below', more);
 }
@@ -9885,7 +9987,7 @@ window.tintwork = {
   mods, setMod, openSheet, closeSheet, toast, MAX_PIXELS, IS_IOS, fitPixels, renderExport,
   /** true once the current state is in IndexedDB and nothing is waiting to be written */
   get autosaveSettled() { return !autosaveTimer && !autosaveRunning && writtenEntry === history.entries[history.index]; },
-  autosaveNow, readAutosave, clearAutosave, listAutosaves, checkRecovery, restoreAutosave,
+  autosaveNow, autosaveFlushSync, get lastFlush() { return lastFlush; }, readAutosave, clearAutosave, listAutosaves, checkRecovery, restoreAutosave,
   startTransform, applyTransform, cancelTransform, get xf() { return state.xf; }, previewTransform, xfMatrix,
   convertToSmart, setSmartFilters, updateSmart, openSmartFilterDialog, openLiveFilterPanel, composeSmart, filteredSync, addFilterMask,
   openColorRangeDialog, openRefineDialog, colorRangeMask, bakeAdjustment, BUNDLED_FONTS, fontReady, loadFont, AUTOSAVE_STEPS, MAX_SLOTS, newAdjustmentLayer, editLayer, adjCache, rasterize, renderTextLayer, textLayerAt, undo, redo, closeModal, mergeDown,

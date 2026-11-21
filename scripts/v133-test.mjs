@@ -64,9 +64,9 @@ const browser = await chromium.launch();
 let page = await freshPage(browser, { viewport: { width: 1366, height: 768 } }, 'desktop');
 {
   const ver = await T(page, () => window.tintwork.APP_VERSION);
-  check(ver === '1.33.0', `APP_VERSION is 1.33.0 (${ver})`);
-  if (!process.env.TW_URL) { const m = readFileSync(path.join(ROOT, 'sw.js'), 'utf8').match(/tintwork-shell-v([\d.]+)/); check(m?.[1] === '1.33.0', `SW CACHE is 1.33.0 (${m?.[1]})`); }
-  else { const r = await page.request.get(`${BASE}sw.js`); const m = (await r.text()).match(/tintwork-shell-v([\d.]+)/); check(m?.[1] === '1.33.0', `live SW CACHE is 1.33.0 (${m?.[1]})`); }
+  check((ver === '1.33.0' || ver === '1.34.0'), `APP_VERSION is 1.33.0 (${ver})`);
+  if (!process.env.TW_URL) { const m = readFileSync(path.join(ROOT, 'sw.js'), 'utf8').match(/tintwork-shell-v([\d.]+)/); check((m?.[1] === '1.33.0' || m?.[1] === '1.34.0'), `SW CACHE is 1.33.0 (${m?.[1]})`); }
+  else { const r = await page.request.get(`${BASE}sw.js`); const m = (await r.text()).match(/tintwork-shell-v([\d.]+)/); check((m?.[1] === '1.33.0' || m?.[1] === '1.34.0'), `live SW CACHE is 1.33.0 (${m?.[1]})`); }
 }
 // ---- B: static semantics -----------------------------------------------------------------------------------
 {
@@ -171,10 +171,15 @@ let page = await freshPage(browser, { viewport: { width: 1366, height: 768 } }, 
   const hp = await T(page, () => { const p = document.querySelector('#historyPanel').getBoundingClientRect(); const li = document.querySelector('#historyList li').getBoundingClientRect(); const list = document.querySelector('#historyList').getBoundingClientRect(); return { h: Math.round(p.height), rows: Math.floor(list.height / li.height) || Math.floor((p.height - 30) / li.height), bottom: p.bottom <= innerHeight }; });
   check(hp.h >= 120 && hp.bottom, `History panel at 1366×768 is ${hp.h} px tall (was ~62 px, 2 rows), fully on screen`);
   const tm = await T(page, () => { const m = document.querySelector('#toolMore'); const tb = document.querySelector('#toolbar'); return { show: m?.classList.contains('show'), vis: !!m && m.getBoundingClientRect().height > 0 && m.getBoundingClientRect().bottom <= innerHeight, more: tb.scrollHeight > tb.clientHeight }; });
-  check(tm.more && tm.show && tm.vis, `1366×768: tool column overflows and shows the "more tools" cue (${JSON.stringify(tm)})`);
-  await page.click('#toolMore'); await page.waitForTimeout(600);
-  const after = await T(page, () => { const tb = document.querySelector('#toolbar'); const z = document.querySelector('#toolbar button[data-tool="zoom"]').getBoundingClientRect(); return { top: tb.scrollTop, zoomVisible: z.bottom <= tb.getBoundingClientRect().bottom + 1 && z.top >= 0 }; });
-  check(after.top > 0 && after.zoomVisible, `clicking the cue scrolls the column; the Zoom tool comes into view (scrollTop ${after.top})`);
+  // v1.34 changed this layout: the column turns into two columns, so nothing is below the fold and no cue is needed.
+  // Either outcome passes: the v1.33 cue (overflow + cue), or (v1.34+) no overflow at all with every tool on screen.
+  const fits = await T(page, () => { const tb = document.querySelector('#toolbar'); return tb.scrollHeight <= tb.clientHeight + 2 && [...tb.querySelectorAll('button[data-tool]')].every((b) => b.getBoundingClientRect().bottom <= tb.getBoundingClientRect().bottom + 1); });
+  check((tm.more && tm.show && tm.vis) || (fits && !tm.show), `1366×768: tool column overflows and shows the "more tools" cue, or (v1.34+) every tool fits (${JSON.stringify({ ...tm, fits })})`);
+  if (!fits) {
+    await page.click('#toolMore'); await page.waitForTimeout(600);
+    const after = await T(page, () => { const tb = document.querySelector('#toolbar'); const z = document.querySelector('#toolbar button[data-tool="zoom"]').getBoundingClientRect(); return { top: tb.scrollTop, zoomVisible: z.bottom <= tb.getBoundingClientRect().bottom + 1 && z.top >= 0 }; });
+    check(after.top > 0 && after.zoomVisible, `clicking the cue scrolls the column; the Zoom tool comes into view (scrollTop ${after.top})`);
+  } else check(true, 'v1.34+: no cue to click; the Zoom tool is on screen without scrolling');
   await page.setViewportSize({ width: 1920, height: 1080 }); await page.waitForTimeout(250);
   const big = await T(page, () => ({ h: Math.round(document.querySelector('#historyPanel').getBoundingClientRect().height), show: document.querySelector('#toolMore').classList.contains('show') }));
   check(big.h >= 120 && !big.show, `1920×1080: History ${big.h} px; no cue when every tool fits (${big.show})`);

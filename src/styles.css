@@ -490,3 +490,17 @@ table.variants td { padding: 2px 3px; }
 .doc-tab .tab-name { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; min-height: 0; cursor: pointer; }
 .doc-tab .tab-name:hover { background: none; }
 @media (max-width: 820px), (max-height: 500px) { body.float-on #modkeys { bottom: 66px; } }
+/* v1.34 (persona finding 11): on desktop windows the options bar wraps onto a second row instead of hiding
+   controls off its right edge, and the tool column becomes two columns when one would not fit the height */
+@media (min-width: 821px) and (min-height: 501px) {
+  body { grid-template-rows: 34px minmax(40px, auto) minmax(0, 1fr) 24px; }
+  #optionsbar { flex-wrap: wrap; white-space: normal; overflow-x: visible; row-gap: 4px; column-gap: 12px; padding-top: 4px; padding-bottom: 4px; min-height: 40px; box-sizing: border-box; align-content: center; }
+  #optionsbar > * { white-space: nowrap; }
+  #optionsbar > .muted { white-space: normal; flex-shrink: 1; min-width: 180px; }
+  body.tools-2col #workspace { grid-template-columns: 84px 1fr 280px; }
+  body.tools-2col #toolbar { flex-direction: row; flex-wrap: wrap; justify-content: center; align-content: flex-start; padding: 8px 4px; gap: 2px; }
+  body.tools-2col #toolbar button { height: 36px; }
+  body.tools-2col #toolbar .sep { flex-basis: 100%; width: auto; margin: 4px 6px; }
+}
+.adj-note { margin: 0 0 8px; max-width: 360px; font-size: 12px; line-height: 1.4; }
+.cb-tones { display: inline-flex; margin: 0 0 10px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; } .cb-tones button { border: none; border-radius: 0; padding: 4px 12px; } .cb-tones button + button { border-left: 1px solid var(--line); } .cb-tones button.on { background: var(--accent-strong); color: #fff; }
