@@ -131,3 +131,80 @@ export function colorBalanceData(d, max, p = {}) {
     put(d, i, R, max, round); put(d, i + 1, G, max, round); put(d, i + 2, B, max, round);
   }
 }
+
+// ---- v1.35: Smooth skin (persona finding 10) -----------------------------------------------------------------
+// An edge-preserving blur (a self-guided filter: in every window the output is a·I + b, fitted by least squares,
+// with a → 0 where the local variance is small next to the threshold² and a → 1 across real edges), followed by a
+// fine-texture add-back (the pixel minus a 1.5 px blur of itself) so pores and fine hair survive, then mixed with
+// the original by Strength. Only window means are used (running box sums), so the cost does not depend on the
+// radius. The image is processed in horizontal strips with 2 × radius of padding, which gives exactly the same
+// result as one pass over the whole image while keeping memory to a few strips' worth of float planes.
+export const SKIN_DEFAULTS = { strength: 70, radius: 12, threshold: 25, detail: 40 };
+/** Box mean of a float plane (clamped edges), radius r ≥ 1 in whole pixels. src is not modified. */
+function boxMean(src, w, h, r, tmp, out) {
+  const inv = 1 / (2 * r + 1);
+  for (let y = 0; y < h; y++) {
+    const o = y * w; let acc = 0;
+    for (let k = -r; k <= r; k++) acc += src[o + (k < 0 ? 0 : k >= w ? w - 1 : k)];
+    for (let x = 0; x < w; x++) {
+      tmp[o + x] = acc * inv;
+      const a = x + r + 1, b = x - r;
+      acc += src[o + (a >= w ? w - 1 : a)] - src[o + (b < 0 ? 0 : b)];
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let k = -r; k <= r; k++) acc += tmp[(k < 0 ? 0 : k >= h ? h - 1 : k) * w + x];
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = acc * inv;
+      const a = y + r + 1, b = y - r;
+      acc += tmp[(a >= h ? h - 1 : a) * w + x] - tmp[(b < 0 ? 0 : b) * w + x];
+    }
+  }
+  return out;
+}
+/**
+ * Smooth skin, in place on straight-alpha RGBA data with channel maximum `max`.
+ * strength 0..100 (mix with the original), radius px (window size), threshold 0..100 (how strong an edge must be
+ * to be kept), detail 0..100 (how much fine texture is put back). `scale` shrinks the radius for reduced previews.
+ */
+export function skinSmoothData(d, w, h, max, p = {}, scale = 1) {
+  const q = { ...SKIN_DEFAULTS, ...p };
+  const s = Math.max(0, Math.min(1, q.strength / 100)), det = Math.max(0, Math.min(1, q.detail / 100));
+  const r = Math.max(1, Math.round(q.radius * scale));
+  if (s <= 0 || w < 2 || h < 2) return;
+  const sig = Math.max(0.002, (q.threshold / 100) * 0.3), eps = sig * sig;
+  const dr = 1.5 * Math.min(1, scale), round = max > 255, invMax = 1 / max;
+  const pad = 2 * r + 6;
+  const core = Math.max(pad, q._core || Math.min(h, Math.floor(1_500_000 / w) - 2 * pad, 2048)); // _core: tests only
+  let pending = null; // delayed write: a strip is written back only after the next strip has read its padding
+  const flush = () => { if (pending) { d.set(pending.out, pending.at); pending = null; } };
+  for (let c0 = 0; c0 < h; c0 += core) {
+    const c1 = Math.min(h, c0 + core), y0 = Math.max(0, c0 - pad), y1 = Math.min(h, c1 + pad), sh = y1 - y0, n = w * sh;
+    const I = new Float32Array(n), mI = new Float32Array(n), mII = new Float32Array(n), tmp = new Float32Array(n), A = new Float32Array(n), B = new Float32Array(n);
+    const out = round ? new Uint16Array((c1 - c0) * w * 4) : new Uint8ClampedArray((c1 - c0) * w * 4);
+    out.set(d.subarray(c0 * w * 4, c1 * w * 4));
+    for (let ch = 0; ch < 3; ch++) {
+      for (let j = 0, i = y0 * w * 4 + ch; j < n; j++, i += 4) I[j] = d[i] * invMax;
+      boxMean(I, w, sh, r, tmp, mI);
+      for (let j = 0; j < n; j++) A[j] = I[j] * I[j];
+      boxMean(A, w, sh, r, tmp, mII);
+      for (let j = 0; j < n; j++) { const m = mI[j], v = Math.max(0, mII[j] - m * m), a = v / (v + eps); A[j] = a; B[j] = m - a * m; }
+      boxMean(A, w, sh, r, tmp, mI); boxMean(B, w, sh, r, tmp, mII); // mI = mean a, mII = mean b
+      const fine = det > 0 ? blurPlane(I, w, sh, dr) : null;
+      for (let y = c0; y < c1; y++) {
+        const ro = (y - y0) * w, oo = (y - c0) * w * 4;
+        for (let x = 0; x < w; x++) {
+          const j = ro + x, o = oo + x * 4 + ch;
+          if (out[oo + x * 4 + 3] === 0) continue;
+          const v = I[j], sm = mI[j] * v + mII[j];
+          const t = fine ? sm + det * (v - fine[j]) : sm;
+          let u = (v + s * (t - v)) * max; u = u < 0 ? 0 : u > max ? max : u;
+          out[o] = round ? Math.round(u) : u;
+        }
+      }
+    }
+    flush(); pending = { out, at: c0 * w * 4 };
+  }
+  flush();
+}

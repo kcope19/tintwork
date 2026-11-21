@@ -1,4 +1,4 @@
-# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.34.0)
+# Tintwork self-audit (v1.6.0 → v1.7.0, updated through v1.35.0)
 
 Date: 2026-11-02 (America/New_York). Target: the live site https://kcope19.github.io/tintwork/ (GitHub Pages).
 Method: scripted Playwright runs on a Linux box (Chromium 1280×800 with `?platform=win`, plus WebKit iPhone 13
@@ -9,6 +9,56 @@ it fails there (4 of 27 checks pass on v1.6, and those 4 are guards that should 
 
 Scripts: `npm run bench:workflows`, `npm run audit:site`, `npm run audit:math`, `npm run audit:safety`. Raw results are in
 [docs/audit/](audit/). The workflow scorecard is in [WORKFLOW_BENCHMARK.md](WORKFLOW_BENCHMARK.md).
+
+## v1.35.0 update (2026-11-21, America/New_York)
+
+This covers more of finding #10 from the persona test ([audit/persona-test-v131.md](audit/persona-test-v131.md)): history snapshots with a history brush, and skin smoothing without AI. It also checks that the v1.34 adjustments work in Actions and Batch. No AI was used. No straightening math changed, and no gate was loosened.
+
+**A. History snapshots.** Snapshots belong to the document, so each tab has its own list. Each one holds frozen, shallow copies of the layer list. Canvases are immutable and shared, so a snapshot costs almost nothing until the layers change. The copies are taken before the 16-bit purge of old history steps, so that purge cannot reach them. An **Original** snapshot is made automatically when a document opens ("New canvas" for a blank one).
+
+- **Create:** the ＋ Snapshot button, Edit ▸ New snapshot / New snapshot (named)…, or a history row's context menu ("New snapshot from this step").
+- **Other actions:** restore (one undo step, "Restore snapshot “name”", refused during a free transform), rename (modal dialog), delete, and "use as History brush source".
+- **Keyboard:** the snapshot list uses the v1.33 roving-row pattern. Arrow keys / Home / End move between rows, Enter restores, F2 renames, Delete deletes, B sets the source, and Shift+F10 or the Menu key opens the context menu.
+- **Saving:** the autosave record stores `snapshots` and `histSrc` through the same image encoder as history steps. Project files go to format 9 with a `snapshots` array. A snapshot image that equals a document layer's image is written as a reference, not a second copy. Each layer gets a `uid`, so snapshot layers pair up with the document's layers again on load. Version 8 projects and older autosaves still open; they get only an "Original" snapshot.
+- **Limits:**
+  - Snapshots are 8-bit, with no 16-bit data and no RAW source.
+  - Making a snapshot does not mark the document unsaved.
+
+**B. History brush (Y).** It is the normal paint stroke engine with a source canvas. The stroke mask is built as usual (size, hardness, smoothing), then the layer is blended toward the snapshot's pixels for the same layer by cover × opacity (`destination-out` then `lighter`, an exact lerp, alpha included).
+
+- **Refusals, each with a status message:** no snapshot is chosen; the snapshot's canvas size differs (after a crop or resize); the current layer did not exist in that snapshot.
+- **Not done:** painting into masks, and painting from a single history step rather than a snapshot. Use "New snapshot from this step" first.
+
+**C. Smooth skin.** This is `skinSmoothData` in `src/tone.js`, shared by the 8-bit and 16-bit paths:
+
+- **Filter:** a self-guided filter (box means over radius r; ε = (threshold/100 · 0.3)²) smooths flat areas and keeps edges whose contrast is well above the threshold. Then fine texture (pixel minus a 1.5 px blur) is added back × Detail, and the result is mixed with the original by Strength.
+- **Processing:** large images are processed in strips, padded by 2r+6 with write-back delayed. The test confirms this matches the one-pass result exactly.
+- **Where it is:** Filter ▸ Smooth skin (whole layer / selection), and an adjustment layer (Filter ▸ Smooth skin layer…, or Layer ▸ New adjustment layer). With no selection the layer starts with a black mask, selects the mask, and switches to the Brush with white foreground. That makes two steps (add the layer, paint), where the v1.34 workaround took six. With a selection, the mask is the selection.
+- **Measured on synthetic tests (`v135-test`):**
+  - Noise σ goes from 7.0 to 0.8 at default settings, and a 140-level edge keeps 131.
+  - Detail 100 keeps σ 7.4.
+  - Strength 50 gives 3.9.
+  - On a real portrait, local cheek texture goes from 2.14 to 1.34.
+  - It works in 16-bit documents (checked: the layer changes the cheek; 8-bit vs 16-bit precision was not compared).
+  - 12 MP takes about 3.0 s on this box's CPU (worker).
+- **Not done:**
+  - A GPU shader: the layer composites on the CPU, like the v1.34 layers.
+  - PSD export: the layer is left out of the PSD's layers with the "no PSD equivalent" note; the composite keeps it.
+  - Classic frequency separation as two layers: Tintwork has no Linear Light blend mode, and adding one across the CPU, GPU, 16-bit and PSD paths was too risky for this release.
+
+**D. Actions and Batch.** v1.34 said these adjustments were "recorded into Actions by the same code path … not separately tested". `v135-test` now records an action with Vibrance, Shadows / highlights and Color balance, each direct and as an adjustment layer, plus Smooth skin (direct and layer). Each one was recorded with the values typed. Replaying on a fresh copy of the photo matches the hand-made result, and a Batch run with PNG output matches too (max difference 0 levels in both, in the local run; the test allows ≤1 and ≤2). Nothing needed fixing. The only addition is that the recorded Smooth skin layer step keeps its "black mask" flag, shown as "(black mask)" in the action list.
+
+**E. Accessibility fix.** axe flagged the highlighted item in every context menu: white on the accent colour was 3.6:1. Hover and focus now use the darker accent, and axe no longer flags it.
+
+**Regression:** Suggest on the 21-photo set was re-measured on v1.35 ([audit/workflows-v135-after.json](audit/workflows-v135-after.json), `scripts/_v135-after.mjs`). The results match v1.34 on all 21 photos (0 differences). The c4 Full ≤0.5° pin passes (in `npm test`). axe-core: 0 serious / critical with the snapshot context menu open, with keyboard focus in the snapshot list, and with the Smooth skin layer dialog open.
+
+**Tests:** `v135-test` 54/54; `npm test` 1579 checks, 0 failures (WebKit included; about 23 minutes). **Test-change disclosure:**
+- `v135-test` is new.
+- The version pins of v112–v134 and v1341 accept 1.35.0.
+- `v14-test`'s RAW-link project check accepted only format 8. It now accepts 8 or later, still requiring the link and no embedded RAW copy.
+- Nothing else in the older tests changed.
+
+**Not built (out of scope for this release):** pen / paths, a channels panel, content-aware fill.
 
 ## v1.34.1 update (2026-11-21, America/New_York)
 

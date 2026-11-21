@@ -8,6 +8,26 @@ features, and re-scores jobs 3, 4 and 10 on them. Jobs 1–12 are unchanged from
 **Before** = the live site at v1.7.0, 3 runs (2026-11-03, about 1–2 AM America/New_York). **After** = the live site at
 v1.8.0, 3 runs after deploy (2026-11-03, about 2:45–3:30 AM America/New_York): 57 of 63 runs pass; the 6 failures are job 15 (the wand baseline, fails by design) and job 17. Raw results: `docs/audit/workflows-v18-before.json` and `workflows-v18-after.json`. Screenshots now go to `screenshots/18x-wf-NN.png` (two are committed).
 
+## v1.35 scorecard (history snapshots, History brush, Smooth skin; Actions / Batch check)
+
+No AI was used. No straightening math changed and no gate was loosened. Tintwork was measured by `scripts/v135-test.mjs` (Chromium 1366×768 with `?platform=win`). The paid-editor column comes from the leading paid editor's public documentation, read on 2026-11-21 and not re-tested hands-on. The other editors from the v1.34 table were not researched again for this release, so they are left out.
+
+| Job | Leading paid editor (public docs) | Tintwork v1.34 | Tintwork v1.35 | Verdict |
+|---|---|---|---|---|
+| Snapshot made automatically on open | ✅ (default setting) | ❌ | ✅ "Original" | **match** |
+| Create / rename / delete / restore snapshots | ✅ History panel | ❌ | ✅ panel button, Edit menu, right-click a snapshot or a history step; keyboard (F2, Delete, Enter) | **match** |
+| Snapshots kept in the saved file | ❌ (session only) | — | ✅ autosave and project file (8-bit) | **ahead** (8-bit only) |
+| History brush: paint an earlier state back | ✅ 3 steps (set source in History panel, pick tool, paint) | ❌ (use a duplicate layer + mask) | ✅ 2 steps (Y, paint; "Original" is the default source), or 3 with another source | **match** |
+| History brush from any history step (not only snapshots) | ✅ | — | 🟡 make a snapshot from that step first (right-click ▸ New snapshot from this step) | **trails** slightly |
+| History brush on masks / after crop | not checked in the docs | — | ❌ masks; ❌ after a canvas-size change (says why) | **trails** (masks) |
+| Skin smoothing without AI | 🟡 frequency separation by hand: duplicate ×2, blur, Apply Image (subtract, scale 2, offset 128), Linear Light, group, inverted mask, brush: about 10–13 steps; or Surface Blur (radius, threshold) on a layer with a mask | 🟡 6-step workaround (persona test) | ✅ Smooth skin layer: edge-preserving blur with Strength, Radius, Threshold, Detail; starts with a black mask and a white Brush: **2 steps** | **ahead** in steps |
+| Separate low / high frequency layers to retouch by hand | ✅ | ❌ | ❌ (no Linear Light blend mode) | **trails** |
+| Smooth skin speed | ✅ GPU / native | — | 🟡 CPU, 12 MP ≈3.0 s on this box | **trails** |
+| Vibrance, Shadows / highlights, Color balance in Actions and Batch | ✅ | not tested | ✅ recorded with typed values; replay and Batch PNG match the manual edit (max diff 0 levels) | **match** (verified) |
+| Suggest leftovers, 21-photo set | — | as v1.34 | identical (0 differences; [audit/workflows-v135-after.json](audit/workflows-v135-after.json)) | **match** |
+
+Still missing against these editors (persona finding 10): pen and paths, a channels panel, content-aware fill.
+
 ## v1.34 scorecard (Vibrance, Shadows / highlights, Color balance; autosave on close; 1366×768 layout)
 
 No AI; no straightening math changed and no gate loosened. Measured by `scripts/v134-test.mjs` (Chromium 1366×768 and 1920×1080 with `?platform=win`, WebKit iPhone 13 profile). The paid-editor columns come from the products' public documentation and user forums, read on 2026-11-21 (not re-tested hands-on): "leading paid editor" is the best-known subscription layer editor; Affinity Photo 2 and Photopea are named. Product names are used for comparison only.

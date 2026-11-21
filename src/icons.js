@@ -10,6 +10,7 @@ export const ICONS = {
   fill: svg('<path d="M5 11l7-7 7 7-7 7z"/><path d="M5 11h14"/><path d="M20 15s-1.6 2-1.6 3.1a1.6 1.6 0 003.2 0C21.6 17 20 15 20 15z"/>'),
   gradient: svg('<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M7 4.5v15M10.5 4.5v15" stroke-dasharray="1.6 1.6"/><path d="M14 4.5v15" stroke-dasharray="1 2.6"/>'),
   shape: svg('<rect x="3.5" y="10" width="10" height="10" rx="1"/><circle cx="15.5" cy="8.5" r="5"/>'),
+  histbrush: svg('<path d="M20 4l-9.5 9.5"/><path d="M10.5 13.5c-2-.4-4 .9-4.4 3.2-.3 1.6-1.3 2.6-3.1 3 3.4 1.2 7.7.6 8.8-2.2.6-1.6.3-3.1-1.3-4z"/><path d="M3.5 8.5a5 5 0 109.4-2.4"/><path d="M3.2 4.6l.3 3.9 3.8-.6"/>'), // v1.35: brush + undo arrow
   tone: svg('<circle cx="9" cy="9" r="5.5"/><path d="M13 13l7.5 7.5"/><path d="M6.5 9a2.5 2.5 0 012.5-2.5"/>'),
   liquify: svg('<path d="M4 4c4 0 4 4 8 4s4-4 8-4"/><path d="M4 12c4 0 4 4 8 4s4-4 8-4"/><path d="M4 20c3 0 5-2 8-2s5 2 8 2"/>'),
   redeye: svg('<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="3"/><path d="M12 10.5v3M10.5 12h3"/>'),

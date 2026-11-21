@@ -64,9 +64,9 @@ const browser = await chromium.launch();
 let page = await freshPage(browser, { viewport: { width: 1366, height: 768 } }, 'desktop');
 {
   const ver = await T(page, () => window.tintwork.APP_VERSION);
-  check((ver === '1.33.0' || (ver === '1.34.0' || ver === '1.34.1')), `APP_VERSION is 1.33.0 (${ver})`);
-  if (!process.env.TW_URL) { const m = readFileSync(path.join(ROOT, 'sw.js'), 'utf8').match(/tintwork-shell-v([\d.]+)/); check((m?.[1] === '1.33.0' || (m?.[1] === '1.34.0' || m?.[1] === '1.34.1')), `SW CACHE is 1.33.0 (${m?.[1]})`); }
-  else { const r = await page.request.get(`${BASE}sw.js`); const m = (await r.text()).match(/tintwork-shell-v([\d.]+)/); check((m?.[1] === '1.33.0' || (m?.[1] === '1.34.0' || m?.[1] === '1.34.1')), `live SW CACHE is 1.33.0 (${m?.[1]})`); }
+  check((ver === '1.33.0' || (ver === '1.34.0' || ver === '1.34.1' || ver === '1.35.0')), `APP_VERSION is 1.33.0 (${ver})`);
+  if (!process.env.TW_URL) { const m = readFileSync(path.join(ROOT, 'sw.js'), 'utf8').match(/tintwork-shell-v([\d.]+)/); check((m?.[1] === '1.33.0' || (m?.[1] === '1.34.0' || m?.[1] === '1.34.1' || m?.[1] === '1.35.0')), `SW CACHE is 1.33.0 (${m?.[1]})`); }
+  else { const r = await page.request.get(`${BASE}sw.js`); const m = (await r.text()).match(/tintwork-shell-v([\d.]+)/); check((m?.[1] === '1.33.0' || (m?.[1] === '1.34.0' || m?.[1] === '1.34.1' || m?.[1] === '1.35.0')), `live SW CACHE is 1.33.0 (${m?.[1]})`); }
 }
 // ---- B: static semantics -----------------------------------------------------------------------------------
 {

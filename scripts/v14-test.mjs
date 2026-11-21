@@ -277,7 +277,7 @@ const develop = async () => { await page.click('#modalOk'); await page.waitForFu
   check(!st0.dis && st0.v === 'embed' && li.raw.link?.name === 'plain.dng' && li.raw.link.size > 100000 && !li.raw.file && /linked/.test(title), `a RAW file opened from disk can be linked instead of embedded (embed stays the default; layer: “${title}”)`);
   check(await page.evaluate(() => localStorage.getItem('tintwork.rawLink')) === '1', 'the choice is remembered for the next RAW file');
   const proj = await page.evaluate(async () => { const d = await window.tintwork.projectData(); const r = d.layers[0].raw; return { v: d.version, json: JSON.stringify(d), link: r.link, data: !!r.data, len: JSON.stringify(d).length }; });
-  check(proj.v === 8 && proj.link?.id && !proj.data && proj.len < 400000, `project files (version 8) store only the link (${proj.len} bytes, no copy of the RAW file)`);
+  check(proj.v >= 8 && proj.link?.id && !proj.data && proj.len < 400000, `project files (version ${proj.v}) store only the link (${proj.len} bytes, no copy of the RAW file)`);
   const P0 = await pixels(); await redevelop(); await setSlider('exposure', 0.5); await waitPreview(2); await apply(); const P1 = await pixels();
   check(cmp(P0, P1).mean > 5, 're-develop reads the linked file through its handle');
   // reopen the project after the in-memory handles are forgotten: the handle comes back from IndexedDB

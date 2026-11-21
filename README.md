@@ -7,6 +7,18 @@ Tintwork takes general inspiration from what desktop photo editors can do (layer
 adjustments, filters, history) but has its own name, UI, icons and code. It does not use
 any third-party branding, assets or proprietary code.
 
+## What's new in v1.35 (history snapshots, History brush, Smooth skin)
+
+From finding #10 of the 7-persona test of v1.31 ([docs/audit/persona-test-v131.md](docs/audit/persona-test-v131.md)). No AI. No straightening math changed (Suggest on the 21-photo set: 0 differences).
+
+- **History snapshots.** The History panel has a snapshot list above the steps. An **Original** snapshot is made when a photo opens. Use **＋ Snapshot**, Edit ▸ New snapshot, or right-click a history step ▸ "New snapshot from this step". Right-click a snapshot (or use the keyboard) to restore, rename (F2), delete (Delete) or use it as the History brush source (B). Restoring is one undoable step. Snapshots are kept in the autosave and in project files (format 9; images shared with the document are stored once).
+- **History brush** (tool key **Y**). It paints pixels from the chosen snapshot back onto the current layer, with size, hardness, opacity and smoothing. Pick the source from the options bar or the 🖌 button on a snapshot row.
+- **Smooth skin** (Filter ▸ Smooth skin layer…, or Layer ▸ New adjustment layer: Smooth skin). An edge-preserving blur with Strength, Radius, Threshold (how strong an edge it smooths across) and Detail (fine texture kept). As a layer it starts with a black mask and switches to a white Brush on the mask, so you paint it onto the skin. That is 2 steps, where v1.34 needed a 6-step workaround. A direct version (whole layer or selection) is in the Filter menu. Works in 16-bit.
+- **Actions and Batch** were checked for Vibrance, Shadows / highlights, Color balance and Smooth skin, both direct and as adjustment layers. They record the typed values and replay identically (0 levels difference) in Actions and in Batch. No fix was needed.
+- The right-click menu's highlighted item now has enough contrast (axe flagged white on the accent colour).
+
+Limits: snapshots are saved at 8 bits per channel, even in 16-bit documents. The History brush paints a layer's pixels, not its mask, and it needs the same canvas size and a layer that existed in the snapshot (it says so otherwise). Smooth skin composites on the CPU (about 3 s for 12 MP on the test box). Layered PSD export leaves the Smooth skin layer out (the flattened composite keeps it). This is not frequency separation as two layers: Tintwork has no Linear Light blend mode. Tested in emulation on Linux, not on real Windows hardware.
+
 ## What's new in v1.34.1 (neutral competitor names)
 
 v1.34.1 changes wording only. The project's rule is that other vendors' product names stay out of the UI and docs. One upright tooltip ("Crop edges") named a competitor's RAW app and now says "like constrain crop in paid desktop editors". The comparison and benchmark docs, the audit notes and the raw benchmark JSON now say **leading subscription editor**, **subscription RAW editor** and **RAW plug-in**, and links to that vendor's help pages were removed. No features, scores or step counts changed. Technical identifiers are kept: the registered PSD and DNG MIME types and the third-party RAW test-sample file names. `scripts/v1341-test.mjs` scans the UI, tooltips, the user guide and the docs.
@@ -16,7 +28,7 @@ v1.34.1 changes wording only. The project's rule is that other vendors' product 
 From the findings still open after the 7-persona test of v1.31 ([docs/audit/persona-test-v131.md](docs/audit/persona-test-v131.md): #10, #11, #13, #14). No AI. No straightening math changed (Suggest on the 21-photo set: 0 differences).
 
 - **Vibrance** (Adjust ▸ Vibrance… or Layer ▸ New adjustment layer: Vibrance…): Vibrance boosts muted colours most, holds back on skin tones (a simple orange-hue window, not a detector), and never pushes a colour out of gamut; a separate Saturation slider changes every colour evenly.
-- **Shadows / highlights** for any layer (Adjust menu, or as an adjustment layer, which the leading paid editor and Photopea only offer as a destructive command or smart filter): amount, tone range and radius for both shadows and highlights, with live preview.
+- **Shadows / highlights** for any layer (Adjust menu, or as an adjustment layer, which the leading paid editor and a free browser editor only offer as a destructive command or smart filter): amount, tone range and radius for both shadows and highlights, with live preview.
 - **Color balance** (Adjust menu or adjustment layer): Shadows / Midtones / Highlights tabs, each with cyan–red, magenta–green and yellow–blue, plus Preserve luminosity.
 - All three work in 16-bit documents at 16-bit precision. As adjustment layers they composite on the CPU (no GPU shader yet), so very large documents redraw more slowly with them.
 - **Edits right before closing the tab are kept.** The autosave now writes synchronously when the tab is hidden or closed, so closing 150 ms after a brush stroke still offers "Recover unsaved work?" with that stroke. Before, the last 1–1.5 s of edits were lost.

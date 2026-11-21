@@ -26,7 +26,7 @@ import { blendFromKey, decodeAdjustment, encodeAdjustment, BLEND_TO_PSD, ADJ_KEY
 import { DEFAULT_SETTINGS as RAW_DEFAULTS, cleanSettings as cleanRawSettings, curveIsIdentity, presetFile as rawPresetFile, parsePresetFile as parseRawPresetFile, affineCompose, profileDistortion, LOCAL_RANGES, MAX_LOCALS, MASK_OPS, MAX_PARTS } from './raw.js';
 
 const APP = 'Tintwork';
-const APP_VERSION = '1.34.1';
+const APP_VERSION = '1.35.0';
 const PSD_TYPE = 'image/vnd.adobe.photoshop';
 const PROJECT_FORMAT = 'tintwork-project';
 const $ = (s) => document.querySelector(s);
@@ -51,6 +51,7 @@ const state = {
     sampleAll: true,
     selMode: 'new', objBrush: 24, objPaint: 'box', objRefine: true, uprightEdges: 'crop', wandTolerance: 32, wandContiguous: true, wandSampleAll: false, featherRadius: 8,
     cloneSize: 40, cloneHardness: 60, cloneOpacity: 100, cloneAligned: true,
+    histbrushSize: 40, histbrushHardness: 50, histbrushOpacity: 100, // v1.35 History brush
     healSize: 40, healHardness: 80, healOpacity: 100, spotSize: 30, spotHardness: 80, spotOpacity: 100,
     xfKeepAspect: false, xfSkew: false,
     gradType: 'linear', gradColors: 'fg-bg', gradReverse: false, gradOpacity: 100,
@@ -299,6 +300,7 @@ function afterDocChange(label) {
   state.crop = null; state.poly = null; state.selPreview = null; state.cloneSrc = null; state.cloneOffset = null;
   compDirty = true;
   commit(label);
+  if (!state.doc.snapshots) { state.doc.snapshots = []; addSnapshot(label === 'New canvas' || label === 'New' ? 'New canvas' : 'Original', history.index, { quiet: true }); } // v1.35: the opened state, like a first snapshot
   fitToScreen();
   $('#welcome').classList.add('hidden');
   updateAll();
@@ -356,16 +358,19 @@ function commit(label) {
 function restore(i) {
   const e = history.entries[i];
   if (!e) return;
-  const s = e.snap;
+  applySnap(e.snap);
+  history.index = i;
+  updateAll();
+}
+/** Put a history (or snapshot) state into the document; the caller sets history.index or commits. */
+function applySnap(s) {
   state.doc.width = s.width; state.doc.height = s.height; state.doc.depth = s.depth || 8;
   state.doc.activeId = s.activeId;
   state.doc.selection = s.selection;
   state.doc.layers = s.layers.map((l) => ({ ...l, canvas: cloneCanvas(l.canvas), mask: cloneMask(l.mask), ...(l.kind === 'smart' ? { fmask: cloneMask(l.fmask) } : {}) }));
   state.poly = null; state.selPreview = null; state.xf = null;
-  history.index = i;
   state.crop = null;
   compDirty = true;
-  updateAll();
 }
 function undo() { if (state.mxf) { cancelMeshXf(); return; } if (state.xf) { cancelTransform(); return; } if (history.index > 0) { restore(history.index - 1); status(`Undo: ${history.entries[history.index + 1].label}`); } }
 function redo() { if (history.index < history.entries.length - 1) { restore(history.index + 1); status(`Redo: ${history.entries[history.index].label}`); } }
@@ -681,12 +686,13 @@ const ADJ_LAYER = {
   levels: 'Levels', curves: 'Curves', invert: 'Invert', grayscale: 'Grayscale',
   whiteBalance: 'White balance', lut3d: 'Color lookup (3D LUT)',
   vibrance: 'Vibrance', shadowsHighlights: 'Shadows / highlights', colorBalance: 'Color balance', // v1.34
+  skinSmooth: 'Smooth skin', // v1.35
 };
 // v1.34: adjustments whose result at a pixel depends on its neighbours (a blurred luminance map), so a dirty
 // rectangle cannot be patched on its own and reduced-size previews must scale the radius
-const NONLOCAL_ADJ = new Set(['shadowsHighlights']);
+const NONLOCAL_ADJ = new Set(['shadowsHighlights', 'skinSmooth']);
 // v1.34: adjustment layers the GPU compositors have no shader for: the composite runs on the CPU instead
-const CPU_ONLY_ADJ = new Set(['vibrance', 'shadowsHighlights', 'colorBalance']);
+const CPU_ONLY_ADJ = new Set(['vibrance', 'shadowsHighlights', 'colorBalance', 'skinSmooth', 'skinSmooth']);
 const ADJ_SYNC_PIXELS = 2_500_000;
 // Interactive preview: while an adjustment slider moves on a big document, adjustment layers are computed on a
 // ~2 MP proxy (about screen size) and the full-resolution result follows in the worker once the slider rests.
@@ -1122,11 +1128,20 @@ function defaultAdjParams(type) {
 function newAdjustmentLayer(type) {
   const d = doc(), sel = d.selection;
   const l = createLayer(ADJ_LAYER[type], 1, 1, { kind: 'adjust', adj: { type, params: defaultAdjParams(type) }, editMask: true });
-  const m = makeMaskCanvas(d.width, d.height, !sel);
+  // v1.35: Smooth skin starts hidden (black mask) unless there is a selection: you paint white where it applies
+  const m = makeMaskCanvas(d.width, d.height, !sel && !HIDE_MASK_ADJ.has(type));
   if (sel) m.getContext('2d').drawImage(selectionCanvas(sel), 0, 0);
   l.mask = { canvas: m, enabled: true, rev: ++globalRev };
   addLayer(l, `New ${ADJ_LAYER[type]} layer`);
   if (type !== 'invert' && type !== 'grayscale') openAdjustmentLayerDialog(l, true);
+}
+const HIDE_MASK_ADJ = new Set(['skinSmooth']);
+/** v1.35: after a new Smooth skin layer: Brush, white, on its mask, so the next drag paints where it applies. */
+function readyMaskPainting(l) {
+  if (!l || l !== activeLayer()) return;
+  l.editMask = true; setFg('#ffffff');
+  setTool('brush'); updateLayersPanel(); buildOptionsBar();
+  status(doc().selection ? `${l.name}: applied inside the selection. Paint white to add more, black to take away.` : `${l.name}: now paint white over the skin with the Brush (B) where it should apply; X swaps to black to take it away.`);
 }
 /** Edit an adjustment layer's settings live; Cancel restores (or removes a brand-new layer). */
 function openAdjustmentLayerDialog(l, isNew = false) {
@@ -1147,7 +1162,7 @@ function openAdjustmentLayerDialog(l, isNew = false) {
   } else { status(`${ADJ_LAYER[type]} has no settings.`); return; }
   showModal({
     title: `${ADJ_LAYER[type]} layer`, body, passive: true, okLabel: 'Done',
-    ok: () => { apply(); if (JSON.stringify(before) !== JSON.stringify(l.adj)) commit(`Edit ${ADJ_LAYER[type]} layer`); else if (isNew) updateLayersPanel(); if (isNew && type !== 'lut3d') recordStep({ t: 'adjLayer', type, params: l.adj.params, name: l.name }); },
+    ok: () => { apply(); if (JSON.stringify(before) !== JSON.stringify(l.adj)) commit(`Edit ${ADJ_LAYER[type]} layer`); else if (isNew) updateLayersPanel(); if (isNew && type !== 'lut3d') recordStep({ t: 'adjLayer', type, params: l.adj.params, name: l.name, ...(HIDE_MASK_ADJ.has(type) && !doc().selection ? { hide: true } : {}) }); if (isNew && HIDE_MASK_ADJ.has(type)) readyMaskPainting(l); },
     cancel: () => {
       l.adj = before; compDirty = true;
       if (isNew) { undo(); history.entries.length = history.index + 1; updateHistoryPanel(); }
@@ -1555,7 +1570,7 @@ function screenToDoc(e) {
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
-const PAINT_TOOLS = ['brush', 'eraser', 'clone', 'heal', 'spot', 'tone', 'redeye', 'liquify']; // tools with a round size cursor and [ ] sizing
+const PAINT_TOOLS = ['brush', 'eraser', 'histbrush', 'clone', 'heal', 'spot', 'tone', 'redeye', 'liquify']; // tools with a round size cursor and [ ] sizing
 const TOOLS = [
   { id: 'move', name: 'Move', key: 'V' },
   { id: 'select', name: 'Rectangle select', key: 'M' },
@@ -1569,6 +1584,7 @@ const TOOLS = [
   { sep: true },
   { id: 'brush', name: 'Brush', key: 'B' },
   { id: 'eraser', name: 'Eraser', key: 'E' },
+  { id: 'histbrush', name: 'History brush (paints from a snapshot)', key: 'Y' },
   { id: 'clone', name: 'Clone stamp (Alt+click sets source)', key: 'S' },
   { id: 'heal', name: 'Healing brush (Alt+click sets source)', key: 'R' },
   { id: 'spot', name: 'Spot healing', key: 'J' },
@@ -1597,7 +1613,7 @@ function setTool(id) {
   }
   state.tool = id;
   for (const b of document.querySelectorAll('#toolbar button')) { b.classList.toggle('active', b.dataset.tool === id); b.setAttribute('aria-pressed', String(b.dataset.tool === id)); }
-  const cursors = { move: 'move', select: 'crosshair', lasso: 'crosshair', polylasso: 'crosshair', wand: 'crosshair', objsel: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', clone: 'none', heal: 'none', spot: 'none', tone: 'none', redeye: 'none', liquify: 'none', gradient: 'crosshair', shape: 'crosshair', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
+  const cursors = { move: 'move', select: 'crosshair', lasso: 'crosshair', polylasso: 'crosshair', wand: 'crosshair', objsel: 'crosshair', crop: 'crosshair', brush: 'none', eraser: 'none', histbrush: 'none', clone: 'none', heal: 'none', spot: 'none', tone: 'none', redeye: 'none', liquify: 'none', gradient: 'crosshair', shape: 'crosshair', fill: 'cell', text: 'text', eyedropper: 'copy', hand: 'grab', zoom: 'zoom-in' };
   view.style.cursor = cursors[id] || 'default';
   buildOptionsBar();
   requestRender();
@@ -1856,6 +1872,7 @@ const toolHandlers = {
   },
   brush: paintTool('brush'),
   eraser: paintTool('eraser'),
+  histbrush: paintTool('histbrush'),
   clone: paintTool('clone'),
   heal: paintTool('heal'),
   spot: paintTool('spot'),
@@ -2153,7 +2170,7 @@ const xfHandler = {
   up() { drag = null; updateXfFields(); },
 };
 const samplerHandler = { down: (p) => colorRangeSampler?.(p.x, p.y) };
-const GROUP_PIXEL_TOOLS = new Set(['brush', 'eraser', 'clone', 'heal', 'spot', 'tone', 'redeye', 'gradient', 'fill', 'liquify']);
+const GROUP_PIXEL_TOOLS = new Set(['brush', 'eraser', 'histbrush', 'clone', 'heal', 'spot', 'tone', 'redeye', 'gradient', 'fill', 'liquify']);
 const GROUP_MASK_TOOLS = new Set(['brush', 'eraser', 'gradient', 'fill']);
 function toolHandler() {
   const l = activeLayer(), t = state.tool;
@@ -2236,7 +2253,8 @@ function rectFromPoints(a, b, square) {
 /** Brush, eraser and clone stamp share the same stroke machinery. */
 function paintTool(kind) {
   const erase = kind === 'eraser', clone = kind === 'clone' || kind === 'heal', heal = kind === 'heal' || kind === 'spot';
-  const LABEL = { brush: 'Brush stroke', eraser: 'Eraser', clone: 'Clone stamp', heal: 'Healing brush', spot: 'Spot healing', tone: 'Dodge / burn' };
+  const hist = kind === 'histbrush';
+  const LABEL = { brush: 'Brush stroke', eraser: 'Eraser', histbrush: 'History brush', clone: 'Clone stamp', heal: 'Healing brush', spot: 'Spot healing', tone: 'Dodge / burn' };
   return {
     down(p, e) {
       const layer = activeLayer(); if (!layer) return;
@@ -2245,8 +2263,9 @@ function paintTool(kind) {
         if (e.altKey) { state.cloneSrc = { x: p.x, y: p.y }; state.cloneOffset = null; status(`Clone source set at ${Math.round(p.x)}, ${Math.round(p.y)}`); buildOptionsBar(); requestRender(); return; }
         if (!state.cloneSrc) { status('Alt+click to set a source point first.'); return; }
       }
-      if ((clone || heal || kind === 'tone') && editingMask(layer)) { status('This tool paints layer pixels. Click the layer thumbnail to target pixels.'); return; }
+      if ((clone || heal || hist || kind === 'tone') && editingMask(layer)) { status('This tool paints layer pixels. Click the layer thumbnail to target pixels.'); return; }
       if (e.altKey && kind === 'brush') { pickColor(p); return; }
+      const hsrc = hist ? historyBrushSource(layer) : null; if (hist && !hsrc) return; // v1.35: the status says why
       if (!editingMask(layer)) rasterize(layer, 'painting');
       ensureCoversDoc(layer);
       const o = state.opts;
@@ -2260,18 +2279,19 @@ function paintTool(kind) {
         lum: onMask && !erase ? luminance(state.fg) : 0,
         backup: cloneCanvas(canvas),
         stroke: makeCanvas(canvas.width, canvas.height),
-        tmp: doc().selection || clone ? makeCanvas(canvas.width, canvas.height) : null,
-        stamp: makeStamp(size, hardness, kind === 'spot' ? '#3a3f4a' : erase || clone || onMask || kind === 'tone' ? '#ffffff' : state.fg),
+        tmp: doc().selection || clone || hist ? makeCanvas(canvas.width, canvas.height) : null,
+        stamp: makeStamp(size, hardness, kind === 'spot' ? '#3a3f4a' : erase || clone || hist || onMask || kind === 'tone' ? '#ffffff' : state.fg),
         // dodge / burn: Alt flips the mode for this stroke
         tone: kind === 'tone' ? { burn: (o.toneMode === 'burn') !== !!e.altKey, range: o.toneRange } : null,
         last: null, dirty: null, hardness,
-        stampColor: kind === 'spot' ? '#3a3f4a' : erase || clone || onMask || kind === 'tone' ? '#ffffff' : state.fg,
+        stampColor: kind === 'spot' ? '#3a3f4a' : erase || clone || hist || onMask || kind === 'tone' ? '#ffffff' : state.fg,
         // large brushes stamp on the GPU (WebGPU with synchronous output); everything else uses Canvas 2D
         gpuDabs: kind !== 'tone' && size >= GPU_DAB_MIN && gfx.engine?.kind === 'webgpu' && gfx.engine.syncOutput && !gfx.engine.lost ? [] : null,
         lazy: { x: p.x, y: p.y }, // stabilizer ("lazy mouse") position
       };
       if (kind === 'tone' && useDeep(layer)) { drag.deep0 = deepOf(layer); drag.deepOut = cloneDeep(drag.deep0); } // 16-bit dodge / burn
       gfx.dabPath = drag.gpuDabs ? 'webgpu' : 'cpu';
+      if (hist) { drag.hist = historyBrushCanvas(hsrc, layer, canvas); drag.srcTmp = makeCanvas(canvas.width, canvas.height); drag.histName = hsrc.name; }
       if (clone) {
         if (!o.cloneAligned || !state.cloneOffset) state.cloneOffset = { dx: state.cloneSrc.x - p.x, dy: state.cloneSrc.y - p.y };
         drag.dx = state.cloneOffset.dx; drag.dy = state.cloneOffset.dy;
@@ -2294,7 +2314,7 @@ function paintTool(kind) {
       if (drag.heal) { finishHeal(drag); return; }
       touchTarget(drag.layer);
       if (drag.deepOut) { const l = drag.layer; l.deep = drag.deepOut; l.deepRev = l.rev; l.deepOX = 0; l.deepOY = 0; }
-      commit(drag.onMask ? (erase ? 'Erase mask' : 'Paint mask') : kind === 'tone' ? (drag.tone.burn ? 'Burn' : 'Dodge') : LABEL[kind]);
+      commit(drag.onMask ? (erase ? 'Erase mask' : 'Paint mask') : kind === 'tone' ? (drag.tone.burn ? 'Burn' : 'Dodge') : hist ? `History brush (from “${drag.histName}”)` : LABEL[kind]);
       updateLayersPanel();
     },
   };
@@ -2409,7 +2429,16 @@ function applyStroke() {
   c.globalCompositeOperation = 'copy';
   c.drawImage(drag.backup, 0, 0);
   c.globalCompositeOperation = 'source-over';
-  if (drag.clone) {
+  if (drag.hist) {
+    // v1.35 History brush: out = current × (1 − k) + snapshot × k, k = coverage × opacity (exact lerp on
+    // premultiplied pixels, so transparency in the snapshot comes back too)
+    const t = drag.srcTmp.getContext('2d'); t.save(); clip(t);
+    t.globalCompositeOperation = 'copy'; t.drawImage(drag.hist, 0, 0);
+    t.globalCompositeOperation = 'destination-in'; t.drawImage(cover, 0, 0);
+    t.restore();
+    c.globalAlpha = drag.opacity; c.globalCompositeOperation = 'destination-out'; c.drawImage(cover, 0, 0);
+    c.globalCompositeOperation = 'lighter'; c.drawImage(drag.srcTmp, 0, 0);
+  } else if (drag.clone) {
     // source pixels shifted by the clone offset, cut to the brush coverage
     const t = drag.srcTmp.getContext('2d'); t.save(); clip(t);
     t.globalCompositeOperation = 'copy'; t.drawImage(drag.backup, -drag.dx, -drag.dy);
@@ -4944,6 +4973,11 @@ const cmds = {
   camera: () => { fileMode = 'open'; $('#cameraInput').click(); },
   closePolygon: () => finishPolygon(),
   editLayer: needDoc(() => editLayer()),
+  snapshotNew: needDoc(() => addSnapshot()), // v1.35
+  snapshotNamed: needDoc(() => { const body = document.createElement('div'); body.innerHTML = `<label class="field two"><span>Name</span><input type="text" id="snapNameInput" maxlength="80" /></label>`; const inp = body.querySelector('input'); inp.value = uniqueSnapName(); showModal({ title: 'New snapshot', body, okLabel: 'Create', ok: () => addSnapshot(inp.value) }); setTimeout(() => { inp.focus(); inp.select(); }, 0); }),
+  snapshotRestore: needDoc(() => { const s = snapById(roveSnapId) || snapById(doc().histSrc); if (s) restoreSnapshot(s); else status('No snapshot to restore.'); }),
+  snapshotDelete: needDoc(() => { const s = snapById(roveSnapId) || snapById(doc().histSrc); if (s) deleteSnapshot(s); else status('No snapshot to delete.'); }),
+  historyBrushTool: needDoc(() => setTool('histbrush')),
   recoverAutosave: () => checkRecovery(true),
   adjLayerMenu: needDoc(() => {
     const body = document.createElement('div'); body.className = 'choice-list';
@@ -5098,6 +5132,7 @@ const cmds = {
   vibrance: needDoc(() => openAdjust(ADJ.vibrance)),
   shadowsHighlights: needDoc(() => openAdjust(ADJ.shadowsHighlights)),
   colorBalance: needDoc(() => openAdjust(ADJ.colorBalance)),
+  skinSmooth: needDoc(() => openAdjust(ADJ.skinSmooth)), // v1.35
   invert: needDoc(() => (editingMask() ? cmds.invertMask() : applyInstant('Invert', 'invert'))),
   grayscale: needDoc(() => applyInstant('Grayscale', 'grayscale')),
   autoLevels: needDoc(() => applyInstant('Auto levels', 'autoLevels')),
@@ -5166,7 +5201,7 @@ const MENUS = [
   ['File', [['New canvas…', 'new', 'Ctrl+N'], ['Open…', 'open', 'Ctrl+O'], ['Take photo (camera)…', 'camera'], ['Place image as layer…', 'place', 'Ctrl+Shift+O'], '-',
     ['Open recent…', 'openRecent'], '-', ['Save…', 'save', 'Ctrl+S'], ['Save project', 'saveProject'], ['Save project as…', 'saveAs', 'Ctrl+Shift+S'], ['Recover autosave…', 'recoverAutosave'], ['Export image…', 'export', 'Ctrl+Shift+E'], ['Export with last preset', 'exportLastPreset', 'Ctrl+Alt+Shift+E'], ['Export watermark…', 'watermarkSettings'], ['Export layered PSD…', 'exportPSD'], ['Export multiple sizes…', 'exportMulti'], ['Batch process…', 'batch'], ['Batch again (last settings)', 'batchAgain', 'Ctrl+Alt+Shift+B'], '-',
     ['Next document', 'docNext', 'Ctrl+Tab'], ['Previous document', 'docPrev', 'Ctrl+Shift+Tab'], ['Close document', 'docClose', 'Ctrl+Alt+W']]],
-  ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
+  ['Edit', [['Undo', 'undo', 'Ctrl+Z'], ['Redo', 'redo', 'Ctrl+Shift+Z'], ['New snapshot', 'snapshotNew'], ['New snapshot (named)…', 'snapshotNamed'], ['History brush', 'historyBrushTool'], '-', ['Cut', 'cut', 'Ctrl+X'], ['Copy', 'copy', 'Ctrl+C'],
     ['Copy merged', 'copyMerged', 'Ctrl+Shift+C'], ['Paste as layer', 'paste', 'Ctrl+V'], '-',
     ['Clear', 'clear', 'Del'], ['Fill with color', 'fillSelection', 'Alt+⌫'], '-', ['Free transform', 'freeTransform', 'Ctrl+T'], ['Perspective', 'perspective'], ['Warp', 'warp']]],
   ['Image', [['Image size…', 'imageSize'], ['Resize to preset…', 'resizePresets'], ['Canvas size…', 'canvasSize'], ['Crop to selection', 'cropToSelection'], ['Crop with preset', 'cropPresetTool'], '-',
@@ -5177,7 +5212,7 @@ const MENUS = [
     ['Object select (drag a box)', 'objectSelectTool'], ['Color range…', 'colorRange'], ['Refine edge…', 'refineEdge', 'Ctrl+Alt+R'], ['Feather…', 'feather', 'Shift+F6'], ['Select layer pixels', 'selectLayerPixels'], '-', ['Crop to selection', 'cropToSelection']]],
   ['Layer', [['New layer', 'layerNew', 'Ctrl+Shift+N'], ['New adjustment layer: Curves…', 'adjLayer_curves'], ['New adjustment layer: Levels…', 'adjLayer_levels'],
     ['New adjustment layer: Brightness / contrast…', 'adjLayer_brightnessContrast'], ['New adjustment layer: Hue / saturation…', 'adjLayer_hueSaturation'],
-    ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: White balance…', 'adjLayer_whiteBalance'], ['New adjustment layer: Vibrance…', 'adjLayer_vibrance'], ['New adjustment layer: Shadows / highlights…', 'adjLayer_shadowsHighlights'], ['New adjustment layer: Color balance…', 'adjLayer_colorBalance'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
+    ['New adjustment layer: Exposure…', 'adjLayer_exposure'], ['New adjustment layer: White balance…', 'adjLayer_whiteBalance'], ['New adjustment layer: Vibrance…', 'adjLayer_vibrance'], ['New adjustment layer: Shadows / highlights…', 'adjLayer_shadowsHighlights'], ['New adjustment layer: Color balance…', 'adjLayer_colorBalance'], ['New adjustment layer: Smooth skin (paint where it applies)…', 'adjLayer_skinSmooth'], ['New adjustment layer: Invert', 'adjLayer_invert'], ['New adjustment layer: Grayscale', 'adjLayer_grayscale'],
     ['New adjustment layer: 3D LUT from .cube file…', 'lutImport'],
     ['Edit layer settings…', 'editLayer'], ['Re-develop RAW…', 'redevelopRaw'], ['Embed linked RAW file', 'embedRaw'], ['Convert to live layer (editable filters)', 'convertSmart'], ['Convert text / live layer to pixels', 'rasterizeLayer'], '-', ['Duplicate layer', 'layerDuplicate', 'Ctrl+J'], ['Duplicate to document…', 'layerToDoc'], ['Delete layer', 'layerDelete'], '-',
     ['Move up', 'layerUp', 'Ctrl+]'], ['Move down', 'layerDown', 'Ctrl+['], ['Merge down / merge group', 'layerMergeDown', 'Ctrl+E'], '-',
@@ -5193,7 +5228,7 @@ const MENUS = [
     ['Exposure…', 'exposure'], ['Levels…', 'levels', 'Ctrl+L'], ['Curves…', 'curves', 'Ctrl+M'], ['White balance (temperature / tint)…', 'whiteBalance'], ['Vibrance…', 'vibrance'], ['Shadows / highlights…', 'shadowsHighlights'], ['Color balance…', 'colorBalance'], ['Auto levels', 'autoLevels'], '-',
     ['Auto enhance (adds editable layers)', 'autoEnhance'], ['Auto white balance (adds a layer)', 'autoWhiteBalance'], ['White balance picker', 'wbPicker'], '-',
     ['Invert', 'invert', 'Ctrl+I'], ['Grayscale', 'grayscale', 'Ctrl+Shift+U'], ['Sepia tone…', 'sepia']]],
-  ['Filter', [['Convert to live layer', 'convertSmart'], '-', ['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
+  ['Filter', [['Convert to live layer', 'convertSmart'], '-', ['Smooth skin layer (paint where it applies)…', 'adjLayer_skinSmooth'], ['Smooth skin (whole layer / selection)…', 'skinSmooth'], '-', ['Gaussian blur…', 'gaussianBlur'], ['Sharpen (unsharp)…', 'sharpen'], ['Add noise…', 'noise'], ['Vignette…', 'vignette']]],
   ['Actions', [['Actions…', 'actions'], ['Start recording', 'actionRecord'], ['Stop recording and save…', 'actionStop'], '-', ['Batch process…', 'batch']]],
   ['View', [['Zoom in', 'zoomIn', 'Ctrl++'], ['Zoom out', 'zoomOut', 'Ctrl+-'], ['Fit on screen', 'zoomFit', 'Ctrl+0'], ['Actual pixels', 'zoom100', 'Ctrl+1'], '-', ['Proof: off', 'proofOff'], ['Proof: last used', 'proofLast'], ['Proof: glossy paper', 'proofGlossy'], ['Proof: matte paper', 'proofMatte'], ['Proof: photo rag', 'proofRag'], ['Proof: newsprint', 'proofNews'], ['Proof: approximate CMY', 'proofCmy'], ['Proof: ink warning on', 'proofWarnOn'], ['Proof: ink warning off', 'proofWarnOff'], '-', ['Rendering engine…', 'engine']]],
   ['Help', [['Keyboard shortcuts', 'shortcuts', '?'], ['User guide', 'userGuide', 'F1'], ['Run performance benchmark…', 'benchmark'], [`About ${APP}`, 'about']]],
@@ -5703,6 +5738,12 @@ const ADJ = {
       { key: `${k}MG`, label: `${n}: magenta ↔ green`, min: -100, max: 100, value: 0 },
       { key: `${k}YB`, label: `${n}: yellow ↔ blue`, min: -100, max: 100, value: 0 }]),
     { key: 'preserve', label: 'Preserve luminosity', type: 'checkbox', value: true }], op: 'colorBalance' },
+  // v1.35 (persona finding 10): non-AI skin smoothing (edge-preserving blur + fine texture put back), see tone.js
+  skinSmooth: { title: 'Smooth skin', note: 'Smooths skin while keeping edges (eyes, lips, hairline) and fine texture. As a layer it starts with a black mask: paint white with the Brush where it should apply. Radius: blemish size to smooth away. Threshold: higher smooths across stronger edges. Detail: how much pore texture is kept.', params: [
+    { key: 'strength', label: 'Strength', min: 0, max: 100, value: 70, unit: '%' },
+    { key: 'radius', label: 'Radius', min: 1, max: 60, value: 12, unit: 'px' },
+    { key: 'threshold', label: 'Threshold', min: 1, max: 100, value: 25 },
+    { key: 'detail', label: 'Detail (texture kept)', min: 0, max: 100, value: 40, unit: '%' }], op: 'skinSmooth' },
   vignette: { title: 'Vignette', params: [
     { key: 'amount', label: 'Amount', min: -100, max: 100, value: 50 },
     { key: 'size', label: 'Clear centre', min: 0, max: 100, value: 45, unit: '%' },
@@ -7518,26 +7559,35 @@ for (const id of ['#fileInput', '#cameraInput']) $(id).addEventListener('change'
  */
 function serializeProject(rawData = null) {
   const d = doc();
-  return {
-    format: PROJECT_FORMAT, version: 8, app: APP, width: d.width, height: d.height, name: d.name, depth: d.depth === 16 ? 16 : 8,
-    activeIndex: activeIndex(),
-    layers: d.layers.map((l) => ({
-      name: l.name, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, data: l.canvas.toDataURL('image/png'),
+  const ser = (l, list, snapLayer = false) => ({
+      name: l.name, uid: l.id, visible: l.visible, opacity: l.opacity, blend: l.blend, x: l.x, y: l.y, data: l.canvas.toDataURL('image/png'), // v9: uid pairs snapshot layers with document layers
       mask: l.mask ? { enabled: l.mask.enabled, data: l.mask.canvas.toDataURL('image/png') } : null,
       ...(l.kind ? { kind: l.kind, adj: l.adj, text: l.text } : {}),
       ...(l.kind === 'adjust' && l.adj.type === 'lut3d' && lutRegistry.has(l.adj.params?.lut) ? { lut: lutEncode(lutRegistry.get(l.adj.params.lut)) } : {}),
       ...(l.look ? { look: l.look } : {}),
       // v6: layer tree (parent = index of the containing group), clipping and layer styles
-      parent: l.parent != null ? d.layers.findIndex((g) => g.id === l.parent) : -1, ...(l.clip ? { clip: true } : {}),
+      parent: l.parent != null ? list.findIndex((g) => g.id === l.parent) : -1, ...(l.clip ? { clip: true } : {}),
       ...(l.styles ? { styles: l.styles } : {}), ...(isGroup(l) ? { collapsed: !!l.collapsed } : {}),
-      ...(d.depth === 16 && !l.kind ? { deep: deepDataURL(deepOf(l)) } : {}), // v5: 16-bit pixels; `data` stays as the 8-bit fallback
+      ...(!snapLayer && d.depth === 16 && !l.kind ? { deep: deepDataURL(deepOf(l)) } : {}), // v5: 16-bit pixels; `data` stays as the 8-bit fallback
       ...(l.kind === 'smart' ? { source: l.source.toDataURL('image/png'), filters: l.filters, fmask: l.fmask ? { enabled: l.fmask.enabled, data: l.fmask.canvas.toDataURL('image/png') } : null } : {}),
       // v7: RAW source (original file as a data URL) + develop settings and crop window, for Layer ▸ Re-develop RAW
       // v8: m = layer pixel → developed pixel map (crops, resizes, rotations, flips, transforms); link = linked file
-      ...(l.raw ? { raw: { name: l.raw.name, type: l.raw.type, size: l.raw.size, format: l.raw.format, settings: l.raw.settings, width: l.raw.width, height: l.raw.height,
+      ...(l.raw && !snapLayer ? { raw: { name: l.raw.name, type: l.raw.type, size: l.raw.size, format: l.raw.format, settings: l.raw.settings, width: l.raw.width, height: l.raw.height,
         cx: l.raw.cx, cy: l.raw.cy, cw: l.raw.cw, ch: l.raw.ch, m: rawMapOf(l.raw), edited: l.raw.rev !== l.rev, ...(l.raw.untracked ? { untracked: l.raw.untracked } : {}),
         ...(l.raw.link ? { link: l.raw.link, data: null } : { data: rawData?.get(l.raw.file) || null }) } } : {}),
-    })),
+  });
+  const layers = d.layers.map((l) => ser(l, d.layers));
+  // v9 (v1.35): named history snapshots. Images that equal one of the document's own layer images are written as
+  // "@<layer index>" / "@m<layer index>" instead of a second copy; snapshots keep 8-bit pixels (no 16-bit data, no
+  // RAW source), and older versions of Tintwork ignore them.
+  const pool = new Map(); layers.forEach((L, i) => { if (!pool.has(L.data)) pool.set(L.data, `@${i}`); if (L.mask?.data && !pool.has(L.mask.data)) pool.set(L.mask.data, `@m${i}`); });
+  const snapshots = (d.snapshots || []).map((s) => {
+    const ls = s.snap.layers.map((l) => { const L = ser(l, s.snap.layers, true); if (pool.has(L.data)) L.data = pool.get(L.data); if (L.mask?.data && pool.has(L.mask.data)) L.mask.data = pool.get(L.mask.data); return L; });
+    return { name: s.name, step: s.step, width: s.snap.width, height: s.snap.height, activeIndex: Math.max(0, s.snap.layers.findIndex((l) => l.id === s.snap.activeId)), source: d.histSrc === s.id, layers: ls };
+  });
+  return {
+    format: PROJECT_FORMAT, version: 9, app: APP, width: d.width, height: d.height, name: d.name, depth: d.depth === 16 ? 16 : 8,
+    activeIndex: activeIndex(), layers, ...(snapshots.length ? { snapshots } : {}),
   };
 }
 function deepDataURL(d) {
@@ -7725,11 +7775,7 @@ function encodeHistory(d, dirty, hist = history, { sync = false, steps = AUTOSAV
   const deepOk = curSnap.depth === 16 && deepPx <= AUTOSAVE_DEEP_PX && (!sync || curSnap.layers.every((l) => !l.deep || deepRef(l.deep).ready()));
   if (curSnap.depth === 16 && !deepOk && !sync) gpuNotice('autosave-deep', 'This 16-bit document is too large for 16-bit autosave; crash recovery keeps an 8-bit copy. Save the project to keep 16-bit data.');
   const start = Math.max(0, Math.min(hist.index, n - steps), hist.index - steps + 1), end = Math.min(n, start + steps);
-  const entries = hist.entries.slice(start, end).map((e) => {
-    const sn = e.snap;
-    return {
-      label: e.label,
-      snap: {
+  const encSnap = (sn) => ({
         width: sn.width, height: sn.height, activeId: sn.activeId, depth: sn.depth || 8,
         selection: sn.selection ? ref(selectionCanvas(sn.selection)) : null,
         layers: sn.layers.map((l) => ({
@@ -7744,14 +7790,15 @@ function encodeHistory(d, dirty, hist = history, { sync = false, steps = AUTOSAV
           ...(l.kind === 'smart' ? { source: ref(l.source), filters: l.filters, editFMask: l.editFMask,
             fmask: l.fmask ? { enabled: l.fmask.enabled, rev: l.fmask.rev, canvas: ref(l.fmask.canvas) } : null } : {}),
         })),
-      },
-    };
   });
+  const entries = hist.entries.slice(start, end).map((e) => ({ label: e.label, snap: encSnap(e.snap) }));
+  // v1.35: named snapshots (their canvases are shared with history steps, so most are stored once anyway)
+  const snapshots = (d.snapshots || []).map((s) => ({ id: s.id, name: s.name, step: s.step, snap: encSnap(s.snap) }));
   const cur = hist.entries[hist.index].snap;
   const record = {
     format: 'tintwork-autosave', version: 2, app: APP, appVersion: APP_VERSION, slot: d.slot, name: d.name || 'Untitled',
     width: d.width, height: d.height, savedAt: Date.now(), dirty, layerCount: cur.layers.length, steps: entries.length,
-    history: { index: hist.index - start, entries }, imageIds: [...images.keys()],
+    history: { index: hist.index - start, entries }, snapshots, histSrc: d.histSrc ?? null, imageIds: [...images.keys()],
   };
   return { record, images };
 }
@@ -7819,11 +7866,9 @@ async function restoreAutosave(r) {
     return sels.get(id);
   };
   let maxId = 0, maxRev = 0;
-  const entries = r.history.entries.map((e) => ({
-    label: e.label,
-    snap: {
-      width: e.snap.width, height: e.snap.height, depth: e.snap.depth || 8, activeId: e.snap.activeId, selection: selOf(e.snap.selection, e.snap.width, e.snap.height),
-      layers: e.snap.layers.map((L) => {
+  const decSnap = (es) => ({
+      width: es.width, height: es.height, depth: es.depth || 8, activeId: es.activeId, selection: selOf(es.selection, es.width, es.height),
+      layers: es.layers.map((L) => {
         maxId = Math.max(maxId, L.id); maxRev = Math.max(maxRev, L.rev, L.mask?.rev || 0, L.fmask?.rev || 0);
         const l = { ...L, canvas: get(L.canvas), mask: L.mask ? { ...L.mask, canvas: get(L.mask.canvas) } : null, styles: normalizeStyles(L.styles) };
         if (L.deep) l.deep = get(L.deep); else delete l.deep;
@@ -7833,11 +7878,17 @@ async function restoreAutosave(r) {
         if (L.kind === 'smart') Object.assign(l, { source: get(L.source), fmask: L.fmask ? { ...L.fmask, canvas: get(L.fmask.canvas) } : null });
         return l;
       }),
-    },
-  }));
+  });
+  const entries = r.history.entries.map((e) => ({ label: e.label, snap: decSnap(e.snap) }));
+  // v1.35: snapshots (a damaged one is dropped rather than failing the whole recovery)
+  const snapshots = [];
+  for (const S of r.snapshots || []) { try { snapshots.push({ id: +S.id || 0, name: String(S.name || 'Snapshot'), step: String(S.step || ''), snap: decSnap(S.snap) }); } catch (err) { console.warn('snapshot not recovered', err); } }
   if (!entries.length || !entries[0].snap.layers.length) throw new Error('The autosaved copy has no layers');
   nextLayerId = Math.max(nextLayerId, maxId + 1); globalRev = Math.max(globalRev, maxRev + 1);
-  state.doc = { width: r.width, height: r.height, layers: [], activeId: null, selection: null, name: r.name || 'Recovered', slot: r.slot };
+  const srcId = r.histSrc; let histSrc = null;
+  for (const s of snapshots) { const old = s.id; s.id = nextSnapId++; if (old === srcId) histSrc = s.id; } // ids unique in this session
+  state.doc = { width: r.width, height: r.height, layers: [], activeId: null, selection: null, name: r.name || 'Recovered', slot: r.slot,
+    ...(r.snapshots ? { snapshots, histSrc: histSrc ?? snapshots[0]?.id ?? null } : {}) }; // older autosaves (no snapshots): afterDocChange is not called, so none are made
   history.entries = entries;
   state.crop = null; state.poly = null; state.selPreview = null; state.cloneSrc = null; state.cloneOffset = null; state.xf = null;
   restore(Math.min(entries.length - 1, Math.max(0, r.history.index)));
@@ -7918,10 +7969,10 @@ async function checkRecovery(manual = false) {
     cancel: () => { recoveryPending = false; if (!manual) for (const r of list) clearAutosave(r.slot).catch(() => {}); },
   });
 }
-async function loadProject(data, filename) {
-  if (data.format !== PROJECT_FORMAT) throw new Error('Not a Tintwork project file');
+/** v1.35: a project's layer list (also used for its snapshots); parents resolved, live layers rendered. */
+async function projectLayers(list, depth) {
   const layers = [];
-  for (const L of data.layers) {
+  for (const L of list) {
     const img = await loadImage(L.data);
     const l = createLayer(L.name, img.width, img.height, { visible: L.visible, opacity: L.opacity, blend: L.blend, x: L.x, y: L.y });
     if (L.kind === 'adjust' && L.adj && L.mask?.data) Object.assign(l, { kind: 'adjust', adj: L.adj, editMask: true });
@@ -7943,7 +7994,7 @@ async function loadProject(data, filename) {
       const m = makeCanvas(mi.width, mi.height); m.getContext('2d').drawImage(mi, 0, 0);
       l.mask = { canvas: m, enabled: L.mask.enabled !== false, rev: ++globalRev };
     }
-    if (L.deep && !l.kind && data.depth === 16) {
+    if (L.deep && !l.kind && depth === 16) {
       const dd = deepFromDataURL(L.deep);
       if (dd.width === l.canvas.width && dd.height === l.canvas.height) setDeep(l, dd);
     }
@@ -7951,10 +8002,32 @@ async function loadProject(data, filename) {
     layers.push(l);
   }
   if (!layers.length) throw new Error('Project has no layers');
-  data.layers.forEach((L, i) => { const g = layers[L.parent]; if (L.parent >= 0 && isGroup(g)) layers[i].parent = g.id; });
+  list.forEach((L, i) => { const g = layers[L.parent]; if (L.parent >= 0 && isGroup(g)) layers[i].parent = g.id; });
   for (const l of layers) if (l.kind === 'smart') renderSmartSync(l);
+  return layers;
+}
+async function loadProject(data, filename) {
+  if (data.format !== PROJECT_FORMAT) throw new Error('Not a Tintwork project file');
+  const layers = await projectLayers(data.layers, data.depth);
   const ai = Math.min(layers.length - 1, Math.max(0, data.activeIndex ?? layers.length - 1));
-  state.doc = { width: data.width, height: data.height, layers, activeId: layers[ai].id, selection: null, name: filename || data.name || 'Untitled', depth: data.depth === 16 ? 16 : 8 };
+  // v1.35: snapshots (version 9). A damaged snapshot is skipped, never the whole project.
+  const snapshots = []; let histSrc = null;
+  for (const S of Array.isArray(data.snapshots) ? data.snapshots : []) {
+    try {
+      const ref = (v) => { if (typeof v !== 'string' || v[0] !== '@') return v; const m = v[1] === 'm', k = +v.slice(m ? 2 : 1), L = data.layers[k]; const r = m ? L?.mask?.data : L?.data; if (!r) throw new Error('bad image reference'); return r; };
+      const list = (S.layers || []).map((L) => ({ ...L, data: ref(L.data), mask: L.mask ? { ...L.mask, data: ref(L.mask.data) } : null, raw: null, deep: null }));
+      const ls = await projectLayers(list, 8);
+      // the History brush pairs layers by id: a snapshot layer saved with the same uid as a document layer takes its id
+      const ids = new Map(); list.forEach((L, k) => { const j = L.uid != null ? data.layers.findIndex((D) => D.uid === L.uid) : -1; ids.set(ls[k].id, j >= 0 ? layers[j].id : ls[k].id); });
+      for (const l of ls) { l.id = ids.get(l.id); if (l.parent != null) l.parent = ids.get(l.parent) ?? l.parent; }
+      const snap = { width: +S.width || data.width, height: +S.height || data.height, depth: data.depth === 16 ? 16 : 8, selection: null,
+        activeId: ls[Math.min(ls.length - 1, Math.max(0, S.activeIndex | 0))].id, layers: ls.map((l) => ({ ...l })) };
+      const s = { id: nextSnapId++, name: String(S.name || 'Snapshot').slice(0, 80), step: String(S.step || ''), snap };
+      snapshots.push(s); if (S.source) histSrc = s.id;
+    } catch (err) { console.warn('A snapshot in the project could not be read', err); }
+  }
+  state.doc = { width: data.width, height: data.height, layers, activeId: layers[ai].id, selection: null, name: filename || data.name || 'Untitled', depth: data.depth === 16 ? 16 : 8,
+    ...(Array.isArray(data.snapshots) ? { snapshots, histSrc: histSrc ?? snapshots[0]?.id ?? null } : {}) };
   normalizeTree(state.doc);
   for (const l of layers) if (l.rawPending) {
     const R = l.rawPending; delete l.rawPending;
@@ -8319,6 +8392,13 @@ function buildOptionsBar() {
   const d = doc();
   switch (state.xf || state.mxf ? '' : state.tool) {
     case 'brush': parts.push(range('brushSize', 'Size', 1, 1000, 'px'), range('brushHardness', 'Hardness', 0, 100, '%'), range('brushOpacity', 'Opacity', 1, 100, '%'), range('smoothing', 'Smoothing', 0, 100, '%'), `<span class="muted">${platformText('Shift+click: straight line · Alt+click: pick color · [ ] size · Shift+[ ] hardness')}</span>`); break;
+    case 'histbrush': {
+      const ss = snapsOf(d), cur = d && snapById(d.histSrc);
+      parts.push(`<label>Source <select id="histSrcSel" aria-label="History brush source snapshot">${ss.length ? ss.map((s) => `<option value="${s.id}"${cur === s ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('') : '<option value="">(no snapshots)</option>'}</select></label>`,
+        range('histbrushSize', 'Size', 1, 1000, 'px'), range('histbrushHardness', 'Hardness', 0, 100, '%'), range('histbrushOpacity', 'Opacity', 1, 100, '%'), range('smoothing', 'Smoothing', 0, 100, '%'),
+        `<button data-cmd="snapshotNew" title="New snapshot of the current state (History panel)">New snapshot</button>`,
+        `<span class="muted">Paints pixels back from the chosen snapshot onto the active layer · History panel: the brush icon on a snapshot picks it</span>`); break;
+    }
     case 'eraser': parts.push(range('eraserSize', 'Size', 1, 1000, 'px'), range('eraserHardness', 'Hardness', 0, 100, '%'), range('eraserOpacity', 'Opacity', 1, 100, '%'), range('smoothing', 'Smoothing', 0, 100, '%')); break;
     case 'clone': parts.push(range('cloneSize', 'Size', 1, 500, 'px'), range('cloneHardness', 'Hardness', 0, 100, '%'), range('cloneOpacity', 'Opacity', 1, 100, '%'),
       `<label><input type="checkbox" data-opt="cloneAligned" ${o.cloneAligned ? 'checked' : ''}/> Aligned</label>`,
@@ -8407,6 +8487,7 @@ function buildOptionsBar() {
     if (o.cropLockRatio) o.cropLockRatio = { w: a.h, h: a.w }; else { const land = a.w > a.h; o.cropOrient = land ? 'portrait' : 'landscape'; if (o.cropPreset === 'orig' || presetById(o.cropPreset)?.rw != null) o.cropLockRatio = { w: a.h, h: a.w }; }
     const b = cropAspect(); state.crop = centredRatioRect(d.width, d.height, b.w, b.h); buildOptionsBar(); requestRender();
   });
+  bar.querySelector('#histSrcSel')?.addEventListener('change', (e) => setHistSource(+e.target.value)); // v1.35
   bar.querySelector('[data-croplock]')?.addEventListener('change', (e) => { const c = state.crop; o.cropLockRatio = e.target.checked && c ? { w: c.w, h: c.h } : null; buildOptionsBar(); });
   bar.querySelectorAll('[data-opt]').forEach((inp) => {
     inp.addEventListener('input', () => {
@@ -8627,7 +8708,139 @@ function updateHistoryPanel() {
   });
   roveSettle(ol, 'li[data-rove].current', refocus);
   ol.querySelector('.current')?.scrollIntoView({ block: 'nearest' });
+  updateSnapshotList();
 }
+
+// ---- v1.35 (persona finding 10): history snapshots and the History brush ------------------------------------
+// A snapshot is a named copy of one history state ({ id, name, snap }). It shares the immutable canvases of the
+// history entry it was taken from, so it costs no memory until those layers change, and it survives after its
+// step falls off the end of the undo list. Restoring one adds an undoable step. Snapshots belong to the document
+// (doc.snapshots, one list per tab) and are kept in its autosave and project file. The History brush paints the
+// chosen snapshot's pixels of the active layer back onto it (doc.histSrc = that snapshot's id).
+let nextSnapId = 1, roveSnapId = null;
+const snapsOf = (d = doc()) => (d?.snapshots || []);
+const snapById = (id, d = doc()) => (id == null ? null : snapsOf(d).find((s) => s.id === id) || null);
+/** Snapshot layers are shallow copies: the history purges old 16-bit data in place, a snapshot keeps its own. */
+const freezeSnap = (sn) => ({ ...sn, layers: sn.layers.map((l) => ({ ...l })) });
+function uniqueSnapName(base = 'Snapshot') {
+  const names = new Set(snapsOf().map((s) => s.name)); let n = snapsOf().length + 1;
+  while (names.has(`${base} ${n}`)) n++;
+  return `${base} ${n}`;
+}
+function snapshotsChanged() {
+  writtenEntry = null; flushedEntry = null; // not a history step, but the autosave must be written again
+  scheduleAutosave(); updateSnapshotList(); if (state.tool === 'histbrush') buildOptionsBar();
+}
+function addSnapshot(name, i = history.index, { quiet = false } = {}) {
+  const d = doc(), e = history.entries[i]; if (!d || !e) return null;
+  if (state.xf || state.mxf) { status('Finish the transform first (Enter applies, Esc cancels).'); return null; }
+  const s = { id: nextSnapId++, name: (name || '').trim().slice(0, 80) || uniqueSnapName(), snap: freezeSnap(e.snap), step: e.label };
+  (d.snapshots ||= []).push(s);
+  if (!snapById(d.histSrc, d)) d.histSrc = s.id; // the first snapshot is the History brush source
+  roveSnapId = s.id;
+  snapshotsChanged();
+  if (!quiet) status(`Snapshot “${s.name}” created${i !== history.index ? ` from step “${e.label}”` : ''}. Click it to go back to this state; the History brush can paint from it.`);
+  return s;
+}
+function restoreSnapshot(s) {
+  const d = doc(); if (!d || !s) return;
+  if (state.mxf) { status('Finish the perspective / warp first (Enter applies, Esc cancels).'); return; }
+  if (state.xf) applyTransform();
+  applySnap(s.snap); roveSnapId = s.id;
+  commit(`Restore snapshot “${s.name}”`); updateAll();
+  status(`Restored snapshot “${s.name}” (Ctrl+Z undoes it).`);
+}
+function renameSnapshot(s) {
+  if (!s) return;
+  const body = document.createElement('div');
+  body.innerHTML = `<label class="field two"><span>Name</span><input type="text" id="snapRenameInput" maxlength="80" /></label>`;
+  const inp = body.querySelector('input'); inp.value = s.name;
+  showModal({ title: 'Rename snapshot', body, okLabel: 'Rename', ok: () => { const v = inp.value.trim(); if (v && v !== s.name) { s.name = v; snapshotsChanged(); status(`Snapshot renamed to “${v}”`); } } });
+  setTimeout(() => { inp.focus(); inp.select(); }, 0);
+}
+function deleteSnapshot(s) {
+  const d = doc(); if (!d || !s) return;
+  const list = snapsOf(d), i = list.indexOf(s); if (i < 0) return;
+  list.splice(i, 1);
+  if (d.histSrc === s.id) d.histSrc = list[0]?.id ?? null;
+  roveSnapId = list[Math.min(i, list.length - 1)]?.id ?? null;
+  snapshotsChanged();
+  status(`Deleted snapshot “${s.name}”${list.length ? '' : '. There are no snapshots left: the History brush needs one (New snapshot)'}.`);
+}
+function setHistSource(id) {
+  const d = doc(), s = snapById(id, d); if (!s) return;
+  d.histSrc = s.id; roveSnapId = s.id; updateSnapshotList(); if (state.tool === 'histbrush') buildOptionsBar();
+  status(`History brush source: “${s.name}”`);
+}
+/** The snapshot the History brush paints from, or null (with a status message saying why). */
+function historyBrushSource(layer) {
+  const d = doc(), s = snapById(d.histSrc, d);
+  if (!s) { status('The History brush paints from a snapshot: make one first (History panel ▸ New snapshot).'); return null; }
+  if (s.snap.width !== d.width || s.snap.height !== d.height) { status(`Snapshot “${s.name}” has a different canvas size (${s.snap.width} × ${s.snap.height}); the image was cropped or resized since. Pick another source.`); return null; }
+  if (!s.snap.layers.some((l) => l.id === layer.id && l.canvas)) { status(`The layer “${layer.name}” did not exist in snapshot “${s.name}”. Select a layer that did, or pick another source.`); return null; }
+  return s;
+}
+/** The snapshot's pixels of `layer`, in the target canvas's coordinates (layers can move and grow). */
+function historyBrushCanvas(s, layer, target) {
+  const sl = s.snap.layers.find((l) => l.id === layer.id), c = makeCanvas(target.width, target.height);
+  c.getContext('2d').drawImage(sl.canvas, (sl.x || 0) - (layer.x || 0), (sl.y || 0) - (layer.y || 0));
+  return c;
+}
+function updateSnapshotList() {
+  const ul = $('#snapshotList'); if (!ul) return;
+  const d = doc(), list = snapsOf(d), refocus = roveHadKeyboardFocus(ul);
+  ul.innerHTML = '';
+  for (const s of list) {
+    const li = document.createElement('li'); li.dataset.rove = 'snapshot'; li.dataset.snap = s.id; li.tabIndex = -1;
+    const src = d.histSrc === s.id;
+    li.classList.toggle('src', src);
+    li.innerHTML = `<button type="button" class="snap-src${src ? ' on' : ''}" aria-pressed="${src}" title="Use as the History brush source">${ICONS.histbrush}</button><span class="snap-name"></span>`;
+    li.querySelector('.snap-name').textContent = s.name;
+    li.title = `${s.name} (from step “${s.step}”). Click: restore this state · double-click: rename · right-click: more`;
+    li.setAttribute('aria-label', `Snapshot ${s.name}${src ? ', History brush source' : ''}`);
+    li.querySelector('.snap-src').addEventListener('click', (e) => { e.stopPropagation(); setHistSource(s.id); });
+    li.addEventListener('click', () => restoreSnapshot(s));
+    li.addEventListener('dblclick', (e) => { e.preventDefault(); renameSnapshot(s); });
+    ul.append(li);
+  }
+  ul.classList.toggle('empty', !list.length);
+  roveSettle(ul, roveSnapId != null && ul.querySelector(`li[data-snap="${roveSnapId}"]`) ? `li[data-snap="${roveSnapId}"]` : 'li[data-rove].src', refocus);
+  const del = $('#historyPanel [data-cmd="snapshotDelete"]'); if (del) del.disabled = !list.length;
+}
+function snapshotMenu(s, x, y) {
+  showContextMenu(x, y, [
+    ['Restore this snapshot', () => restoreSnapshot(s)], ['Use as History brush source', () => setHistSource(s.id)], ['History brush tool', () => { setHistSource(s.id); setTool('histbrush'); }], '-',
+    ['Rename snapshot…', () => renameSnapshot(s)], ['Delete snapshot', () => deleteSnapshot(s)], '-',
+    ['New snapshot (current state)', 'snapshotNew'],
+  ]);
+}
+/** Where a context menu opened from the keyboard (Menu key / Shift+F10) should appear: next to the row. */
+const menuPoint = (e, row) => { if (e.clientX || e.clientY) return [e.clientX, e.clientY]; const r = row.getBoundingClientRect(); return [r.left + 24, r.bottom]; };
+$('#snapshotList').addEventListener('contextmenu', (e) => {
+  const li = e.target.closest('li[data-snap]'); e.preventDefault(); if (!doc()) return;
+  const s = li && snapById(+li.dataset.snap);
+  if (!s) { showContextMenu(e.clientX, e.clientY, [['New snapshot (current state)', 'snapshotNew']]); return; }
+  roveSnapId = s.id; const [x, y] = menuPoint(e, li); snapshotMenu(s, x, y);
+});
+$('#historyList').addEventListener('contextmenu', (e) => {
+  const li = e.target.closest('li[data-index]'); if (!li || !doc()) return;
+  e.preventDefault();
+  const i = +li.dataset.index, en = history.entries[i]; if (!en) return;
+  const [x, y] = menuPoint(e, li);
+  showContextMenu(x, y, [
+    ['New snapshot from this step', () => addSnapshot(uniqueSnapName(), i)], ['Go to this step', () => restore(i)], '-',
+    ['New snapshot (current state)', 'snapshotNew'],
+  ]);
+});
+// keyboard on snapshot rows: ↑ ↓ Home End move, Enter/Space restore (roveKeydown), B source, F2 rename, Delete
+roveKeydown($('#snapshotList'), (row) => { const s = snapById(+row.dataset.snap); if (s) restoreSnapshot(s); });
+$('#snapshotList').addEventListener('keydown', (e) => {
+  const row = e.target instanceof Element && e.target.closest('li[data-snap]'); if (!row || e.ctrlKey || e.metaKey || e.altKey) return;
+  const s = snapById(+row.dataset.snap); if (!s) return;
+  if (e.key === 'F2') { e.preventDefault(); e.stopPropagation(); renameSnapshot(s); }
+  else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); e.stopPropagation(); deleteSnapshot(s); setTimeout(() => $('#snapshotList li[data-rove][tabindex="0"]')?.focus() || $('#historyList li[data-rove][tabindex="0"]')?.focus(), 0); }
+  else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); e.stopPropagation(); setHistSource(s.id); }
+});
 
 // ---- v1.33: roving tabindex for the Layers and History lists ------------------------------------------
 // Each list is one Tab stop. ↑/↓ (Home/End) move between rows, Enter or Space selects the layer / jumps to that
@@ -8656,6 +8869,7 @@ function roveKeydown(list, activate) {
     const rows = [...list.querySelectorAll('li[data-rove]')], i = rows.indexOf(row);
     const j = e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
     if (list.id === 'layerList') roveLayerId = rows[j].dataset.id;
+    if (list.id === 'snapshotList') roveSnapId = +rows[j].dataset.snap;
     roveMove(list, rows[j]);
   });
 }
@@ -8910,9 +9124,9 @@ function analysisImage(maxSide = 512, hide = null) {
   const s = makeCanvas(w, h), x = s.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(tmp, 0, 0, w, h);
   return { img: x.getImageData(0, 0, w, h), k };
 }
-function makeAdjLayer(type, params, name) {
+function makeAdjLayer(type, params, name, hide = false) {
   const d = doc(), l = createLayer(name || ADJ_LAYER[type], 1, 1, { kind: 'adjust', adj: { type, params: structuredClone(params) }, editMask: true });
-  l.mask = { canvas: makeMaskCanvas(d.width, d.height, true), enabled: true, rev: ++globalRev };
+  l.mask = { canvas: makeMaskCanvas(d.width, d.height, !hide), enabled: true, rev: ++globalRev };
   return l;
 }
 /** Insert a pass-through group holding adjustment layers (bottom → top) above the active layer; one history step. */
@@ -9142,7 +9356,7 @@ function describeStep(s) {
   switch (s.t) {
     case 'cmd': return MENUS.flatMap(([, items]) => items).find((it) => Array.isArray(it) && it[1] === s.name)?.[0] || s.name;
     case 'adjust': return `${Object.values(ADJ).find((d) => d.op === s.op)?.title || s.op} (${Object.entries(s.params || {}).filter(([, v]) => typeof v !== 'object').map(([k, v]) => `${k} ${v}`).join(', ')})`;
-    case 'adjLayer': return `${ADJ_LAYER[s.type] || s.type} layer`;
+    case 'adjLayer': return `${ADJ_LAYER[s.type] || s.type} layer${s.hide ? ' (black mask)' : ''}`;
     case 'look': return `Look: ${allLooks().find((l) => l.id === s.id)?.name || s.id} at ${s.intensity}%`;
     case 'preset': { const p = presetById(s.id); return `${s.mode === 'fit' ? 'Fit' : 'Crop & resize'} to ${p ? p.name : s.id}`; }
     case 'crop': return s.preset ? `Crop to ${presetById(s.preset)?.name || s.preset}` : `Crop (${Math.round(s.fw * 100)}% × ${Math.round(s.fh * 100)}%)`;
@@ -9174,7 +9388,7 @@ async function playStep(s) {
   switch (s.t) {
     case 'cmd': { const f = cmds[s.name]; if (!f) throw new Error(`unknown command ${s.name}`); await f(); break; }
     case 'adjust': if (!(await applyAdjustDirect(s.op, s.params))) throw new Error('could not apply here'); break;
-    case 'adjLayer': addLayer(makeAdjLayer(s.type, s.params, s.name || ADJ_LAYER[s.type]), s.name || ADJ_LAYER[s.type]); break;
+    case 'adjLayer': addLayer(makeAdjLayer(s.type, s.params, s.name || ADJ_LAYER[s.type], !!s.hide), s.name || ADJ_LAYER[s.type]); break;
     case 'look': if (!applyLook(s.id, s.intensity ?? 100)) throw new Error('look not found'); break;
     case 'preset': resizeToPreset(s.id, s); break;
     case 'crop':
@@ -9948,6 +10162,8 @@ function openLayerToDocDialog() {
 }
 
 window.tintwork = {
+  // v1.35
+  addSnapshot, restoreSnapshot, renameSnapshot, deleteSnapshot, setHistSource, snapsOf, snapById, historyBrushSource, get snapshots() { return snapsOf(); }, get histSrc() { return doc()?.histSrc ?? null; }, projectLayers,
   setDevelopEnv, get lastDecoder() { return lastDecoder; }, redevelopRaw,
   // v1.4
   openHandle, embedLinkedRaw, setRelinkPicker: (fn) => { relinkPicker = fn; }, forgetLinkHandles: () => linkHandles.clear(), get lastRelink() { return { ...lastRelink }; },

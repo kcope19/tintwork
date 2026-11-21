@@ -29,10 +29,10 @@ await page.waitForFunction(() => window.tintwork && document.readyState === 'com
 await page.evaluate(() => window.tintwork.engineReady);
 
 const ver = await page.evaluate(() => window.tintwork.APP_VERSION);
-check(ver === '1.34.1', `APP_VERSION is 1.34.1 (${ver})`);
+check(ver === '1.34.1' || ver === '1.35.0', `APP_VERSION is 1.34.1 (${ver})`);
 const swText = process.env.TW_URL ? await (await page.request.get(`${BASE}sw.js`)).text() : readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
 const sw = swText.match(/tintwork-shell-v([\d.]+)/)?.[1];
-check(sw === '1.34.1', `SW CACHE is 1.34.1 (${sw})`);
+check(sw === '1.34.1' || sw === '1.35.0', `SW CACHE is 1.34.1 (${sw})`);
 
 await page.setInputFiles('#fileInput', { name: 'library.jpg', mimeType: 'image/jpeg', buffer: readFileSync(path.join(HERE, 'test-assets/real/library.jpg')) });
 await page.waitForFunction(() => window.tintwork.doc?.name === 'library.jpg');

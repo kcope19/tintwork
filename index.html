@@ -124,7 +124,13 @@
       </section>
       <section class="panel" id="historyPanel">
         <h2>History</h2>
-        <ol id="historyList" aria-label="History (↑ ↓ move, Enter jumps to that step)"></ol>
+        <ul id="snapshotList" aria-label="Snapshots (↑ ↓ move, Enter restores, B makes it the History brush source, F2 renames, Delete removes; the Menu key opens more)"></ul>
+        <ol id="historyList" aria-label="History (↑ ↓ move, Enter jumps to that step; the Menu key makes a snapshot of a step)"></ol>
+        <div class="panel-actions">
+          <button data-cmd="snapshotNew" title="New snapshot of the current state">＋ Snapshot</button>
+          <button data-cmd="historyBrushTool" title="History brush (Y): paint from a snapshot" aria-label="History brush (Y)">🖌</button>
+          <button data-cmd="snapshotDelete" title="Delete the selected snapshot" aria-label="Delete the selected snapshot">🗑</button>
+        </div>
       </section>
       <section class="panel sheet-only" id="menuSheet"><h2>Menu</h2><div class="sheet-groups"></div></section>
       <section class="panel sheet-only" id="adjustSheet"><h2>Adjust &amp; filter</h2><div class="sheet-groups"></div></section>
