@@ -40,6 +40,8 @@ Before: [audit/a11y-v132-before.json](audit/a11y-v132-before.json) (live v1.32.0
 
 **Not verified on real devices:** a physical iPhone / Safari (WebKit emulation only), two-finger pinch on the canvas now that page zoom is enabled (Playwright cannot drive multi-touch page zoom; the editor-level pinch test in mobile-test still passes), and any real screen reader (NVDA, JAWS, Narrator, VoiceOver): announcements were checked only via ARIA attributes and accessible names. Windows was emulated (Chromium on Linux with `?platform=win`).
 
+**Live verification:** `TW_URL=https://kcope19.github.io/tintwork/ node scripts/v133-test.mjs` → **47/47 × 3** on the live site, including the WebKit iPhone 13 pass (commit 02fad2d, tag v1.33.0, 2026-11-21 ~9:30 AM America/New_York). Live axe (`scripts/a11y-audit.mjs v133-live`): 0 violations in all four states. Screenshots: `screenshots/133-live-phone-crop.png`, `133-live-phone-cropped.png`, `133-live-layer-focus.png`, `133-live-history-focus.png`, `133-live-skip-link.png`.
+
 **Test-change disclosure:** `v133-test` new (47 checks, incl. a WebKit iPhone pass). Pins accept 1.33.0. `mobile-test`: the viewport-meta check now requires that page zoom is **not** disabled (intended reversal), and the free-transform step taps the floating Apply when it is shown (the options-bar copy is hidden on phones). The skip-link check counts the app's click on the file input; headless Chromium under load did not always surface Playwright's filechooser event for it (about 1 run in 3 locally), so the check does not depend on that event. Full serial `npm test` **1478** ok, 0 failures (WebKit; 1431 + 47; run on wip commit 94ebb36, code identical to the release).
 
 ## v1.32.0 update (2026-11-20, America/New_York)

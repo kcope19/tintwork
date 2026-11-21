@@ -1,0 +1,33 @@
+{
+ "base": "https://kcope19.github.io/tintwork/",
+ "axe": "4.14.1",
+ "date": "2026-11-21T14:00:28.124Z",
+ "summary": {
+  "welcome": {
+   "critical": 0,
+   "serious": 0,
+   "total": 0
+  },
+  "docOpen": {
+   "critical": 0,
+   "serious": 0,
+   "total": 0
+  },
+  "curvesDialog": {
+   "critical": 0,
+   "serious": 0,
+   "total": 0
+  },
+  "mobileCrop": {
+   "critical": 0,
+   "serious": 0,
+   "total": 0
+  }
+ },
+ "violations": {
+  "welcome": [],
+  "docOpen": [],
+  "curvesDialog": [],
+  "mobileCrop": []
+ }
+}
